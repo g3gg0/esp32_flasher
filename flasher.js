@@ -500,27 +500,37 @@ class ESPFlasher {
         try {
             await this.executeCommand(this.buildCommandPacketU32(MEM_END, 0, stub.entry),
                 async (resolve, reject, responsePacket) => {
-                    console.log("Final MEM_END ACK");
+                    this.logDebug("Final MEM_END ACK");
                 },
                 async (resolve, reject, rawData) => {
                     const decoder = new TextDecoder('utf-8');
                     const responseData = decoder.decode(rawData);
 
                     if (responseData == "OHAI") {
-                        this.logDebug(`Stub loader executed successfully(received ${responseData})`);
+                        this.logDebug(`Stub loader executed successfully (received ${responseData})`);
                         this.stubLoaded = true;
                         resolve();
+                    } else {
+                        this.logError(`Unexpected stub response: ${responseData}`);
+                        reject(`Unexpected response from stub: ${responseData}`);
                     }
-                });
+                },
+                3000 // Longer timeout for stub execution
+            );
         } catch (error) {
             this.logError("Failed to execute stub", "Is the device locked?");
             return false;
         }
 
-        await this.executeCommand(this.buildCommandPacketU32(SPI_SET_PARAMS, 0, 0x800000, 64 * 1024, 4 * 1024, 256, 0xFFFF), async (resolve, reject, responsePacket) => {
-            console.log("SPI_SET_PARAMS", responsePacket);
-            resolve();
-        });
+        try {
+            await this.executeCommand(this.buildCommandPacketU32(SPI_SET_PARAMS, 0, 0x800000, 64 * 1024, 4 * 1024, 256, 0xFFFF), async (resolve, reject, responsePacket) => {
+                this.logDebug("SPI_SET_PARAMS configured");
+                resolve();
+            });
+        } catch (error) {
+            this.logError("Failed to configure SPI parameters", error.message);
+            return false;
+        }
 
         return true;
     }
@@ -534,7 +544,7 @@ class ESPFlasher {
         await this.executeCommand(
             this.buildCommandPacketU32(FLASH_BEGIN, data.length, packets,
                 Math.min(MAX_PACKET_SIZE, data.length),
-                address, this.stubLoaded ? undefined : 0
+                address, 0
             ),
             async (resolve) => {
                 resolve();

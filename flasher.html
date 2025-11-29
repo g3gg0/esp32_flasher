@@ -302,6 +302,11 @@
             color: #ffffff;
         }
 
+        .status-warning {
+            background: #f85149;
+            color: #ffffff;
+        }
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
@@ -580,7 +585,7 @@
         function updateStatus(status, badge = 'disconnected') {
             const statusEl = document.getElementById('connectionStatus');
             const badgeClass = `status-${badge}`;
-            const badgeText = badge === 'connected' ? 'ONLINE' : badge === 'busy' ? 'BUSY' : 'OFFLINE';
+            const badgeText = badge === 'connected' ? 'ONLINE' : badge === 'busy' ? 'BUSY' : badge === 'warning' ? 'PROBLEM' : 'OFFLINE';
             statusEl.innerHTML = `${status}<span class="status-badge ${badgeClass}">${badgeText}</span>`;
         }
 
@@ -672,7 +677,7 @@
                 
             } catch (error) {
                 log(`Hard reset error: ${error.message}`, 'error');
-                updateStatus('Connected', 'connected');
+                updateStatus('Connected (Error)', 'warning');
             }
         }
 
@@ -702,7 +707,9 @@
                 updateButtons(true, true, false);
             } catch (error) {
                 log(`Sync failed: ${error.message}`, 'error');
-                updateStatus('Connected', 'connected');
+                updateStatus('Connected (Sync Failed)', 'warning');
+                const syncBtn = document.getElementById('syncBtn');
+                syncBtn.classList.remove('highlighted');
             }
         }
 
@@ -738,7 +745,7 @@
                 updateStatus('Connected & Synced', 'connected');
             } catch (error) {
                 log(`Stub load error: ${error.message}`, 'error');
-                updateStatus('Connected & Synced', 'connected');
+                updateStatus('Connected (Stub Failed)', 'warning');
             }
         }
 
@@ -805,7 +812,7 @@
                 }, 3000);
             } catch (error) {
                 log(`Flash write error: ${error.message}`, 'error');
-                updateStatus('Connected & Synced', 'connected');
+                updateStatus('Connected (Write Failed)', 'warning');
             }
         }
 
@@ -867,7 +874,7 @@
                 }, 3000);
             } catch (error) {
                 log(`Flash read error: ${error.message}`, 'error');
-                updateStatus('Connected & Synced', 'connected');
+                updateStatus('Connected (Read Failed)', 'warning');
             }
         }
 
@@ -909,7 +916,7 @@
                 log(`Reliability test error: ${error.message}`, 'error');
                 document.getElementById('testResult').textContent = '✗ ERROR';
                 document.getElementById('testResult').style.color = '#c62828';
-                updateStatus('Connected & Synced', 'connected');
+                updateStatus('Connected (Test Failed)', 'warning');
             }
         }
 
@@ -937,7 +944,7 @@
                 updateStatus('Connected & Synced', 'connected');
             } catch (error) {
                 log(`Blank check error: ${error.message}`, 'error');
-                updateStatus('Connected & Synced', 'connected');
+                updateStatus('Connected (Check Failed)', 'warning');
             }
         }
 
