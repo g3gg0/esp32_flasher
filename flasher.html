@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Flasher Test Suite</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0d1117;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #161b22;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+            border: 1px solid #30363d;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #0d1117;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            border: 1px solid #30363d;
+        }
+
+        .section h2 {
+            color: #c9d1d9;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+
+        .button-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        button {
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        button.secondary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+        }
+
+        button.danger {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            box-shadow: 0 4px 15px rgba(250, 112, 154, 0.4);
+        }
+
+        .info-panel {
+            background: #161b22;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 15px;
+            border: 1px solid #30363d;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #21262d;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #8b949e;
+        }
+
+        .info-value {
+            color: #c9d1d9;
+            font-family: 'Courier New', monospace;
+        }
+
+        .log-container {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 15px;
+            border-radius: 6px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .log-debug { color: #4fc3f7; }
+        .log-info { color: #81c784; }
+        .log-error { color: #e57373; }
+        .log-warn { color: #ffb74d; }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #21262d;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-top: 10px;
+            position: relative;
+            border: 1px solid #30363d;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            margin-top: 10px;
+        }
+
+        .file-input-wrapper input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        .file-input-label {
+            display: inline-block;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4);
+        }
+
+        .file-input-label:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(79, 172, 254, 0.6);
+        }
+
+        .file-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            font-size: 14px;
+            color: #c9d1d9;
+            display: none;
+        }
+
+        .input-group {
+            margin-top: 10px;
+        }
+
+        .input-group select {
+            width: 100%;
+            max-width: 300px;
+            padding: 10px;
+            border: 2px solid #30363d;
+            background: #0d1117;
+            color: #c9d1d9;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+            cursor: pointer;
+        }
+
+        .input-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .input-group select option {
+            background: #0d1117;
+            color: #c9d1d9;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #8b949e;
+        }
+
+        .input-group input[type="text"],
+        .input-group input[type="number"] {
+            width: 100%;
+            max-width: 300px;
+            padding: 10px;
+            border: 2px solid #30363d;
+            background: #0d1117;
+            color: #c9d1d9;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .status-connected {
+            background: #2ea043;
+            color: #ffffff;
+        }
+
+        .status-disconnected {
+            background: #da3633;
+            color: #ffffff;
+        }
+
+        .status-busy {
+            background: #d29922;
+            color: #ffffff;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 3px solid rgba(255,255,255,.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes glow {
+            0%, 100% {
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.6), 
+                            0 0 30px rgba(255, 255, 0, 0.8),
+                            0 0 50px rgba(255, 255, 0, 0.6),
+                            inset 0 0 20px rgba(255, 255, 0, 0.3);
+                transform: scale(1);
+            }
+            50% {
+                box-shadow: 0 4px 25px rgba(102, 126, 234, 0.8), 
+                            0 0 50px rgba(255, 255, 0, 1),
+                            0 0 80px rgba(255, 255, 0, 0.8),
+                            inset 0 0 30px rgba(255, 255, 0, 0.5);
+                transform: scale(1.02);
+            }
+        }
+
+        .highlighted {
+            animation: glow 1.5s ease-in-out infinite !important;
+            border: 2px solid rgba(255, 255, 0, 0.8) !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 ESP32 Flasher Test Suite</h1>
+            <p>Comprehensive testing tool for ESP32/ESP32-S2/ESP32-S3/ESP32-C3/ESP32-C6 devices</p>
+        </div>
+
+        <div class="content">
+            <!-- Connection Section -->
+            <div class="section">
+                <h2>📡 Connection</h2>
+                <div class="button-group">
+                    <button id="connectBtn" onclick="connectDevice()">Connect Device</button>
+                    <button id="disconnectBtn" onclick="disconnectDevice()" disabled>Disconnect</button>
+                    <button id="hardResetBtn" onclick="hardReset()" disabled>Hard Reset</button>
+                    <button id="syncBtn" onclick="syncDevice()" disabled>Sync & Detect</button>
+                </div>
+                <div class="info-panel">
+                    <div class="info-row">
+                        <span class="info-label">Status:</span>
+                        <span class="info-value" id="connectionStatus">
+                            Disconnected
+                            <span class="status-badge status-disconnected">OFFLINE</span>
+                        </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Chip Type:</span>
+                        <span class="info-value" id="chipType">Not detected</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">MAC Address:</span>
+                        <span class="info-value" id="macAddress">--:--:--:--:--:--</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Stub Loader:</span>
+                        <span class="info-value" id="stubStatus">Not loaded</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stub Loader Section -->
+            <div class="section">
+                <h2>⚡ Stub Loader</h2>
+                <div class="button-group">
+                    <button id="loadStubBtn" onclick="loadStub()" disabled>Load Stub</button>
+                </div>
+            </div>
+
+            <!-- Memory Operations Section -->
+            <div class="section">
+                <h2>💾 Memory Operations</h2>
+                <div class="button-group">
+                    <button id="readRegBtn" onclick="readRegister()" disabled>Read Register</button>
+                </div>
+                <div class="input-group">
+                    <label for="regPreset">Preset Registers:</label>
+                    <select id="regPreset" onchange="loadRegisterPreset()">
+                        <option value="">-- Select a register --</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label for="regAddress">Register Address (hex):</label>
+                    <input type="text" id="regAddress" placeholder="0x3FF00054" value="0x3FF00054">
+                </div>
+                <div class="info-panel" style="margin-top: 10px;">
+                    <div class="info-row">
+                        <span class="info-label">Register Value:</span>
+                        <span class="info-value" id="regValue">--</span>
+                    </div>
+                    <div class="info-row" id="regDescRow" style="display: none;">
+                        <span class="info-label">Description:</span>
+                        <span class="info-value" id="regDesc" style="font-family: inherit; font-size: 12px;">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Flash Operations Section -->
+            <div class="section">
+                <h2>💿 Flash Operations</h2>
+                <div class="button-group">
+                    <button id="writeFlashBtn" onclick="writeFlash()" disabled title="Load stub loader first">Write Flash</button>
+                    <button id="readFlashBtn" onclick="readFlash()" disabled title="Load stub loader first">Read Flash & Download</button>
+                </div>
+                <div class="input-group">
+                    <label for="flashAddress">Flash Address (hex):</label>
+                    <input type="text" id="flashAddress" placeholder="0x00000000" value="0x00000000">
+                </div>
+                <div class="input-group">
+                    <label for="flashSize">Read Size (bytes, hex):</label>
+                    <input type="text" id="flashSize" placeholder="0x100000" value="0x100000">
+                </div>
+                <div class="file-input-wrapper">
+                    <input type="file" id="flashFile" accept=".bin" onchange="handleFileSelect(event)">
+                    <label class="file-input-label" for="flashFile">📁 Choose Binary File</label>
+                </div>
+                <div class="file-info" id="fileInfo"></div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="flashProgress">0%</div>
+                </div>
+            </div>
+
+            <!-- Testing Section -->
+            <div class="section">
+                <h2>🧪 Testing & Diagnostics</h2>
+                <div class="button-group">
+                    <button id="testReliabilityBtn" onclick="testReliability()" disabled>Test Reliability</button>
+                    <button id="blankCheckBtn" onclick="blankCheck()" disabled title="Load stub loader first (required for blank check)">Blank Check</button>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="testProgress">0%</div>
+                </div>
+                <div class="info-panel" style="margin-top: 10px;">
+                    <div class="info-row">
+                        <span class="info-label">Test Result:</span>
+                        <span class="info-value" id="testResult">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Debug Section -->
+            <div class="section">
+                <h2>🐛 Debug</h2>
+                <div class="button-group">
+                    <button id="toggleDebugBtn" onclick="toggleDebugMode()">Toggle Debug Mode</button>
+                    <button id="clearLogBtn" onclick="clearLog()">Clear Log</button>
+                </div>
+                <div class="log-container" id="logContainer">
+                    <div class="log-entry log-info">Ready. Click 'Connect Device' to start.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="chips.js"></script>
+    <script src="flasher.js"></script>
+    <script>
+        let flasher = null;
+        let selectedFile = null;
+
+        // Register presets for each chip type
+        const registerPresets = {
+            'esp32': [
+                { addr: 0x3FF00054, name: 'GPIO_OUT_REG', desc: 'GPIO output register' },
+                { addr: 0x3FF0003C, name: 'GPIO_IN_REG', desc: 'GPIO input register' },
+                { addr: 0x3FF5A000, name: 'DPORT_PRO_CPU_RECORD_CTRL_REG', desc: 'CPU record control' },
+                { addr: 0x3FF480B0, name: 'RTC_CNTL_STORE0_REG', desc: 'RTC control store register 0' },
+                { addr: 0x3FF00044, name: 'GPIO_STRAP_REG', desc: 'Bootstrap pin values' },
+                { addr: 0x60008800, name: 'EFUSE_BLK0_RDATA0_REG', desc: 'eFuse block 0 word 0' },
+                { addr: 0x6000880C, name: 'EFUSE_BLK0_RDATA3_REG', desc: 'eFuse block 0 word 3 (MAC high)' },
+                { addr: 0x60008810, name: 'EFUSE_BLK0_RDATA4_REG', desc: 'eFuse block 0 word 4 (MAC low)' }
+            ],
+            'esp32s2': [
+                { addr: 0x3F404004, name: 'GPIO_OUT_REG', desc: 'GPIO output register' },
+                { addr: 0x3F40403C, name: 'GPIO_IN_REG', desc: 'GPIO input register' },
+                { addr: 0x3F404038, name: 'GPIO_STRAP_REG', desc: 'Bootstrap pin values' },
+                { addr: 0x3F41A044, name: 'EFUSE_RD_MAC_SPI_SYS_0_REG', desc: 'MAC address word 0' },
+                { addr: 0x3F41A048, name: 'EFUSE_RD_MAC_SPI_SYS_1_REG', desc: 'MAC address word 1' },
+                { addr: 0x3F408000, name: 'RTC_CNTL_OPTIONS0_REG', desc: 'RTC control options' },
+                { addr: 0x3F41A000, name: 'EFUSE_PGM_DATA0_REG', desc: 'eFuse program data 0' }
+            ],
+            'esp32s3': [
+                { addr: 0x60004004, name: 'GPIO_OUT_REG', desc: 'GPIO output register' },
+                { addr: 0x6000403C, name: 'GPIO_IN_REG', desc: 'GPIO input register' },
+                { addr: 0x60004038, name: 'GPIO_STRAP_REG', desc: 'Bootstrap pin values' },
+                { addr: 0x60007044, name: 'EFUSE_RD_MAC_SPI_SYS_0_REG', desc: 'MAC address word 0' },
+                { addr: 0x60007048, name: 'EFUSE_RD_MAC_SPI_SYS_1_REG', desc: 'MAC address word 1' },
+                { addr: 0x60008000, name: 'RTC_CNTL_OPTIONS0_REG', desc: 'RTC control options' },
+                { addr: 0x6000702C, name: 'EFUSE_RD_REPEAT_DATA1_REG', desc: 'eFuse repeat data 1' }
+            ],
+            'esp32c3': [
+                { addr: 0x60004004, name: 'GPIO_OUT_REG', desc: 'GPIO output register' },
+                { addr: 0x6000403C, name: 'GPIO_IN_REG', desc: 'GPIO input register' },
+                { addr: 0x60004038, name: 'GPIO_STRAP_REG', desc: 'Bootstrap pin values' },
+                { addr: 0x60008844, name: 'EFUSE_RD_MAC_SPI_SYS_0_REG', desc: 'MAC address word 0' },
+                { addr: 0x60008848, name: 'EFUSE_RD_MAC_SPI_SYS_1_REG', desc: 'MAC address word 1' },
+                { addr: 0x60008000, name: 'RTC_CNTL_OPTIONS0_REG', desc: 'RTC control options' },
+                { addr: 0x6000802C, name: 'EFUSE_RD_REPEAT_DATA1_REG', desc: 'eFuse repeat data 1' }
+            ],
+            'esp32c6': [
+                { addr: 0x60091004, name: 'GPIO_OUT_REG', desc: 'GPIO output register' },
+                { addr: 0x6009103C, name: 'GPIO_IN_REG', desc: 'GPIO input register' },
+                { addr: 0x60091038, name: 'GPIO_STRAP_REG', desc: 'Bootstrap pin values' },
+                { addr: 0x600B0844, name: 'EFUSE_RD_MAC_SPI_SYS_0_REG', desc: 'MAC address word 0' },
+                { addr: 0x600B0848, name: 'EFUSE_RD_MAC_SPI_SYS_1_REG', desc: 'MAC address word 1' },
+                { addr: 0x60008000, name: 'LP_CLKRST_LP_CLK_CONF_REG', desc: 'Low power clock config' },
+                { addr: 0x600B002C, name: 'EFUSE_RD_REPEAT_DATA1_REG', desc: 'eFuse repeat data 1' }
+            ]
+        };
+
+        function updateRegisterPresets(chipType) {
+            const presetSelect = document.getElementById('regPreset');
+            presetSelect.innerHTML = '<option value="">-- Select a register --</option>';
+            
+            if (chipType && chipType !== 'none' && chipType !== 'unknown' && registerPresets[chipType]) {
+                const presets = registerPresets[chipType];
+                presets.forEach(preset => {
+                    const option = document.createElement('option');
+                    option.value = JSON.stringify(preset);
+                    option.textContent = `${preset.name} (0x${preset.addr.toString(16).toUpperCase()})`;
+                    presetSelect.appendChild(option);
+                });
+                log(`Loaded ${presets.length} register presets for ${chipType}`, 'debug');
+            }
+        }
+
+        function loadRegisterPreset() {
+            const presetSelect = document.getElementById('regPreset');
+            const selectedValue = presetSelect.value;
+            
+            if (selectedValue) {
+                const preset = JSON.parse(selectedValue);
+                document.getElementById('regAddress').value = '0x' + preset.addr.toString(16).toUpperCase();
+                document.getElementById('regDescRow').style.display = 'flex';
+                document.getElementById('regDesc').textContent = preset.desc;
+                log(`Selected register: ${preset.name}`, 'info');
+            } else {
+                document.getElementById('regDescRow').style.display = 'none';
+            }
+        }
+
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${timestamp}] ${message}`;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+
+        function clearLog() {
+            const logContainer = document.getElementById('logContainer');
+            logContainer.innerHTML = '<div class="log-entry log-info">Log cleared.</div>';
+        }
+
+        function updateStatus(status, badge = 'disconnected') {
+            const statusEl = document.getElementById('connectionStatus');
+            const badgeClass = `status-${badge}`;
+            const badgeText = badge === 'connected' ? 'ONLINE' : badge === 'busy' ? 'BUSY' : 'OFFLINE';
+            statusEl.innerHTML = `${status}<span class="status-badge ${badgeClass}">${badgeText}</span>`;
+        }
+
+        function updateButtons(connected = false, synced = false, stubLoaded = false) {
+            document.getElementById('connectBtn').disabled = connected;
+            document.getElementById('disconnectBtn').disabled = !connected;
+            document.getElementById('hardResetBtn').disabled = !connected;
+            document.getElementById('syncBtn').disabled = !connected;
+            document.getElementById('loadStubBtn').disabled = !synced;
+            document.getElementById('readRegBtn').disabled = !synced;
+            document.getElementById('writeFlashBtn').disabled = !stubLoaded || !selectedFile;
+            document.getElementById('readFlashBtn').disabled = !stubLoaded;
+            document.getElementById('testReliabilityBtn').disabled = !synced;
+            document.getElementById('blankCheckBtn').disabled = !stubLoaded;
+            
+            // Update tooltips
+            const writeBtn = document.getElementById('writeFlashBtn');
+            const readBtn = document.getElementById('readFlashBtn');
+            const blankBtn = document.getElementById('blankCheckBtn');
+            
+            if (!stubLoaded) {
+                writeBtn.title = 'Load stub loader first';
+                readBtn.title = 'Load stub loader first';
+                blankBtn.title = 'Load stub loader first';
+            } else if (!selectedFile) {
+                writeBtn.title = 'Select a binary file first';
+                readBtn.title = 'Read data from flash and download as binary';
+                blankBtn.title = 'Check if flash is blank';
+            } else {
+                writeBtn.title = 'Write binary to flash';
+                readBtn.title = 'Read data from flash and download as binary';
+                blankBtn.title = 'Check if flash is blank';
+            }
+        }
+
+        async function connectDevice() {
+            try {
+                log('Requesting serial port...', 'info');
+                flasher = new ESPFlasher();
+                
+                flasher.logDebug = (msg) => log(`[DEBUG] ${msg}`, 'debug');
+                flasher.logError = (msg, detail = '') => log(`[ERROR] ${msg} ${detail}`, 'error');
+                
+                flasher.disconnected = () => {
+                    log('Device disconnected', 'warn');
+                    updateStatus('Disconnected', 'disconnected');
+                    updateButtons(false, false, false);
+                    document.getElementById('chipType').textContent = 'Not detected';
+                    document.getElementById('macAddress').textContent = '--:--:--:--:--:--';
+                    document.getElementById('stubStatus').textContent = 'Not loaded';
+                };
+
+                await flasher.openPort();
+                log('Serial port opened successfully', 'info');
+                updateStatus('Connected', 'connected');
+                updateButtons(true, false, false);
+                
+                // Highlight Hard Reset button to indicate next step
+                const hardResetBtn = document.getElementById('hardResetBtn');
+                hardResetBtn.classList.add('highlighted');
+                log('Please click "Hard Reset" to continue...', 'info');
+                
+            } catch (error) {
+                log(`Failed to connect: ${error.message}`, 'error');
+                updateStatus('Connection failed', 'disconnected');
+            }
+        }
+
+        async function hardReset() {
+            if (!flasher) return;
+            try {
+                const hardResetBtn = document.getElementById('hardResetBtn');
+                hardResetBtn.classList.remove('highlighted');
+                
+                updateStatus('Performing hard reset...', 'busy');
+                log('Initiating hard reset...', 'info');
+                const result = await flasher.hardReset(true);
+                if (result) {
+                    log('Hard reset successful', 'info');
+                } else {
+                    log('Hard reset failed or not supported', 'warn');
+                }
+                updateStatus('Connected', 'connected');
+                
+                // Highlight Sync button for next step
+                const syncBtn = document.getElementById('syncBtn');
+                syncBtn.classList.add('highlighted');
+                log('Please click "Sync & Detect" to continue...', 'info');
+                
+            } catch (error) {
+                log(`Hard reset error: ${error.message}`, 'error');
+                updateStatus('Connected', 'connected');
+            }
+        }
+
+        async function syncDevice() {
+            if (!flasher) return;
+            try {
+                const syncBtn = document.getElementById('syncBtn');
+                syncBtn.classList.remove('highlighted');
+                
+                updateStatus('Syncing with device...', 'busy');
+                log('Starting sync process...', 'info');
+                await flasher.sync();
+                log(`Sync successful! Detected chip: ${flasher.current_chip}`, 'info');
+                document.getElementById('chipType').textContent = flasher.current_chip;
+                
+                // Update register presets based on detected chip
+                updateRegisterPresets(flasher.current_chip);
+                
+                // Read MAC address
+                const mac = await flasher.readMac();
+                if (mac) {
+                    log(`MAC Address: ${mac}`, 'info');
+                    document.getElementById('macAddress').textContent = mac;
+                }
+                
+                updateStatus('Connected & Synced', 'connected');
+                updateButtons(true, true, false);
+            } catch (error) {
+                log(`Sync failed: ${error.message}`, 'error');
+                updateStatus('Connected', 'connected');
+            }
+        }
+
+        async function disconnectDevice() {
+            if (!flasher) return;
+            try {
+                await flasher.disconnect();
+                log('Disconnected successfully', 'info');
+                updateStatus('Disconnected', 'disconnected');
+                updateButtons(false, false, false);
+                
+                // Clear any highlights
+                document.getElementById('hardResetBtn').classList.remove('highlighted');
+                document.getElementById('syncBtn').classList.remove('highlighted');
+            } catch (error) {
+                log(`Disconnect error: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadStub() {
+            if (!flasher) return;
+            try {
+                updateStatus('Loading stub...', 'busy');
+                log('Loading stub loader...', 'info');
+                const result = await flasher.downloadStub();
+                if (result) {
+                    log('Stub loaded successfully!', 'info');
+                    document.getElementById('stubStatus').textContent = 'Loaded';
+                    updateButtons(true, true, true);
+                } else {
+                    log('Failed to load stub', 'error');
+                }
+                updateStatus('Connected & Synced', 'connected');
+            } catch (error) {
+                log(`Stub load error: ${error.message}`, 'error');
+                updateStatus('Connected & Synced', 'connected');
+            }
+        }
+
+        async function readRegister() {
+            if (!flasher) return;
+            try {
+                const address = parseInt(document.getElementById('regAddress').value);
+                log(`Reading register at 0x${address.toString(16).padStart(8, '0')}...`, 'info');
+                const value = await flasher.readReg(address);
+                const hexValue = '0x' + value.toString(16).padStart(8, '0').toUpperCase();
+                log(`Register value: ${hexValue} (${value})`, 'info');
+                document.getElementById('regValue').textContent = `${hexValue} (${value})`;
+            } catch (error) {
+                log(`Read register error: ${error.message}`, 'error');
+            }
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                selectedFile = file;
+                const fileInfo = document.getElementById('fileInfo');
+                const sizeKB = (file.size / 1024).toFixed(2);
+                fileInfo.textContent = `Selected: ${file.name} (${sizeKB} KB)`;
+                fileInfo.style.display = 'block';
+                log(`File selected: ${file.name} (${sizeKB} KB)`, 'info');
+                
+                // Update button states with current flasher status
+                if (flasher && flasher.current_chip !== 'none') {
+                    updateButtons(true, true, flasher.stubLoaded || false);
+                }
+            }
+        }
+
+        async function writeFlash() {
+            if (!flasher || !selectedFile) return;
+            try {
+                const address = parseInt(document.getElementById('flashAddress').value);
+                log(`Reading file data...`, 'info');
+                
+                const arrayBuffer = await selectedFile.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+                
+                log(`Writing ${data.length} bytes to flash at 0x${address.toString(16).padStart(8, '0')}...`, 'info');
+                updateStatus('Writing flash...', 'busy');
+                
+                const progressBar = document.getElementById('flashProgress');
+                progressBar.style.transition = 'none'; // Disable smooth transition
+                
+                await flasher.writeFlash(address, data, (offset, total) => {
+                    const percent = Math.round((offset / total) * 100);
+                    progressBar.style.width = percent + '%';
+                    progressBar.textContent = percent + '%';
+                });
+                
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                log('Flash write completed successfully!', 'info');
+                updateStatus('Connected & Synced', 'connected');
+                
+                setTimeout(() => {
+                    progressBar.style.width = '0%';
+                    progressBar.textContent = '0%';
+                }, 3000);
+            } catch (error) {
+                log(`Flash write error: ${error.message}`, 'error');
+                updateStatus('Connected & Synced', 'connected');
+            }
+        }
+
+        async function readFlash() {
+            if (!flasher) return;
+            try {
+                const address = parseInt(document.getElementById('flashAddress').value);
+                const totalSize = parseInt(document.getElementById('flashSize').value);
+                const blockSize = 0x1000; // Read in 4KB blocks
+                
+                log(`Reading ${totalSize} bytes from flash at 0x${address.toString(16).padStart(8, '0')}...`, 'info');
+                updateStatus('Reading flash...', 'busy');
+                
+                const progressBar = document.getElementById('flashProgress');
+                progressBar.style.transition = 'none'; // Disable smooth transition
+                
+                // Allocate buffer for all data
+                const allData = new Uint8Array(totalSize);
+                let offset = 0;
+                
+                while (offset < totalSize) {
+                    const readSize = Math.min(blockSize, totalSize - offset);
+                    const data = await flasher.readFlash(address + offset, readSize);
+                    
+                    // Copy data to buffer
+                    allData.set(data.slice(0, readSize), offset);
+                    offset += readSize;
+                    
+                    // Update progress
+                    const percent = Math.round((offset / totalSize) * 100);
+                    progressBar.style.width = percent + '%';
+                    progressBar.textContent = percent + '%';
+                    
+                    if (offset % (blockSize * 10) === 0) {
+                        log(`Read ${offset} / ${totalSize} bytes (${percent}%)`, 'debug');
+                    }
+                }
+                
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                
+                // Download the data as a binary file
+                const blob = new Blob([allData], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `flash_dump_0x${address.toString(16)}_${totalSize}bytes.bin`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                log(`Read ${totalSize} bytes successfully and saved to file`, 'info');
+                updateStatus('Connected & Synced', 'connected');
+                
+                setTimeout(() => {
+                    progressBar.style.width = '0%';
+                    progressBar.textContent = '0%';
+                }, 3000);
+            } catch (error) {
+                log(`Flash read error: ${error.message}`, 'error');
+                updateStatus('Connected & Synced', 'connected');
+            }
+        }
+
+        async function testReliability() {
+            if (!flasher) return;
+            try {
+                log('Starting reliability test (1 second)...', 'info');
+                updateStatus('Testing reliability...', 'busy');
+                document.getElementById('testResult').textContent = 'Testing...';
+                
+                const progressBar = document.getElementById('testProgress');
+                progressBar.style.transition = 'none'; // Disable smooth transition
+                
+                const result = await flasher.testReliability((progress) => {
+                    progressBar.style.width = progress + '%';
+                    progressBar.textContent = Math.round(progress) + '%';
+                });
+                
+                progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
+                
+                if (result) {
+                    log('Reliability test PASSED', 'info');
+                    document.getElementById('testResult').textContent = '✓ PASSED';
+                    document.getElementById('testResult').style.color = '#2e7d32';
+                } else {
+                    log('Reliability test FAILED', 'error');
+                    document.getElementById('testResult').textContent = '✗ FAILED';
+                    document.getElementById('testResult').style.color = '#c62828';
+                }
+                
+                updateStatus('Connected & Synced', 'connected');
+                
+                setTimeout(() => {
+                    document.getElementById('testProgress').style.width = '0%';
+                    document.getElementById('testProgress').textContent = '0%';
+                }, 3000);
+            } catch (error) {
+                log(`Reliability test error: ${error.message}`, 'error');
+                document.getElementById('testResult').textContent = '✗ ERROR';
+                document.getElementById('testResult').style.color = '#c62828';
+                updateStatus('Connected & Synced', 'connected');
+            }
+        }
+
+        async function blankCheck() {
+            if (!flasher) return;
+            try {
+                log('Starting blank check (this may take a while)...', 'info');
+                updateStatus('Checking flash...', 'busy');
+                
+                const progressBar = document.getElementById('testProgress');
+                progressBar.style.transition = 'none'; // Disable smooth transition
+                
+                await flasher.blankCheck((current, start, end, blockSize, erased, totalErased) => {
+                    const progress = ((current - start) / (end - start)) * 100;
+                    progressBar.style.width = progress + '%';
+                    progressBar.textContent = Math.round(progress) + '%';
+                    
+                    if (Math.round(progress) % 10 === 0) {
+                        const percentErased = (totalErased / current) * 100;
+                        log(`Progress: ${Math.round(progress)}% | Erased: ${percentErased.toFixed(1)}%`, 'debug');
+                    }
+                });
+                
+                log('Blank check completed', 'info');
+                updateStatus('Connected & Synced', 'connected');
+            } catch (error) {
+                log(`Blank check error: ${error.message}`, 'error');
+                updateStatus('Connected & Synced', 'connected');
+            }
+        }
+
+        function toggleDebugMode() {
+            if (flasher) {
+                flasher.devMode = !flasher.devMode;
+                log(`Debug mode ${flasher.devMode ? 'ENABLED' : 'DISABLED'}`, 'info');
+            } else {
+                log('Connect to a device first', 'warn');
+            }
+        }
+
+        // Initialize
+        window.onload = () => {
+            log('ESP32 Flasher Test Suite initialized', 'info');
+            log('Supported chips: ESP32, ESP32-S2, ESP32-S3, ESP32-C3, ESP32-C6', 'info');
+            updateButtons(false, false, false);
+        };
+    </script>
+</body>
+</html>
