@@ -119,14 +119,14 @@ class ESPFlasher {
             // Register for device lost
             navigator.serial.addEventListener('disconnect', (event) => {
                 if (event.target === this.port) {
-                    logError(`The device was disconnected`);
+                    this.logError(`The device was disconnected`);
                     this.disconnect();
                 }
             });
 
             // Register for port closing
             this.port.addEventListener('close', () => {
-                logError('Serial port closed');
+                this.logError('Serial port closed');
                 this.disconnect();
             });
 
@@ -590,7 +590,7 @@ class ESPFlasher {
 
                     const writer = this.port.writable.getWriter();
                     await writer.write(slipFrame);
-                    await writer.releaseLock();
+                    writer.releaseLock();
                 } else if (packet == 1) {
                     resolve(data);
                 }
