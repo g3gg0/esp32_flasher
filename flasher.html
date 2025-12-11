@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -156,10 +157,21 @@
             word-break: break-all;
         }
 
-        .log-debug { color: #4fc3f7; }
-        .log-info { color: #81c784; }
-        .log-error { color: #e57373; }
-        .log-warn { color: #ffb74d; }
+        .log-debug {
+            color: #4fc3f7;
+        }
+
+        .log-info {
+            color: #81c784;
+        }
+
+        .log-error {
+            color: #e57373;
+        }
+
+        .log-warn {
+            color: #ffb74d;
+        }
 
         .progress-bar {
             width: 100%;
@@ -308,15 +320,20 @@
         }
 
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
 
         .spinner {
             display: inline-block;
             width: 16px;
             height: 16px;
-            border: 3px solid rgba(255,255,255,.3);
+            border: 3px solid rgba(255, 255, 255, .3);
             border-radius: 50%;
             border-top-color: white;
             animation: spin 1s ease-in-out infinite;
@@ -325,18 +342,21 @@
         }
 
         @keyframes glow {
-            0%, 100% {
-                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.6), 
-                            0 0 30px rgba(255, 255, 0, 0.8),
-                            0 0 50px rgba(255, 255, 0, 0.6),
-                            inset 0 0 20px rgba(255, 255, 0, 0.3);
+
+            0%,
+            100% {
+                box-shadow: 0 4px 15px rgba(102, 126, 234, 0.6),
+                    0 0 30px rgba(255, 255, 0, 0.8),
+                    0 0 50px rgba(255, 255, 0, 0.6),
+                    inset 0 0 20px rgba(255, 255, 0, 0.3);
                 transform: scale(1);
             }
+
             50% {
-                box-shadow: 0 4px 25px rgba(102, 126, 234, 0.8), 
-                            0 0 50px rgba(255, 255, 0, 1),
-                            0 0 80px rgba(255, 255, 0, 0.8),
-                            inset 0 0 30px rgba(255, 255, 0, 0.5);
+                box-shadow: 0 4px 25px rgba(102, 126, 234, 0.8),
+                    0 0 50px rgba(255, 255, 0, 1),
+                    0 0 80px rgba(255, 255, 0, 0.8),
+                    inset 0 0 30px rgba(255, 255, 0, 0.5);
                 transform: scale(1.02);
             }
         }
@@ -347,6 +367,7 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <div class="header">
@@ -427,8 +448,10 @@
             <div class="section">
                 <h2>💿 Flash Operations</h2>
                 <div class="button-group">
-                    <button id="writeFlashBtn" onclick="writeFlash()" disabled title="Load stub loader first">Write Flash</button>
-                    <button id="readFlashBtn" onclick="readFlash()" disabled title="Load stub loader first">Read Flash & Download</button>
+                    <button id="writeFlashBtn" onclick="writeFlash()" disabled title="Load stub loader first">Write
+                        Flash</button>
+                    <button id="readFlashBtn" onclick="readFlash()" disabled title="Load stub loader first">Read Flash &
+                        Download</button>
                 </div>
                 <div class="input-group">
                     <label for="flashAddress">Flash Address (hex):</label>
@@ -436,7 +459,7 @@
                 </div>
                 <div class="input-group">
                     <label for="flashSize">Read Size (bytes, hex):</label>
-                    <input type="text" id="flashSize" placeholder="0x100000" value="0x100000">
+                    <input type="text" id="flashSize" placeholder="0x00800000" value="0x00800000">
                 </div>
                 <div class="file-input-wrapper">
                     <input type="file" id="flashFile" accept=".bin" onchange="handleFileSelect(event)">
@@ -453,7 +476,18 @@
                 <h2>🧪 Testing & Diagnostics</h2>
                 <div class="button-group">
                     <button id="testReliabilityBtn" onclick="testReliability()" disabled>Test Reliability</button>
-                    <button id="blankCheckBtn" onclick="blankCheck()" disabled title="Load stub loader first (required for blank check)">Blank Check</button>
+                    <button id="blankCheckBtn" onclick="blankCheck()" disabled
+                        title="Load stub loader first (required for blank check)">Blank Check</button>
+                    <button id="writeReadTestBtn" onclick="writeReadTest()" disabled
+                        title="Load stub loader first">Write/Read Test</button>
+                </div>
+                <div class="input-group">
+                    <label for="testAddress">Test Address (hex):</label>
+                    <input type="text" id="testAddress" placeholder="0x00010000" value="0x00010000">
+                </div>
+                <div class="input-group">
+                    <label for="testSize">Test Size (bytes, hex):</label>
+                    <input type="text" id="testSize" placeholder="0x1000" value="0x1000">
                 </div>
                 <div class="progress-bar">
                     <div class="progress-fill" id="testProgress">0%</div>
@@ -462,6 +496,11 @@
                     <div class="info-row">
                         <span class="info-label">Test Result:</span>
                         <span class="info-value" id="testResult">--</span>
+                    </div>
+                    <div class="info-row" id="testDetailsRow" style="display: none;">
+                        <span class="info-label">Details:</span>
+                        <span class="info-value" id="testDetails"
+                            style="font-family: inherit; font-size: 12px;">--</span>
                     </div>
                 </div>
             </div>
@@ -539,7 +578,7 @@
         function updateRegisterPresets(chipType) {
             const presetSelect = document.getElementById('regPreset');
             presetSelect.innerHTML = '<option value="">-- Select a register --</option>';
-            
+
             if (chipType && chipType !== 'none' && chipType !== 'unknown' && registerPresets[chipType]) {
                 const presets = registerPresets[chipType];
                 presets.forEach(preset => {
@@ -555,7 +594,7 @@
         function loadRegisterPreset() {
             const presetSelect = document.getElementById('regPreset');
             const selectedValue = presetSelect.value;
-            
+
             if (selectedValue) {
                 const preset = JSON.parse(selectedValue);
                 document.getElementById('regAddress').value = '0x' + preset.addr.toString(16).toUpperCase();
@@ -594,30 +633,36 @@
             document.getElementById('disconnectBtn').disabled = !connected;
             document.getElementById('hardResetBtn').disabled = !connected;
             document.getElementById('syncBtn').disabled = !connected;
-            document.getElementById('loadStubBtn').disabled = !synced;
+            document.getElementById('loadStubBtn').disabled = !synced || stubLoaded;
             document.getElementById('readRegBtn').disabled = !synced;
-            document.getElementById('writeFlashBtn').disabled = !stubLoaded || !selectedFile;
+            document.getElementById('writeFlashBtn').disabled = !selectedFile || !stubLoaded;
             document.getElementById('readFlashBtn').disabled = !stubLoaded;
             document.getElementById('testReliabilityBtn').disabled = !synced;
             document.getElementById('blankCheckBtn').disabled = !stubLoaded;
-            
+            document.getElementById('writeReadTestBtn').disabled = !stubLoaded;
+            document.getElementById('stubStatus').textContent = stubLoaded ? 'Loaded' : 'Not loaded';
+
             // Update tooltips
             const writeBtn = document.getElementById('writeFlashBtn');
             const readBtn = document.getElementById('readFlashBtn');
             const blankBtn = document.getElementById('blankCheckBtn');
-            
+            const testBtn = document.getElementById('writeReadTestBtn');
+
             if (!stubLoaded) {
                 writeBtn.title = 'Load stub loader first';
                 readBtn.title = 'Load stub loader first';
                 blankBtn.title = 'Load stub loader first';
+                testBtn.title = 'Load stub loader first';
             } else if (!selectedFile) {
                 writeBtn.title = 'Select a binary file first';
                 readBtn.title = 'Read data from flash and download as binary';
                 blankBtn.title = 'Check if flash is blank';
+                testBtn.title = 'Write random data and verify readback';
             } else {
                 writeBtn.title = 'Write binary to flash';
                 readBtn.title = 'Read data from flash and download as binary';
                 blankBtn.title = 'Check if flash is blank';
+                testBtn.title = 'Write random data and verify readback';
             }
         }
 
@@ -625,10 +670,10 @@
             try {
                 log('Requesting serial port...', 'info');
                 flasher = new ESPFlasher();
-                
+
                 flasher.logDebug = (msg) => log(`[DEBUG] ${msg}`, 'debug');
                 flasher.logError = (msg, detail = '') => log(`[ERROR] ${msg} ${detail}`, 'error');
-                
+
                 flasher.disconnected = () => {
                     log('Device disconnected', 'warn');
                     updateStatus('Disconnected', 'disconnected');
@@ -641,13 +686,14 @@
                 await flasher.openPort();
                 log('Serial port opened successfully', 'info');
                 updateStatus('Connected', 'connected');
+
                 updateButtons(true, false, false);
-                
+
                 // Highlight Hard Reset button to indicate next step
                 const hardResetBtn = document.getElementById('hardResetBtn');
                 hardResetBtn.classList.add('highlighted');
                 log('Please click "Hard Reset" to continue...', 'info');
-                
+
             } catch (error) {
                 log(`Failed to connect: ${error.message}`, 'error');
                 updateStatus('Connection failed', 'disconnected');
@@ -659,7 +705,7 @@
             try {
                 const hardResetBtn = document.getElementById('hardResetBtn');
                 hardResetBtn.classList.remove('highlighted');
-                
+
                 updateStatus('Performing hard reset...', 'busy');
                 log('Initiating hard reset...', 'info');
                 const result = await flasher.hardReset(true);
@@ -669,12 +715,12 @@
                     log('Hard reset failed or not supported', 'warn');
                 }
                 updateStatus('Connected', 'connected');
-                
+
                 // Highlight Sync button for next step
                 const syncBtn = document.getElementById('syncBtn');
                 syncBtn.classList.add('highlighted');
                 log('Please click "Sync & Detect" to continue...', 'info');
-                
+
             } catch (error) {
                 log(`Hard reset error: ${error.message}`, 'error');
                 updateStatus('Connected (Error)', 'warning');
@@ -686,25 +732,25 @@
             try {
                 const syncBtn = document.getElementById('syncBtn');
                 syncBtn.classList.remove('highlighted');
-                
+
                 updateStatus('Syncing with device...', 'busy');
                 log('Starting sync process...', 'info');
                 await flasher.sync();
                 log(`Sync successful! Detected chip: ${flasher.current_chip}`, 'info');
                 document.getElementById('chipType').textContent = flasher.current_chip;
-                
+
                 // Update register presets based on detected chip
                 updateRegisterPresets(flasher.current_chip);
-                
+
                 // Read MAC address
                 const mac = await flasher.readMac();
                 if (mac) {
                     log(`MAC Address: ${mac}`, 'info');
                     document.getElementById('macAddress').textContent = mac;
                 }
-                
+
                 updateStatus('Connected & Synced', 'connected');
-                updateButtons(true, true, false);
+                updateButtons(true, true, await flasher.isStubLoader());
             } catch (error) {
                 log(`Sync failed: ${error.message}`, 'error');
                 updateStatus('Connected (Sync Failed)', 'warning');
@@ -720,7 +766,7 @@
                 log('Disconnected successfully', 'info');
                 updateStatus('Disconnected', 'disconnected');
                 updateButtons(false, false, false);
-                
+
                 // Clear any highlights
                 document.getElementById('hardResetBtn').classList.remove('highlighted');
                 document.getElementById('syncBtn').classList.remove('highlighted');
@@ -737,8 +783,7 @@
                 const result = await flasher.downloadStub();
                 if (result) {
                     log('Stub loaded successfully!', 'info');
-                    document.getElementById('stubStatus').textContent = 'Loaded';
-                    updateButtons(true, true, true);
+                    updateButtons(true, true, await flasher.isStubLoader());
                 } else {
                     log('Failed to load stub', 'error');
                 }
@@ -763,7 +808,7 @@
             }
         }
 
-        function handleFileSelect(event) {
+        async function handleFileSelect(event) {
             const file = event.target.files[0];
             if (file) {
                 selectedFile = file;
@@ -772,10 +817,10 @@
                 fileInfo.textContent = `Selected: ${file.name} (${sizeKB} KB)`;
                 fileInfo.style.display = 'block';
                 log(`File selected: ${file.name} (${sizeKB} KB)`, 'info');
-                
+
                 // Update button states with current flasher status
                 if (flasher && flasher.current_chip !== 'none') {
-                    updateButtons(true, true, flasher.stubLoaded || false);
+                    updateButtons(true, true, await flasher.isStubLoader());
                 }
             }
         }
@@ -785,27 +830,27 @@
             try {
                 const address = parseInt(document.getElementById('flashAddress').value);
                 log(`Reading file data...`, 'info');
-                
+
                 const arrayBuffer = await selectedFile.arrayBuffer();
                 const data = new Uint8Array(arrayBuffer);
-                
+
                 log(`Writing ${data.length} bytes to flash at 0x${address.toString(16).padStart(8, '0')}...`, 'info');
                 updateStatus('Writing flash...', 'busy');
-                
+
                 const progressBar = document.getElementById('flashProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
-                
+
                 await flasher.writeFlash(address, data, (offset, total) => {
                     const percent = Math.round((offset / total) * 100);
                     progressBar.style.width = percent + '%';
                     progressBar.textContent = percent + '%';
                 });
-                
+
                 progressBar.style.width = '100%';
                 progressBar.textContent = '100%';
                 log('Flash write completed successfully!', 'info');
                 updateStatus('Connected & Synced', 'connected');
-                
+
                 setTimeout(() => {
                     progressBar.style.width = '0%';
                     progressBar.textContent = '0%';
@@ -822,38 +867,38 @@
                 const address = parseInt(document.getElementById('flashAddress').value);
                 const totalSize = parseInt(document.getElementById('flashSize').value);
                 const blockSize = 0x1000; // Read in 4KB blocks
-                
+
                 log(`Reading ${totalSize} bytes from flash at 0x${address.toString(16).padStart(8, '0')}...`, 'info');
                 updateStatus('Reading flash...', 'busy');
-                
+
                 const progressBar = document.getElementById('flashProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
-                
+
                 // Allocate buffer for all data
                 const allData = new Uint8Array(totalSize);
                 let offset = 0;
-                
+
                 while (offset < totalSize) {
                     const readSize = Math.min(blockSize, totalSize - offset);
                     const data = await flasher.readFlash(address + offset, readSize);
-                    
+
                     // Copy data to buffer
                     allData.set(data.slice(0, readSize), offset);
                     offset += readSize;
-                    
+
                     // Update progress
                     const percent = Math.round((offset / totalSize) * 100);
                     progressBar.style.width = percent + '%';
                     progressBar.textContent = percent + '%';
-                    
+
                     if (offset % (blockSize * 10) === 0) {
                         log(`Read ${offset} / ${totalSize} bytes (${percent}%)`, 'debug');
                     }
                 }
-                
+
                 progressBar.style.width = '100%';
                 progressBar.textContent = '100%';
-                
+
                 // Download the data as a binary file
                 const blob = new Blob([allData], { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
@@ -864,10 +909,10 @@
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                
+
                 log(`Read ${totalSize} bytes successfully and saved to file`, 'info');
                 updateStatus('Connected & Synced', 'connected');
-                
+
                 setTimeout(() => {
                     progressBar.style.width = '0%';
                     progressBar.textContent = '0%';
@@ -884,18 +929,18 @@
                 log('Starting reliability test (1 second)...', 'info');
                 updateStatus('Testing reliability...', 'busy');
                 document.getElementById('testResult').textContent = 'Testing...';
-                
+
                 const progressBar = document.getElementById('testProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
-                
+
                 const result = await flasher.testReliability((progress) => {
                     progressBar.style.width = progress + '%';
                     progressBar.textContent = Math.round(progress) + '%';
                 });
-                
+
                 progressBar.style.width = '100%';
                 progressBar.textContent = '100%';
-                
+
                 if (result) {
                     log('Reliability test PASSED', 'info');
                     document.getElementById('testResult').textContent = '✓ PASSED';
@@ -905,9 +950,9 @@
                     document.getElementById('testResult').textContent = '✗ FAILED';
                     document.getElementById('testResult').style.color = '#c62828';
                 }
-                
+
                 updateStatus('Connected & Synced', 'connected');
-                
+
                 setTimeout(() => {
                     document.getElementById('testProgress').style.width = '0%';
                     document.getElementById('testProgress').textContent = '0%';
@@ -925,26 +970,93 @@
             try {
                 log('Starting blank check (this may take a while)...', 'info');
                 updateStatus('Checking flash...', 'busy');
-                
+
                 const progressBar = document.getElementById('testProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
-                
+
                 await flasher.blankCheck((current, start, end, blockSize, erased, totalErased) => {
                     const progress = ((current - start) / (end - start)) * 100;
                     progressBar.style.width = progress + '%';
                     progressBar.textContent = Math.round(progress) + '%';
-                    
+
                     if (Math.round(progress) % 10 === 0) {
                         const percentErased = (totalErased / current) * 100;
                         log(`Progress: ${Math.round(progress)}% | Erased: ${percentErased.toFixed(1)}%`, 'debug');
                     }
                 });
-                
+
                 log('Blank check completed', 'info');
                 updateStatus('Connected & Synced', 'connected');
             } catch (error) {
                 log(`Blank check error: ${error.message}`, 'error');
                 updateStatus('Connected (Check Failed)', 'warning');
+            }
+        }
+
+        async function writeReadTest() {
+            if (!flasher) return;
+            try {
+                const address = parseInt(document.getElementById('testAddress').value);
+                const size = parseInt(document.getElementById('testSize').value);
+
+                log(`Starting Write/Read test at 0x${address.toString(16).padStart(8, '0')}, size: ${size} bytes`, 'info');
+                updateStatus('Running Write/Read test...', 'busy');
+                document.getElementById('testResult').textContent = 'Testing...';
+                document.getElementById('testDetailsRow').style.display = 'none';
+
+                const progressBar = document.getElementById('testProgress');
+                progressBar.style.transition = 'none';
+
+                const result = await flasher.writeReadTest(address, size, (stage, current, total, percent = 0, data = null) => {
+                    if (stage === 'reading_original') {
+                        progressBar.style.width = '10%';
+                        progressBar.textContent = 'Reading original...';
+                    } else if (stage === 'generating_random') {
+                        progressBar.style.width = '20%';
+                        progressBar.textContent = 'Generating random...';
+                    } else if (stage === 'writing') {
+                        const writeProgress = 20 + (percent * 0.5); // 20-70%
+                        progressBar.style.width = writeProgress + '%';
+                        progressBar.textContent = `Writing... ${percent}%`;
+                    } else if (stage === 'reading_back') {
+                        progressBar.style.width = '80%';
+                        progressBar.textContent = 'Reading back...';
+                    } else if (stage === 'complete') {
+                        progressBar.style.width = '100%';
+                        progressBar.textContent = '100%';
+
+                        if (data && data.success) {
+                            log(`✓ Write/Read test PASSED: All ${size} bytes verified!`, 'info');
+                            document.getElementById('testResult').textContent = '✓ PASSED';
+                            document.getElementById('testResult').style.color = '#2e7d32';
+                            document.getElementById('testDetailsRow').style.display = 'flex';
+                            document.getElementById('testDetails').textContent = `All ${size} bytes matched after write/read cycle`;
+                        } else if (data && !data.success) {
+                            log(`✗ Write/Read test FAILED: ${data.errors} byte(s) mismatch`, 'error');
+                            document.getElementById('testResult').textContent = '✗ FAILED';
+                            document.getElementById('testResult').style.color = '#c62828';
+                            document.getElementById('testDetailsRow').style.display = 'flex';
+                            document.getElementById('testDetails').textContent = `${data.errors} byte(s) mismatch. First error at offset 0x${data.firstError.toString(16)}`;
+                        }
+                    } else if (stage === 'error') {
+                        progressBar.style.width = '0%';
+                        progressBar.textContent = '0%';
+                    }
+                });
+
+                updateStatus('Connected & Synced', 'connected');
+
+                setTimeout(() => {
+                    progressBar.style.width = '0%';
+                    progressBar.textContent = '0%';
+                }, 5000);
+            } catch (error) {
+                log(`Write/Read test error: ${error.message}`, 'error');
+                document.getElementById('testResult').textContent = '✗ ERROR';
+                document.getElementById('testResult').style.color = '#c62828';
+                document.getElementById('testDetailsRow').style.display = 'flex';
+                document.getElementById('testDetails').textContent = error.message;
+                updateStatus('Connected (Test Failed)', 'warning');
             }
         }
 
@@ -965,4 +1077,5 @@
         };
     </script>
 </body>
+
 </html>

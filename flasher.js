@@ -170,6 +170,24 @@ class ESPFlasher {
             });
     }
 
+
+    async isStubLoader() {
+        return this.executeCommand(this.buildCommandPacketU32(READ_REG, this.chip_magic_addr),
+            async (resolve, reject, responsePacket) => {
+                if (responsePacket && responsePacket.data) {
+                    if (responsePacket.data.length == 2) {
+                        resolve(true);
+                    }
+                    if (responsePacket.data.length == 4) {
+                        resolve(false);
+                    }
+                    reject('Unexpected length');
+                } else {
+                    reject('Failed to read register');
+                }
+            });
+    }
+
     async executeCommand(packet, callback, default_callback, timeout = 500) {
         if (!this.port || !this.port.writable) {
             throw new Error("Port is not writable.");
@@ -536,15 +554,18 @@ class ESPFlasher {
     }
 
     async writeFlash(address, data, progressCallback) {
-
         const MAX_PACKET_SIZE = 1024;
         const packets = Math.ceil(data.length / MAX_PACKET_SIZE);
 
-        /* Send FLASH_BEGIN command with the total data size */
+        /* Send FLASH_BEGIN command with the total data size
+           according to https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/serial-protocol.html
+           the ROM bootloader is also able to flash. unfortunately there are some issues with it.
+           it doesn't respond anymore. use with stub only!
+        */        
         await this.executeCommand(
             this.buildCommandPacketU32(FLASH_BEGIN, data.length, packets,
                 Math.min(MAX_PACKET_SIZE, data.length),
-                address, 0
+                address
             ),
             async (resolve) => {
                 resolve();
@@ -571,7 +592,7 @@ class ESPFlasher {
         }
     }
 
-    async readFlash(address, blockSize = 0x100) {
+    async readFlash(address, blockSize = 0x100, bulletproof = true) {
         let packet = 0;
         var data = {};
 
@@ -579,34 +600,70 @@ class ESPFlasher {
             blockSize = 0x1000;
         }
 
-        return this.executeCommand(
-            this.buildCommandPacketU32(READ_FLASH, address, blockSize, 0x1000, 1),
-            async (resolve, reject, responsePacket) => {
-                packet = 0;
-            },
-            async (resolve, reject, rawData) => {
-                if (packet == 0) {
-                    data = rawData;
+        const performRead = async () => {
+            packet = 0;
+            return this.executeCommand(
+                this.buildCommandPacketU32(READ_FLASH, address, blockSize, 0x1000, 1),
+                async (resolve, reject, responsePacket) => {
+                    packet = 0;
+                },
+                async (resolve, reject, rawData) => {
+                    if (packet == 0) {
+                        data = rawData;
 
-                    /* Prepare response */
-                    var resp = new Uint8Array(4);
-                    resp[0] = (blockSize >> 0) & 0xFF;
-                    resp[1] = (blockSize >> 8) & 0xFF;
-                    resp[2] = (blockSize >> 16) & 0xFF;
-                    resp[3] = (blockSize >> 24) & 0xFF;
+                        /* Prepare response */
+                        var resp = new Uint8Array(4);
+                        resp[0] = (blockSize >> 0) & 0xFF;
+                        resp[1] = (blockSize >> 8) & 0xFF;
+                        resp[2] = (blockSize >> 16) & 0xFF;
+                        resp[3] = (blockSize >> 24) & 0xFF;
 
-                    /* Encode and write response */
-                    const slipFrame = this.slipLayer.encode(resp);
+                        /* Encode and write response */
+                        const slipFrame = this.slipLayer.encode(resp);
 
-                    const writer = this.port.writable.getWriter();
-                    await writer.write(slipFrame);
-                    writer.releaseLock();
-                } else if (packet == 1) {
-                    resolve(data);
+                        const writer = this.port.writable.getWriter();
+                        await writer.write(slipFrame);
+                        writer.releaseLock();
+                    } else if (packet == 1) {
+                        resolve(data);
+                    }
+                    packet++;
+                },
+                1000
+            );
+        };
+
+        if (bulletproof) {
+            /* Read twice and verify they match */
+            const firstRead = await performRead();
+            const secondRead = await performRead();
+
+            /* Compare the two reads */
+            if (firstRead.length !== secondRead.length) {
+                this.logError(`Bulletproof read failed: length mismatch (${firstRead.length} vs ${secondRead.length})`);
+                throw new Error(`Bulletproof read failed: length mismatch at address 0x${address.toString(16)}`);
+            }
+
+            for (let i = 0; i < firstRead.length; i++) {
+                if (firstRead[i] !== secondRead[i]) {
+                    this.logError(`Bulletproof read failed: data mismatch at offset ${i} (0x${firstRead[i].toString(16)} vs 0x${secondRead[i].toString(16)})`);
+                    throw new Error(`Bulletproof read failed: data mismatch at address 0x${(address + i).toString(16)}`);
                 }
-                packet++;
-            },
-            1000
+            }
+
+            this.logDebug(`Bulletproof read verified: ${firstRead.length} bytes at 0x${address.toString(16).padStart(8, '0')}`);
+            return firstRead;
+        } else {
+            return performRead();
+        }
+    }
+
+    async checksumFlash(address, length) {
+        return this.executeCommand(
+            this.buildCommandPacketU32(SPI_FLASH_MD5, address, length, 0, 0),
+            async (resolve, reject, responsePacket) => {
+                console.log(responsePacket);
+            }, null, 1000
         );
     }
 
@@ -651,6 +708,107 @@ class ESPFlasher {
         if (totalReads > 0) {
             const averageTime = totalTime / totalReads;
             this.logDebug(`Average read time: ${averageTime.toFixed(2)} ms over ${totalReads} reads.`);
+        }
+    }
+
+    async writeReadTest(address, size, cbr) {
+        try {
+            /* Step 1: Read original data */
+            this.logDebug(`Test: Reading original ${size} bytes from 0x${address.toString(16).padStart(8, '0')}...`);
+            cbr && cbr('reading_original', 0, 3);
+            const originalData = await this.readFlash(address, size);
+            this.logDebug(`Original data read complete`);
+
+            /* Hexdump original data (first 64 bytes) */
+            const dumpSize = Math.min(64, size);
+            this.logDebug(`Original data hexdump (first ${dumpSize} bytes):`);
+            for (let i = 0; i < dumpSize; i += 16) {
+                const chunk = originalData.slice(i, i + 16);
+                const hex = Array.from(chunk).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                const ascii = Array.from(chunk).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+                this.logDebug(`  ${(address + i).toString(16).padStart(8, '0')}: ${hex.padEnd(47, ' ')} |${ascii}|`);
+            }
+
+            /* Step 2: Generate random data */
+            this.logDebug(`Test: Generating ${size} bytes of random data...`);
+            cbr && cbr('generating_random', 1, 3);
+            const randomData = new Uint8Array(size);
+            for (let i = 0; i < size; i++) {
+                randomData[i] = Math.floor(Math.random() * 256);
+            }
+            this.logDebug(`Random data generated`);
+
+            /* Hexdump random data (first 64 bytes) */
+            this.logDebug(`Random data hexdump (first ${dumpSize} bytes):`);
+            for (let i = 0; i < dumpSize; i += 16) {
+                const chunk = randomData.slice(i, i + 16);
+                const hex = Array.from(chunk).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                const ascii = Array.from(chunk).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+                this.logDebug(`  ${(address + i).toString(16).padStart(8, '0')}: ${hex.padEnd(47, ' ')} |${ascii}|`);
+            }
+
+            /* Step 3: Write random data to flash */
+            this.logDebug(`Test: Writing ${size} bytes to flash at 0x${address.toString(16).padStart(8, '0')}...`);
+            cbr && cbr('writing', 2, 3);
+            await this.writeFlash(address, randomData, (offset, total) => {
+                const percent = Math.round((offset / total) * 100);
+                cbr && cbr('writing', 2, 3, percent);
+            });
+            this.logDebug(`Write complete`);
+
+            /* Step 4: Read back the data */
+            this.logDebug(`Test: Reading back ${size} bytes from 0x${address.toString(16).padStart(8, '0')}...`);
+            cbr && cbr('reading_back', 3, 3);
+            const readbackData = await this.readFlash(address, size);
+            this.logDebug(`Readback complete`);
+
+            /* Hexdump readback data (first 64 bytes) */
+            this.logDebug(`Readback data hexdump (first ${dumpSize} bytes):`);
+            for (let i = 0; i < dumpSize; i += 16) {
+                const chunk = readbackData.slice(i, i + 16);
+                const hex = Array.from(chunk).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                const ascii = Array.from(chunk).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+                this.logDebug(`  ${(address + i).toString(16).padStart(8, '0')}: ${hex.padEnd(47, ' ')} |${ascii}|`);
+            }
+
+            /* Step 5: Verify data matches */
+            let errors = 0;
+            let firstError = -1;
+            for (let i = 0; i < size; i++) {
+                if (randomData[i] !== readbackData[i]) {
+                    if (firstError === -1) {
+                        firstError = i;
+                    }
+                    errors++;
+                }
+            }
+
+            const result = {
+                success: errors === 0,
+                errors: errors,
+                firstError: firstError,
+                address: address,
+                size: size,
+                originalData: originalData,
+                randomData: randomData,
+                readbackData: readbackData
+            };
+
+            if (errors === 0) {
+                this.logDebug(`✓ Test PASSED: All ${size} bytes match!`);
+            } else {
+                this.logError(`✗ Test FAILED: ${errors} byte(s) mismatch!`);
+                this.logError(`  First error at offset 0x${firstError.toString(16).padStart(4, '0')} (byte ${firstError})`);
+                this.logError(`  Expected: 0x${randomData[firstError].toString(16).padStart(2, '0')}, Got: 0x${readbackData[firstError].toString(16).padStart(2, '0')}`);
+            }
+
+            cbr && cbr('complete', 3, 3, 100, result);
+            return result;
+
+        } catch (error) {
+            this.logError(`Write/Read test failed: ${error.message}`);
+            cbr && cbr('error', 0, 3, 0, { success: false, error: error.message });
+            throw error;
         }
     }
 
