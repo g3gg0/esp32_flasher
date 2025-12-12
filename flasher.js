@@ -188,7 +188,7 @@ class ESPFlasher {
             });
     }
 
-    async executeCommand(packet, callback, default_callback, timeout = 500) {
+    async executeCommand(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
         if (!this.port || !this.port.writable) {
             throw new Error("Port is not writable.");
         }
@@ -212,7 +212,13 @@ class ESPFlasher {
             }
 
             setTimeout(() => {
-                reject(new Error(`Timeout after ${timeout} ms waiting for response to command ${packet.command}`));
+                if (hasTimeoutCbr) {
+                    if (hasTimeoutCbr()) {
+                        reject(new Error(`Timeout in command ${packet.command}`));
+                    }
+                } else {
+                    reject(new Error(`Timeout after ${timeout} ms waiting for response to command ${packet.command}`));
+                }
             }, timeout);
         });
 
@@ -554,14 +560,14 @@ class ESPFlasher {
     }
 
     async writeFlash(address, data, progressCallback) {
-        const MAX_PACKET_SIZE = 1024;
+        const MAX_PACKET_SIZE = 0x1000;
         const packets = Math.ceil(data.length / MAX_PACKET_SIZE);
 
         /* Send FLASH_BEGIN command with the total data size
            according to https://docs.espressif.com/projects/esptool/en/latest/esp32s3/advanced-topics/serial-protocol.html
            the ROM bootloader is also able to flash. unfortunately there are some issues with it.
            it doesn't respond anymore. use with stub only!
-        */        
+        */
         await this.executeCommand(
             this.buildCommandPacketU32(FLASH_BEGIN, data.length, packets,
                 Math.min(MAX_PACKET_SIZE, data.length),
@@ -584,87 +590,242 @@ class ESPFlasher {
                     resolve();
                 },
                 null,
-                1000
+                5000
             );
+
             if (progressCallback) {
-                progressCallback(offset, data.length);
+                progressCallback(offset + chunk.length, data.length);
             }
         }
     }
 
-    async readFlash(address, blockSize = 0x100, bulletproof = true) {
-        let packet = 0;
-        var data = {};
+    async readFlash(address, length = 0x1000, progressCallback) {
 
-        if (blockSize > 0x1000) {
-            blockSize = 0x1000;
-        }
+        const performRead = async (cbr) => {
+            let sectorSize = 0x1000;
 
-        const performRead = async () => {
-            packet = 0;
+            if (sectorSize > length) {
+                sectorSize = length;
+            }
+            const packets = length / sectorSize;
+            let packet = 0;
+            let ackMax = 8;
+            var data = new Uint8Array(0);
+            var lastDataTime = Date.now();
+
             return this.executeCommand(
-                this.buildCommandPacketU32(READ_FLASH, address, blockSize, 0x1000, 1),
-                async (resolve, reject, responsePacket) => {
+                this.buildCommandPacketU32(READ_FLASH, address, length, sectorSize, ackMax),
+                async () => {
                     packet = 0;
                 },
                 async (resolve, reject, rawData) => {
-                    if (packet == 0) {
-                        data = rawData;
+                    lastDataTime = Date.now();
+
+                    if (data.length == length) {
+                        if (rawData.length == 16) {
+                            /* Calculate MD5 of received data */
+                            const calculatedMD5 = this.calculateMD5(data);
+
+                            /* Convert received MD5 bytes to hex string */
+                            const receivedMD5 = Array.from(rawData)
+                                .map(b => b.toString(16).padStart(2, '0'))
+                                .join('');
+
+                            /* Compare MD5 hashes */
+                            if (calculatedMD5.toLowerCase() === receivedMD5.toLowerCase()) {
+                                resolve(data);
+                            } else {
+                                const error = `MD5 mismatch! Expected: ${receivedMD5}, Got: ${calculatedMD5}`;
+                                console.error(error);
+                                reject(new Error(error));
+                            }
+                        } else {
+                            const error = `Unknown response length for MD5! Expected: 16, Got: ${rawData.length}`;
+                            console.error(error);
+                            reject(new Error(error));
+                        }
+                    } else {
+                        /* Append rawData to accumulated data */
+                        const newData = new Uint8Array(data.length + rawData.length);
+                        newData.set(data);
+                        newData.set(rawData, data.length);
+                        data = newData;
+
+                        /* Call progress callback */
+                        if (cbr) {
+                            cbr(data.length, length);
+                        }
 
                         /* Prepare response */
                         var resp = new Uint8Array(4);
-                        resp[0] = (blockSize >> 0) & 0xFF;
-                        resp[1] = (blockSize >> 8) & 0xFF;
-                        resp[2] = (blockSize >> 16) & 0xFF;
-                        resp[3] = (blockSize >> 24) & 0xFF;
+                        resp[0] = (data.length >> 0) & 0xFF;
+                        resp[1] = (data.length >> 8) & 0xFF;
+                        resp[2] = (data.length >> 16) & 0xFF;
+                        resp[3] = (data.length >> 24) & 0xFF;
 
                         /* Encode and write response */
                         const slipFrame = this.slipLayer.encode(resp);
-
                         const writer = this.port.writable.getWriter();
                         await writer.write(slipFrame);
                         writer.releaseLock();
-                    } else if (packet == 1) {
-                        resolve(data);
+                        packet++;
                     }
-                    packet++;
                 },
-                1000
+                1000 * packets,
+                /* Timeout condition: if the last raw data callback was more than a second ago */
+                () => {
+                    const timeSinceLastData = Date.now() - lastDataTime;
+                    return timeSinceLastData > 1000;
+                }
             );
         };
 
-        if (bulletproof) {
-            /* Read twice and verify they match */
-            const firstRead = await performRead();
-            const secondRead = await performRead();
-
-            /* Compare the two reads */
-            if (firstRead.length !== secondRead.length) {
-                this.logError(`Bulletproof read failed: length mismatch (${firstRead.length} vs ${secondRead.length})`);
-                throw new Error(`Bulletproof read failed: length mismatch at address 0x${address.toString(16)}`);
-            }
-
-            for (let i = 0; i < firstRead.length; i++) {
-                if (firstRead[i] !== secondRead[i]) {
-                    this.logError(`Bulletproof read failed: data mismatch at offset ${i} (0x${firstRead[i].toString(16)} vs 0x${secondRead[i].toString(16)})`);
-                    throw new Error(`Bulletproof read failed: data mismatch at address 0x${(address + i).toString(16)}`);
-                }
-            }
-
-            this.logDebug(`Bulletproof read verified: ${firstRead.length} bytes at 0x${address.toString(16).padStart(8, '0')}`);
-            return firstRead;
-        } else {
-            return performRead();
-        }
+        return performRead(progressCallback);
     }
 
     async checksumFlash(address, length) {
         return this.executeCommand(
             this.buildCommandPacketU32(SPI_FLASH_MD5, address, length, 0, 0),
             async (resolve, reject, responsePacket) => {
-                console.log(responsePacket);
-            }, null, 1000
+                /* MD5 response is in the data field */
+                if (responsePacket && responsePacket.data) {
+                    /* Convert data bytes to hex string */
+                    const md5 = Array.from(responsePacket.data.slice(0, 16))
+                        .map(b => b.toString(16).padStart(2, '0'))
+                        .join('');
+                    resolve(md5);
+                } else {
+                    reject('No MD5 data received');
+                }
+            },
+            async (resolve, reject, rawData) => {
+                /* Handle raw data response if it comes this way */
+                const decoder = new TextDecoder('utf-8');
+                const md5String = decoder.decode(rawData);
+                resolve(md5String.trim());
+            },
+            length / 1000 // Timeout based on length
         );
+    }
+
+    calculateMD5(data) {
+        /* Create MD5 hash using the Md5 class */
+        const md5 = new this.Md5();
+        md5.update(data);
+        return md5.hex();
+    }
+
+    async readFlashSafe(address, size, progressCallback) {
+        const BLOCK_SIZE = 64 * 0x1000;
+
+        try {
+            /* Step 1: Read data in 4KB blocks */
+            this.logDebug(`ReadFlashSafe: Reading ${size} bytes in ${BLOCK_SIZE}-byte blocks...`);
+            const allData = new Uint8Array(size);
+            let offset = 0;
+
+            while (offset < size) {
+                const readSize = Math.min(BLOCK_SIZE, size - offset);
+                let cbr = (read, readBlockSize) => {
+                    if (progressCallback) {
+                        progressCallback(offset + read, size, 'reading');
+                    }
+                }
+                const blockData = await this.readFlash(address + offset, readSize, cbr);
+
+                /* Copy block to buffer */
+                allData.set(blockData.slice(0, readSize), offset);
+                offset += readSize;
+
+                /* Call progress callback */
+                if (progressCallback) {
+                    progressCallback(offset, size, 'reading');
+                }
+
+                this.logDebug(`ReadFlashSafe: Read ${offset}/${size} bytes (${Math.round((offset / size) * 100)}%)`);
+            }
+
+            /* Step 2: Calculate MD5 of read data */
+            if (progressCallback) {
+                progressCallback(size, size, 'calc MD5 of input');
+            }
+            this.logDebug(`ReadFlashSafe: Calculating MD5 of read data...`);
+            const actualMD5 = await this.calculateMD5(allData);
+            this.logDebug(`Actual MD5: ${actualMD5}`);
+
+            /* Step 3: Get expected MD5 from flash */
+            if (progressCallback) {
+                progressCallback(size, size, 'calc MD5 in-chip');
+            }
+
+            this.logDebug(`ReadFlashSafe: Calculating expected MD5 for ${size} bytes at 0x${address.toString(16).padStart(8, '0')}...`);
+            const expectedMD5 = await this.checksumFlash(address, size);
+            this.logDebug(`Expected MD5: ${expectedMD5}`);
+
+            /* Step 4: Compare MD5 hashes */
+            if (expectedMD5.toLowerCase() !== actualMD5.toLowerCase()) {
+                this.logError(`ReadFlashSafe FAILED: MD5 mismatch!`);
+                this.logError(`  Expected: ${expectedMD5}`);
+                this.logError(`  Actual:   ${actualMD5}`);
+                throw new Error(`MD5 verification failed: expected ${expectedMD5}, got ${actualMD5}`);
+            }
+
+            this.logDebug(`ReadFlashSafe: MD5 verification passed ✓`);
+            return allData;
+
+        } catch (error) {
+            this.logError(`ReadFlashSafe failed: ${error.message}`);
+            throw error;
+        }
+    }
+
+    async writeFlashSafe(address, data, progressCallback) {
+        try {
+            /* Step 1: Write data to flash */
+            this.logDebug(`WriteFlashSafe: Writing ${data.length} bytes to 0x${address.toString(16).padStart(8, '0')}...`);
+            await this.writeFlash(address, data, (offset, total) => {
+                if (progressCallback) {
+                    progressCallback(offset, total, 'writing');
+                }
+            });
+            this.logDebug(`WriteFlashSafe: Write complete`);
+
+            /* Step 2: Calculate MD5 of input data */
+            if (progressCallback) {
+                progressCallback(data.length, data.length, 'calc MD5 of input');
+            }
+            this.logDebug(`WriteFlashSafe: Calculating MD5 of ${data.length} bytes to write...`);
+            const expectedMD5 = this.calculateMD5(data);
+            this.logDebug(`Input data MD5: ${expectedMD5}`);
+
+            /* Step 3: Get MD5 from device */
+            if (progressCallback) {
+                progressCallback(data.length, data.length, 'calc MD5 in-chip');
+            }
+            this.logDebug(`WriteFlashSafe: Calculating MD5 on device for verification...`);
+            const deviceMD5 = await this.checksumFlash(address, data.length);
+            this.logDebug(`Device MD5: ${deviceMD5}`);
+
+            /* Step 4: Compare MD5 hashes */
+            if (expectedMD5.toLowerCase() !== deviceMD5.toLowerCase()) {
+                this.logError(`WriteFlashSafe FAILED: MD5 mismatch!`);
+                this.logError(`  Expected: ${expectedMD5}`);
+                this.logError(`  Device:   ${deviceMD5}`);
+                throw new Error(`MD5 verification failed after write: expected ${expectedMD5}, got ${deviceMD5}`);
+            }
+
+            this.logDebug(`WriteFlashSafe: MD5 verification passed ✓`);
+
+            if (progressCallback) {
+                progressCallback(data.length, data.length, expectedMD5, 'verified');
+            }
+
+            return { success: true, md5: expectedMD5 };
+
+        } catch (error) {
+            this.logError(`WriteFlashSafe failed: ${error.message}`);
+            throw error;
+        }
     }
 
     async blankCheck(cbr) {
@@ -927,4 +1088,391 @@ class ESPFlasher {
             }
         }
     }
+
+    /* MD5 implementation - constants and helper functions */
+    Md5 = (function () {
+        const ARRAY_BUFFER = typeof ArrayBuffer !== 'undefined';
+        const HEX_CHARS = '0123456789abcdef'.split('');
+        const EXTRA = [128, 32768, 8388608, -2147483648];
+        const SHIFT = [0, 8, 16, 24];
+        const FINALIZE_ERROR = 'finalize already called';
+
+        let blocks = [], buffer8;
+        if (ARRAY_BUFFER) {
+            const buffer = new ArrayBuffer(68);
+            buffer8 = new Uint8Array(buffer);
+            blocks = new Uint32Array(buffer);
+        }
+
+        function formatMessage(message) {
+            if (typeof message === 'string') {
+                return [message, true];
+            }
+            if (message instanceof ArrayBuffer) {
+                return [new Uint8Array(message), false];
+            }
+            if (message.constructor === Uint8Array || message.constructor === Array) {
+                return [message, false];
+            }
+            return [message, false];
+        }
+
+        /**
+         * Md5 class
+         * @class Md5
+         * @description This is internal class.
+         * @see {@link md5.create}
+         */
+        function Md5(sharedMemory) {
+            if (sharedMemory) {
+                blocks[0] = blocks[16] = blocks[1] = blocks[2] = blocks[3] =
+                    blocks[4] = blocks[5] = blocks[6] = blocks[7] =
+                    blocks[8] = blocks[9] = blocks[10] = blocks[11] =
+                    blocks[12] = blocks[13] = blocks[14] = blocks[15] = 0;
+                this.blocks = blocks;
+                this.buffer8 = buffer8;
+            } else {
+                if (ARRAY_BUFFER) {
+                    var buffer = new ArrayBuffer(68);
+                    this.buffer8 = new Uint8Array(buffer);
+                    this.blocks = new Uint32Array(buffer);
+                } else {
+                    this.blocks = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+                }
+            }
+            this.h0 = this.h1 = this.h2 = this.h3 = this.start = this.bytes = this.hBytes = 0;
+            this.finalized = this.hashed = false;
+            this.first = true;
+        }
+
+        /**
+         * from https://www.npmjs.com/package/js-md5
+         * @method update
+         * @memberof Md5
+         * @instance
+         * @description Update hash
+         * @param {String|Array|Uint8Array|ArrayBuffer} message message to hash
+         * @returns {Md5} Md5 object.
+         * @see {@link md5.update}
+         */
+        Md5.prototype.update = function (message) {
+            if (this.finalized) {
+                throw new Error(FINALIZE_ERROR);
+            }
+
+            var result = formatMessage(message);
+            message = result[0];
+            var isString = result[1];
+            var code, index = 0, i, length = message.length, blocks = this.blocks;
+            var buffer8 = this.buffer8;
+
+            while (index < length) {
+                if (this.hashed) {
+                    this.hashed = false;
+                    blocks[0] = blocks[16];
+                    blocks[16] = blocks[1] = blocks[2] = blocks[3] =
+                        blocks[4] = blocks[5] = blocks[6] = blocks[7] =
+                        blocks[8] = blocks[9] = blocks[10] = blocks[11] =
+                        blocks[12] = blocks[13] = blocks[14] = blocks[15] = 0;
+                }
+
+                if (isString) {
+                    if (ARRAY_BUFFER) {
+                        for (i = this.start; index < length && i < 64; ++index) {
+                            code = message.charCodeAt(index);
+                            if (code < 0x80) {
+                                buffer8[i++] = code;
+                            } else if (code < 0x800) {
+                                buffer8[i++] = 0xc0 | (code >>> 6);
+                                buffer8[i++] = 0x80 | (code & 0x3f);
+                            } else if (code < 0xd800 || code >= 0xe000) {
+                                buffer8[i++] = 0xe0 | (code >>> 12);
+                                buffer8[i++] = 0x80 | ((code >>> 6) & 0x3f);
+                                buffer8[i++] = 0x80 | (code & 0x3f);
+                            } else {
+                                code = 0x10000 + (((code & 0x3ff) << 10) | (message.charCodeAt(++index) & 0x3ff));
+                                buffer8[i++] = 0xf0 | (code >>> 18);
+                                buffer8[i++] = 0x80 | ((code >>> 12) & 0x3f);
+                                buffer8[i++] = 0x80 | ((code >>> 6) & 0x3f);
+                                buffer8[i++] = 0x80 | (code & 0x3f);
+                            }
+                        }
+                    } else {
+                        for (i = this.start; index < length && i < 64; ++index) {
+                            code = message.charCodeAt(index);
+                            if (code < 0x80) {
+                                blocks[i >>> 2] |= code << SHIFT[i++ & 3];
+                            } else if (code < 0x800) {
+                                blocks[i >>> 2] |= (0xc0 | (code >>> 6)) << SHIFT[i++ & 3];
+                                blocks[i >>> 2] |= (0x80 | (code & 0x3f)) << SHIFT[i++ & 3];
+                            } else if (code < 0xd800 || code >= 0xe000) {
+                                blocks[i >>> 2] |= (0xe0 | (code >>> 12)) << SHIFT[i++ & 3];
+                                blocks[i >>> 2] |= (0x80 | ((code >>> 6) & 0x3f)) << SHIFT[i++ & 3];
+                                blocks[i >>> 2] |= (0x80 | (code & 0x3f)) << SHIFT[i++ & 3];
+                            } else {
+                                code = 0x10000 + (((code & 0x3ff) << 10) | (message.charCodeAt(++index) & 0x3ff));
+                                blocks[i >>> 2] |= (0xf0 | (code >>> 18)) << SHIFT[i++ & 3];
+                                blocks[i >>> 2] |= (0x80 | ((code >>> 12) & 0x3f)) << SHIFT[i++ & 3];
+                                blocks[i >>> 2] |= (0x80 | ((code >>> 6) & 0x3f)) << SHIFT[i++ & 3];
+                                blocks[i >>> 2] |= (0x80 | (code & 0x3f)) << SHIFT[i++ & 3];
+                            }
+                        }
+                    }
+                } else {
+                    if (ARRAY_BUFFER) {
+                        for (i = this.start; index < length && i < 64; ++index) {
+                            buffer8[i++] = message[index];
+                        }
+                    } else {
+                        for (i = this.start; index < length && i < 64; ++index) {
+                            blocks[i >>> 2] |= message[index] << SHIFT[i++ & 3];
+                        }
+                    }
+                }
+                this.lastByteIndex = i;
+                this.bytes += i - this.start;
+                if (i >= 64) {
+                    this.start = i - 64;
+                    this.hash();
+                    this.hashed = true;
+                } else {
+                    this.start = i;
+                }
+            }
+            if (this.bytes > 4294967295) {
+                this.hBytes += this.bytes / 4294967296 << 0;
+                this.bytes = this.bytes % 4294967296;
+            }
+            return this;
+        };
+
+        Md5.prototype.finalize = function () {
+            if (this.finalized) {
+                return;
+            }
+            this.finalized = true;
+            var blocks = this.blocks, i = this.lastByteIndex;
+            blocks[i >>> 2] |= EXTRA[i & 3];
+            if (i >= 56) {
+                if (!this.hashed) {
+                    this.hash();
+                }
+                blocks[0] = blocks[16];
+                blocks[16] = blocks[1] = blocks[2] = blocks[3] =
+                    blocks[4] = blocks[5] = blocks[6] = blocks[7] =
+                    blocks[8] = blocks[9] = blocks[10] = blocks[11] =
+                    blocks[12] = blocks[13] = blocks[14] = blocks[15] = 0;
+            }
+            blocks[14] = this.bytes << 3;
+            blocks[15] = this.hBytes << 3 | this.bytes >>> 29;
+            this.hash();
+        };
+
+        Md5.prototype.hash = function () {
+            var a, b, c, d, bc, da, blocks = this.blocks;
+
+            if (this.first) {
+                a = blocks[0] - 680876937;
+                a = (a << 7 | a >>> 25) - 271733879 << 0;
+                d = (-1732584194 ^ a & 2004318071) + blocks[1] - 117830708;
+                d = (d << 12 | d >>> 20) + a << 0;
+                c = (-271733879 ^ (d & (a ^ -271733879))) + blocks[2] - 1126478375;
+                c = (c << 17 | c >>> 15) + d << 0;
+                b = (a ^ (c & (d ^ a))) + blocks[3] - 1316259209;
+                b = (b << 22 | b >>> 10) + c << 0;
+            } else {
+                a = this.h0;
+                b = this.h1;
+                c = this.h2;
+                d = this.h3;
+                a += (d ^ (b & (c ^ d))) + blocks[0] - 680876936;
+                a = (a << 7 | a >>> 25) + b << 0;
+                d += (c ^ (a & (b ^ c))) + blocks[1] - 389564586;
+                d = (d << 12 | d >>> 20) + a << 0;
+                c += (b ^ (d & (a ^ b))) + blocks[2] + 606105819;
+                c = (c << 17 | c >>> 15) + d << 0;
+                b += (a ^ (c & (d ^ a))) + blocks[3] - 1044525330;
+                b = (b << 22 | b >>> 10) + c << 0;
+            }
+
+            a += (d ^ (b & (c ^ d))) + blocks[4] - 176418897;
+            a = (a << 7 | a >>> 25) + b << 0;
+            d += (c ^ (a & (b ^ c))) + blocks[5] + 1200080426;
+            d = (d << 12 | d >>> 20) + a << 0;
+            c += (b ^ (d & (a ^ b))) + blocks[6] - 1473231341;
+            c = (c << 17 | c >>> 15) + d << 0;
+            b += (a ^ (c & (d ^ a))) + blocks[7] - 45705983;
+            b = (b << 22 | b >>> 10) + c << 0;
+            a += (d ^ (b & (c ^ d))) + blocks[8] + 1770035416;
+            a = (a << 7 | a >>> 25) + b << 0;
+            d += (c ^ (a & (b ^ c))) + blocks[9] - 1958414417;
+            d = (d << 12 | d >>> 20) + a << 0;
+            c += (b ^ (d & (a ^ b))) + blocks[10] - 42063;
+            c = (c << 17 | c >>> 15) + d << 0;
+            b += (a ^ (c & (d ^ a))) + blocks[11] - 1990404162;
+            b = (b << 22 | b >>> 10) + c << 0;
+            a += (d ^ (b & (c ^ d))) + blocks[12] + 1804603682;
+            a = (a << 7 | a >>> 25) + b << 0;
+            d += (c ^ (a & (b ^ c))) + blocks[13] - 40341101;
+            d = (d << 12 | d >>> 20) + a << 0;
+            c += (b ^ (d & (a ^ b))) + blocks[14] - 1502002290;
+            c = (c << 17 | c >>> 15) + d << 0;
+            b += (a ^ (c & (d ^ a))) + blocks[15] + 1236535329;
+            b = (b << 22 | b >>> 10) + c << 0;
+            a += (c ^ (d & (b ^ c))) + blocks[1] - 165796510;
+            a = (a << 5 | a >>> 27) + b << 0;
+            d += (b ^ (c & (a ^ b))) + blocks[6] - 1069501632;
+            d = (d << 9 | d >>> 23) + a << 0;
+            c += (a ^ (b & (d ^ a))) + blocks[11] + 643717713;
+            c = (c << 14 | c >>> 18) + d << 0;
+            b += (d ^ (a & (c ^ d))) + blocks[0] - 373897302;
+            b = (b << 20 | b >>> 12) + c << 0;
+            a += (c ^ (d & (b ^ c))) + blocks[5] - 701558691;
+            a = (a << 5 | a >>> 27) + b << 0;
+            d += (b ^ (c & (a ^ b))) + blocks[10] + 38016083;
+            d = (d << 9 | d >>> 23) + a << 0;
+            c += (a ^ (b & (d ^ a))) + blocks[15] - 660478335;
+            c = (c << 14 | c >>> 18) + d << 0;
+            b += (d ^ (a & (c ^ d))) + blocks[4] - 405537848;
+            b = (b << 20 | b >>> 12) + c << 0;
+            a += (c ^ (d & (b ^ c))) + blocks[9] + 568446438;
+            a = (a << 5 | a >>> 27) + b << 0;
+            d += (b ^ (c & (a ^ b))) + blocks[14] - 1019803690;
+            d = (d << 9 | d >>> 23) + a << 0;
+            c += (a ^ (b & (d ^ a))) + blocks[3] - 187363961;
+            c = (c << 14 | c >>> 18) + d << 0;
+            b += (d ^ (a & (c ^ d))) + blocks[8] + 1163531501;
+            b = (b << 20 | b >>> 12) + c << 0;
+            a += (c ^ (d & (b ^ c))) + blocks[13] - 1444681467;
+            a = (a << 5 | a >>> 27) + b << 0;
+            d += (b ^ (c & (a ^ b))) + blocks[2] - 51403784;
+            d = (d << 9 | d >>> 23) + a << 0;
+            c += (a ^ (b & (d ^ a))) + blocks[7] + 1735328473;
+            c = (c << 14 | c >>> 18) + d << 0;
+            b += (d ^ (a & (c ^ d))) + blocks[12] - 1926607734;
+            b = (b << 20 | b >>> 12) + c << 0;
+            bc = b ^ c;
+            a += (bc ^ d) + blocks[5] - 378558;
+            a = (a << 4 | a >>> 28) + b << 0;
+            d += (bc ^ a) + blocks[8] - 2022574463;
+            d = (d << 11 | d >>> 21) + a << 0;
+            da = d ^ a;
+            c += (da ^ b) + blocks[11] + 1839030562;
+            c = (c << 16 | c >>> 16) + d << 0;
+            b += (da ^ c) + blocks[14] - 35309556;
+            b = (b << 23 | b >>> 9) + c << 0;
+            bc = b ^ c;
+            a += (bc ^ d) + blocks[1] - 1530992060;
+            a = (a << 4 | a >>> 28) + b << 0;
+            d += (bc ^ a) + blocks[4] + 1272893353;
+            d = (d << 11 | d >>> 21) + a << 0;
+            da = d ^ a;
+            c += (da ^ b) + blocks[7] - 155497632;
+            c = (c << 16 | c >>> 16) + d << 0;
+            b += (da ^ c) + blocks[10] - 1094730640;
+            b = (b << 23 | b >>> 9) + c << 0;
+            bc = b ^ c;
+            a += (bc ^ d) + blocks[13] + 681279174;
+            a = (a << 4 | a >>> 28) + b << 0;
+            d += (bc ^ a) + blocks[0] - 358537222;
+            d = (d << 11 | d >>> 21) + a << 0;
+            da = d ^ a;
+            c += (da ^ b) + blocks[3] - 722521979;
+            c = (c << 16 | c >>> 16) + d << 0;
+            b += (da ^ c) + blocks[6] + 76029189;
+            b = (b << 23 | b >>> 9) + c << 0;
+            bc = b ^ c;
+            a += (bc ^ d) + blocks[9] - 640364487;
+            a = (a << 4 | a >>> 28) + b << 0;
+            d += (bc ^ a) + blocks[12] - 421815835;
+            d = (d << 11 | d >>> 21) + a << 0;
+            da = d ^ a;
+            c += (da ^ b) + blocks[15] + 530742520;
+            c = (c << 16 | c >>> 16) + d << 0;
+            b += (da ^ c) + blocks[2] - 995338651;
+            b = (b << 23 | b >>> 9) + c << 0;
+            a += (c ^ (b | ~d)) + blocks[0] - 198630844;
+            a = (a << 6 | a >>> 26) + b << 0;
+            d += (b ^ (a | ~c)) + blocks[7] + 1126891415;
+            d = (d << 10 | d >>> 22) + a << 0;
+            c += (a ^ (d | ~b)) + blocks[14] - 1416354905;
+            c = (c << 15 | c >>> 17) + d << 0;
+            b += (d ^ (c | ~a)) + blocks[5] - 57434055;
+            b = (b << 21 | b >>> 11) + c << 0;
+            a += (c ^ (b | ~d)) + blocks[12] + 1700485571;
+            a = (a << 6 | a >>> 26) + b << 0;
+            d += (b ^ (a | ~c)) + blocks[3] - 1894986606;
+            d = (d << 10 | d >>> 22) + a << 0;
+            c += (a ^ (d | ~b)) + blocks[10] - 1051523;
+            c = (c << 15 | c >>> 17) + d << 0;
+            b += (d ^ (c | ~a)) + blocks[1] - 2054922799;
+            b = (b << 21 | b >>> 11) + c << 0;
+            a += (c ^ (b | ~d)) + blocks[8] + 1873313359;
+            a = (a << 6 | a >>> 26) + b << 0;
+            d += (b ^ (a | ~c)) + blocks[15] - 30611744;
+            d = (d << 10 | d >>> 22) + a << 0;
+            c += (a ^ (d | ~b)) + blocks[6] - 1560198380;
+            c = (c << 15 | c >>> 17) + d << 0;
+            b += (d ^ (c | ~a)) + blocks[13] + 1309151649;
+            b = (b << 21 | b >>> 11) + c << 0;
+            a += (c ^ (b | ~d)) + blocks[4] - 145523070;
+            a = (a << 6 | a >>> 26) + b << 0;
+            d += (b ^ (a | ~c)) + blocks[11] - 1120210379;
+            d = (d << 10 | d >>> 22) + a << 0;
+            c += (a ^ (d | ~b)) + blocks[2] + 718787259;
+            c = (c << 15 | c >>> 17) + d << 0;
+            b += (d ^ (c | ~a)) + blocks[9] - 343485551;
+            b = (b << 21 | b >>> 11) + c << 0;
+
+            if (this.first) {
+                this.h0 = a + 1732584193 << 0;
+                this.h1 = b - 271733879 << 0;
+                this.h2 = c - 1732584194 << 0;
+                this.h3 = d + 271733878 << 0;
+                this.first = false;
+            } else {
+                this.h0 = this.h0 + a << 0;
+                this.h1 = this.h1 + b << 0;
+                this.h2 = this.h2 + c << 0;
+                this.h3 = this.h3 + d << 0;
+            }
+        };
+        /**
+         * @method hex
+         * @memberof Md5
+         * @instance
+         * @description Output hash as hex string
+         * @returns {String} Hex string
+         * @see {@link md5.hex}
+         * @example
+         * hash.hex();
+         */
+        Md5.prototype.hex = function () {
+            this.finalize();
+
+            var h0 = this.h0, h1 = this.h1, h2 = this.h2, h3 = this.h3;
+
+            return HEX_CHARS[(h0 >>> 4) & 0x0F] + HEX_CHARS[h0 & 0x0F] +
+                HEX_CHARS[(h0 >>> 12) & 0x0F] + HEX_CHARS[(h0 >>> 8) & 0x0F] +
+                HEX_CHARS[(h0 >>> 20) & 0x0F] + HEX_CHARS[(h0 >>> 16) & 0x0F] +
+                HEX_CHARS[(h0 >>> 28) & 0x0F] + HEX_CHARS[(h0 >>> 24) & 0x0F] +
+                HEX_CHARS[(h1 >>> 4) & 0x0F] + HEX_CHARS[h1 & 0x0F] +
+                HEX_CHARS[(h1 >>> 12) & 0x0F] + HEX_CHARS[(h1 >>> 8) & 0x0F] +
+                HEX_CHARS[(h1 >>> 20) & 0x0F] + HEX_CHARS[(h1 >>> 16) & 0x0F] +
+                HEX_CHARS[(h1 >>> 28) & 0x0F] + HEX_CHARS[(h1 >>> 24) & 0x0F] +
+                HEX_CHARS[(h2 >>> 4) & 0x0F] + HEX_CHARS[h2 & 0x0F] +
+                HEX_CHARS[(h2 >>> 12) & 0x0F] + HEX_CHARS[(h2 >>> 8) & 0x0F] +
+                HEX_CHARS[(h2 >>> 20) & 0x0F] + HEX_CHARS[(h2 >>> 16) & 0x0F] +
+                HEX_CHARS[(h2 >>> 28) & 0x0F] + HEX_CHARS[(h2 >>> 24) & 0x0F] +
+                HEX_CHARS[(h3 >>> 4) & 0x0F] + HEX_CHARS[h3 & 0x0F] +
+                HEX_CHARS[(h3 >>> 12) & 0x0F] + HEX_CHARS[(h3 >>> 8) & 0x0F] +
+                HEX_CHARS[(h3 >>> 20) & 0x0F] + HEX_CHARS[(h3 >>> 16) & 0x0F] +
+                HEX_CHARS[(h3 >>> 28) & 0x0F] + HEX_CHARS[(h3 >>> 24) & 0x0F];
+        };
+
+
+        return Md5;
+    })();
+
+
 }

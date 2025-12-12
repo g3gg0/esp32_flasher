@@ -452,6 +452,7 @@
                         Flash</button>
                     <button id="readFlashBtn" onclick="readFlash()" disabled title="Load stub loader first">Read Flash &
                         Download</button>
+                    <button id="md5FlashBtn" onclick="calculateMD5()" disabled title="Load stub loader first">Calculate MD5</button>
                 </div>
                 <div class="input-group">
                     <label for="flashAddress">Flash Address (hex):</label>
@@ -466,6 +467,12 @@
                     <label class="file-input-label" for="flashFile">📁 Choose Binary File</label>
                 </div>
                 <div class="file-info" id="fileInfo"></div>
+                <div class="info-panel" style="margin-top: 10px;">
+                    <div class="info-row" id="md5Row" style="display: none;">
+                        <span class="info-label">MD5 Hash:</span>
+                        <span class="info-value" id="md5Value" style="font-family: 'Courier New', monospace; font-size: 13px;">--</span>
+                    </div>
+                </div>
                 <div class="progress-bar">
                     <div class="progress-fill" id="flashProgress">0%</div>
                 </div>
@@ -637,6 +644,7 @@
             document.getElementById('readRegBtn').disabled = !synced;
             document.getElementById('writeFlashBtn').disabled = !selectedFile || !stubLoaded;
             document.getElementById('readFlashBtn').disabled = !stubLoaded;
+            document.getElementById('md5FlashBtn').disabled = !stubLoaded;
             document.getElementById('testReliabilityBtn').disabled = !synced;
             document.getElementById('blankCheckBtn').disabled = !stubLoaded;
             document.getElementById('writeReadTestBtn').disabled = !stubLoaded;
@@ -645,22 +653,26 @@
             // Update tooltips
             const writeBtn = document.getElementById('writeFlashBtn');
             const readBtn = document.getElementById('readFlashBtn');
+            const md5Btn = document.getElementById('md5FlashBtn');
             const blankBtn = document.getElementById('blankCheckBtn');
             const testBtn = document.getElementById('writeReadTestBtn');
 
             if (!stubLoaded) {
                 writeBtn.title = 'Load stub loader first';
                 readBtn.title = 'Load stub loader first';
+                md5Btn.title = 'Load stub loader first';
                 blankBtn.title = 'Load stub loader first';
                 testBtn.title = 'Load stub loader first';
             } else if (!selectedFile) {
                 writeBtn.title = 'Select a binary file first';
                 readBtn.title = 'Read data from flash and download as binary';
+                md5Btn.title = 'Calculate MD5 hash of flash region';
                 blankBtn.title = 'Check if flash is blank';
                 testBtn.title = 'Write random data and verify readback';
             } else {
                 writeBtn.title = 'Write binary to flash';
                 readBtn.title = 'Read data from flash and download as binary';
+                md5Btn.title = 'Calculate MD5 hash of flash region';
                 blankBtn.title = 'Check if flash is blank';
                 testBtn.title = 'Write random data and verify readback';
             }
@@ -840,10 +852,10 @@
                 const progressBar = document.getElementById('flashProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
 
-                await flasher.writeFlash(address, data, (offset, total) => {
+                await flasher.writeFlashSafe(address, data, (offset, total, status) => {
                     const percent = Math.round((offset / total) * 100);
                     progressBar.style.width = percent + '%';
-                    progressBar.textContent = percent + '%';
+                    progressBar.textContent = percent + `% (${status})`;
                 });
 
                 progressBar.style.width = '100%';
@@ -861,43 +873,56 @@
             }
         }
 
+        async function calculateMD5() {
+            if (!flasher) return;
+            try {
+                const address = parseInt(document.getElementById('flashAddress').value);
+                const size = parseInt(document.getElementById('flashSize').value);
+
+                log(`Calculating MD5 hash for ${size} bytes at 0x${address.toString(16).padStart(8, '0')}...`, 'info');
+                updateStatus('Calculating MD5...', 'busy');
+
+                const md5Hash = await flasher.checksumFlash(address, size);
+                
+                log(`MD5 hash: ${md5Hash}`, 'info');
+                document.getElementById('md5Value').textContent = md5Hash;
+                document.getElementById('md5Row').style.display = 'flex';
+
+                updateStatus('Connected & Synced', 'connected');
+            } catch (error) {
+                log(`MD5 calculation error: ${error.message}`, 'error');
+                updateStatus('Connected (MD5 Failed)', 'warning');
+                document.getElementById('md5Value').textContent = 'Error';
+                document.getElementById('md5Row').style.display = 'flex';
+            }
+        }
+
         async function readFlash() {
             if (!flasher) return;
             try {
                 const address = parseInt(document.getElementById('flashAddress').value);
                 const totalSize = parseInt(document.getElementById('flashSize').value);
-                const blockSize = 0x1000; // Read in 4KB blocks
 
-                log(`Reading ${totalSize} bytes from flash at 0x${address.toString(16).padStart(8, '0')}...`, 'info');
+                log(`Reading ${totalSize} bytes from flash at 0x${address.toString(16).padStart(8, '0')} with MD5 verification...`, 'info');
                 updateStatus('Reading flash...', 'busy');
 
                 const progressBar = document.getElementById('flashProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
 
-                // Allocate buffer for all data
-                const allData = new Uint8Array(totalSize);
-                let offset = 0;
-
-                while (offset < totalSize) {
-                    const readSize = Math.min(blockSize, totalSize - offset);
-                    const data = await flasher.readFlash(address + offset, readSize);
-
-                    // Copy data to buffer
-                    allData.set(data.slice(0, readSize), offset);
-                    offset += readSize;
-
+                // Use readFlashSafe which handles MD5 verification
+                const allData = await flasher.readFlashSafe(address, totalSize, (offset, size, status) => {
                     // Update progress
-                    const percent = Math.round((offset / totalSize) * 100);
+                    const percent = Math.round((offset / size) * 100);
                     progressBar.style.width = percent + '%';
-                    progressBar.textContent = percent + '%';
+                    progressBar.textContent = `${percent}% (${status})`;
 
-                    if (offset % (blockSize * 10) === 0) {
-                        log(`Read ${offset} / ${totalSize} bytes (${percent}%)`, 'debug');
+                    if (offset % (0x1000 * 10) === 0) {
+                        log(`Read ${offset} / ${size} bytes (${percent}%)`, 'debug');
                     }
-                }
+                });
 
                 progressBar.style.width = '100%';
-                progressBar.textContent = '100%';
+                progressBar.textContent = '100% - Verified ✓';
 
                 // Download the data as a binary file
                 const blob = new Blob([allData], { type: 'application/octet-stream' });
@@ -910,7 +935,7 @@
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
 
-                log(`Read ${totalSize} bytes successfully and saved to file`, 'info');
+                log(`Read ${totalSize} bytes successfully with MD5 verification and saved to file`, 'info');
                 updateStatus('Connected & Synced', 'connected');
 
                 setTimeout(() => {
