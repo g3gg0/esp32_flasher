@@ -490,11 +490,11 @@
                 </div>
                 <div class="input-group">
                     <label for="testAddress">Test Address (hex):</label>
-                    <input type="text" id="testAddress" placeholder="0x00010000" value="0x00010000">
+                    <input type="text" id="testAddress" placeholder="0x00000000" value="0x00000000">
                 </div>
                 <div class="input-group">
                     <label for="testSize">Test Size (bytes, hex):</label>
-                    <input type="text" id="testSize" placeholder="0x1000" value="0x1000">
+                    <input type="text" id="testSize" placeholder="0x00800000" value="0x00800000">
                 </div>
                 <div class="progress-bar">
                     <div class="progress-fill" id="testProgress">0%</div>
@@ -993,13 +993,15 @@
         async function blankCheck() {
             if (!flasher) return;
             try {
+                const address = parseInt(document.getElementById('testAddress').value);
+                const size = parseInt(document.getElementById('testSize').value);
                 log('Starting blank check (this may take a while)...', 'info');
                 updateStatus('Checking flash...', 'busy');
 
                 const progressBar = document.getElementById('testProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
 
-                await flasher.blankCheck((current, start, end, blockSize, erased, totalErased) => {
+                await flasher.blankCheck(address, size, (current, start, end, blockSize, erased, totalErased) => {
                     const progress = ((current - start) / (end - start)) * 100;
                     progressBar.style.width = progress + '%';
                     progressBar.textContent = Math.round(progress) + '%';
