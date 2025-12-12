@@ -1,4 +1,7 @@
-/* Command defines */
+/**
+ * ESP32 Bootloader Command Codes
+ * Commands for communication with ESP32 ROM bootloader and stub loader
+ */
 const FLASH_BEGIN = 0x02;
 const FLASH_DATA = 0x03;
 const FLASH_END = 0x04;
@@ -22,12 +25,25 @@ const READ_FLASH = 0xd2;
 const RUN_USER_CODE = 0xd3;
 
 
+/**
+ * SLIP Protocol Layer Handler
+ * Implements Serial Line IP (RFC 1055) encoding/decoding for packet framing
+ */
 class SlipLayer {
+    /**
+     * Initialize SLIP layer with empty buffer
+     */
     constructor() {
         this.buffer = [];
         this.escaping = false;
     }
 
+    /**
+     * Encode data using SLIP framing
+     * Wraps packet with SLIP_END delimiters and escapes special bytes
+     * @param {Uint8Array} packet - Raw packet data
+     * @returns {Uint8Array} SLIP-framed packet with delimiters
+     */
     encode(packet) {
         const SLIP_END = 0xC0;
         const SLIP_ESC = 0xDB;
@@ -50,6 +66,12 @@ class SlipLayer {
         return new Uint8Array(slipFrame);
     }
 
+    /**
+     * Decode SLIP-framed packet stream
+     * Extracts complete packets from framed data, handling escape sequences
+     * @param {Uint8Array|ArrayLike} value - SLIP-encoded bytes
+     * @returns {Uint8Array[]} Array of decoded complete packets
+     */
     decode(value) {
         const SLIP_END = 0xC0;
         const SLIP_ESC = 0xDB;
@@ -82,8 +104,18 @@ class SlipLayer {
     }
 }
 
+/**
+ * ESP32 Bootloader Communication Handler
+ * Manages serial communication with ESP32 devices using bootloader protocol
+ * Supports reading/writing flash, downloading code to RAM, and firmware verification
+ * @class ESPFlasher
+ */
 class ESPFlasher {
 
+    /**
+     * Initialize ESP32 flasher instance
+     * Creates new instance with default configuration and empty state
+     */
     constructor() {
         this.port = null;
         this.currentAddress = 0x0000;
@@ -104,6 +136,12 @@ class ESPFlasher {
         this.reader = null;
     }
 
+    /**
+     * Open serial port and start reading packets
+     * @async
+     * @returns {Promise<void>}
+     * @throws {Error} If port request fails
+     */
     async openPort() {
         return new Promise(async (resolve, reject) => {
 
@@ -159,6 +197,12 @@ class ESPFlasher {
         });
     }
 
+    /**
+     * Read 32-bit value from chip register
+     * @async
+     * @param {number} addr - Register address
+     * @returns {Promise<number>} Register value
+     */
     async readReg(addr) {
         return this.executeCommand(this.buildCommandPacketU32(READ_REG, addr),
             async (resolve, reject, responsePacket) => {
@@ -171,6 +215,13 @@ class ESPFlasher {
     }
 
 
+    /**
+     * Detect if stub loader is running on device
+     * @async
+     * @returns {Promise<boolean>} True if stub loader active, false if ROM bootloader
+     * @throws {Error} If detection fails
+     * @description Distinguishes stub loader from ROM bootloader by magic address response size
+     */
     async isStubLoader() {
         return this.executeCommand(this.buildCommandPacketU32(READ_REG, this.chip_magic_addr),
             async (resolve, reject, responsePacket) => {
@@ -188,6 +239,17 @@ class ESPFlasher {
             });
     }
 
+    /**
+     * Execute command on device
+     * @async
+     * @param {Object} packet - Command packet from buildCommandPacket
+     * @param {Function} callback - Response handler(resolve, reject, responsePacket)
+     * @param {Function} [default_callback] - Raw data handler
+     * @param {number} [timeout=500] - Timeout in milliseconds
+     * @param {Function} [hasTimeoutCbr] - Optional timeout check returning boolean
+     * @returns {Promise<*>} Result from callback
+     * @throws {Error} On timeout or command failure
+     */
     async executeCommand(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
         if (!this.port || !this.port.writable) {
             throw new Error("Port is not writable.");
@@ -231,6 +293,11 @@ class ESPFlasher {
         return responsePromise;
     }
 
+    /**
+     * Disconnect from serial port
+     * @async
+     * @returns {Promise<void>}
+     */
     async disconnect() {
         navigator.serial.removeEventListener('disconnect', this.disconnect);
 
@@ -292,6 +359,12 @@ class ESPFlasher {
     }
 
 
+    /**
+     * Convert base64-encoded string to binary data
+     * @param {string} base64 - Base64-encoded data string
+     * @returns {Uint8Array} Decoded binary data
+     * @description Decodes base64 string using native atob and converts to Uint8Array
+     */
     base64ToByteArray(base64) {
         const binaryString = atob(base64);
         const byteArray = new Uint8Array(binaryString.length);
@@ -301,6 +374,15 @@ class ESPFlasher {
         return byteArray;
     }
 
+    /**
+     * Download binary payload to device RAM
+     * @async
+     * @param {number} address - Target RAM address
+     * @param {string} payload - Base64-encoded binary data
+     * @returns {Promise<void>}
+     * @throws {Error} If download fails
+     * @description Used for downloading stub loader and other code to RAM
+     */
     async downloadMem(address, payload) {
         var binary = this.base64ToByteArray(payload);
 
@@ -314,10 +396,18 @@ class ESPFlasher {
             });
     }
 
+    /**
+     * Synchronize with bootloader and detect chip type
+     * @async
+     * @returns {Promise<void>}
+     * @throws {Error} If synchronization fails after all retries
+     * @description Performs SYNC command with retry logic, then reads chip magic value
+     *              to detect connected chip type (ESP32, ESP32-S3, etc.)
+     */
     async sync() {
         const maxRetries = 10;
-        const retryDelayMs = 100; // Delay between retries
-        const syncTimeoutMs = 250; // Timeout for each individual sync attempt
+        const retryDelayMs = 100; /* Delay between retries */
+        const syncTimeoutMs = 250; /* Timeout for each individual sync attempt */
         let synchronized = false;
 
         this.logDebug(`Attempting to synchronize (${maxRetries} attempts)...`);
@@ -410,9 +500,15 @@ class ESPFlasher {
         // The function implicitly returns a resolved promise.
     }
 
+    /**
+     * Read device MAC address from eFuses
+     * @async
+     * @returns {Promise<string>} MAC address as colon-separated hex string (e.g., "aa:bb:cc:dd:ee:ff")
+     * @throws {Error} If register read fails
+     * @description Reads MAC address from chip-specific eFuse registers
+     */
     async readMac() {
-
-        // Read the MAC address registers
+        /* Read the MAC address registers */
         var chip = this.chip_descriptions[this.current_chip];
         const register1 = await this.readReg(chip.mac_efuse_reg);
         const register2 = await this.readReg(chip.mac_efuse_reg + 4);
@@ -444,6 +540,14 @@ class ESPFlasher {
         return mac;
     }
 
+    /**
+     * Test serial communication reliability
+     * @async
+     * @param {Function} [cbr] - Progress callback(percentComplete)
+     * @returns {Promise<boolean>} True if test passed, false if failed
+     * @description Performs 1-second stress test reading the same register repeatedly,
+     *              verifying all reads return identical values
+     */
     async testReliability(cbr) {
 
         var chip = this.chip_descriptions[this.current_chip];
@@ -514,12 +618,20 @@ class ESPFlasher {
         return true;
     }
 
+    /**
+     * Download and execute stub loader on device
+     * @async
+     * @returns {Promise<boolean>} True if stub loaded successfully, false otherwise
+     * @throws {Error} If stub loading or initialization fails
+     * @description Downloads stub firmware to RAM and executes it.
+     *              Stub provides additional capabilities like flash read/write and MD5.
+     */
     async downloadStub() {
 
         var stub = this.chip_descriptions[this.current_chip].stub
 
-        await this.downloadMem(stub.text_start, stub.text);
         await this.downloadMem(stub.data_start, stub.data);
+        await this.downloadMem(stub.text_start, stub.text);
 
         try {
             await this.executeCommand(this.buildCommandPacketU32(MEM_END, 0, stub.entry),
@@ -542,6 +654,7 @@ class ESPFlasher {
                 3000 // Longer timeout for stub execution
             );
         } catch (error) {
+            console.log(error);
             this.logError("Failed to execute stub", "Is the device locked?");
             return false;
         }
@@ -559,6 +672,15 @@ class ESPFlasher {
         return true;
     }
 
+    /**
+     * Write data to flash memory
+     * @async
+     * @param {number} address - Target flash address
+     * @param {Uint8Array} data - Binary data to write
+     * @param {Function} [progressCallback] - Callback(bytesWritten, totalBytes)
+     * @returns {Promise<void>}
+     * @throws {Error} If write fails
+     */
     async writeFlash(address, data, progressCallback) {
         const MAX_PACKET_SIZE = 0x1000;
         const packets = Math.ceil(data.length / MAX_PACKET_SIZE);
@@ -593,12 +715,38 @@ class ESPFlasher {
                 5000
             );
 
-            if (progressCallback) {
-                progressCallback(offset + chunk.length, data.length);
-            }
+            progressCallback && progressCallback(offset + chunk.length, data.length);
         }
     }
 
+    /**
+     * Read data from flash memory
+     * @async
+     * @param {number} address - Source flash address
+     * @param {number} [length=0x1000] - Number of bytes to read
+     * @param {Function} [progressCallback] - Callback(bytesRead, totalBytes)
+     * @returns {Promise<Uint8Array>} Read data (MD5 verified)
+     * @throws {Error} If read fails or MD5 mismatch
+     * 
+       ESP32-C6
+        [00:54:30] [DEBUG] ReadFlash timing: 262144 bytes in 841ms
+        [00:54:30] [DEBUG]   Data rate: 0.30 MB/s (311705 B/s)
+        [00:54:30] [DEBUG]   Packet latency: min=13ms, max=14ms, avg=13.1ms
+        [00:54:30] [DEBUG]   Packets received: 64
+
+       ESP32-C3
+        [00:55:45] [DEBUG] ReadFlash timing: 262144 bytes in 22772ms
+        [00:55:45] [DEBUG]   Data rate: 0.01 MB/s (11512 B/s)
+        [00:55:45] [DEBUG]   Packet latency: min=348ms, max=358ms, avg=355.8ms
+        [00:55:45] [DEBUG]   Packets received: 64
+
+       ESP32-S3
+        [00:56:32] [DEBUG] ReadFlash timing: 262144 bytes in 22762ms
+        [00:56:32] [DEBUG]   Data rate: 0.01 MB/s (11517 B/s)
+        [00:56:32] [DEBUG]   Packet latency: min=350ms, max=356ms, avg=355.6ms
+        [00:56:32] [DEBUG]   Packets received: 64
+
+     */
     async readFlash(address, length = 0x1000, progressCallback) {
 
         const performRead = async (cbr) => {
@@ -613,13 +761,20 @@ class ESPFlasher {
             var data = new Uint8Array(0);
             var lastDataTime = Date.now();
 
+            /* Timing measurements */
+            const readStartTime = Date.now();
+            let packetLatencies = [];
+            let lastPacketTime = readStartTime;
+            let totalBytesReceived = 0;
+
             return this.executeCommand(
                 this.buildCommandPacketU32(READ_FLASH, address, length, sectorSize, ackMax),
                 async () => {
                     packet = 0;
                 },
                 async (resolve, reject, rawData) => {
-                    lastDataTime = Date.now();
+                    const currentTime = Date.now();
+                    lastDataTime = currentTime;
 
                     if (data.length == length) {
                         if (rawData.length == 16) {
@@ -633,6 +788,24 @@ class ESPFlasher {
 
                             /* Compare MD5 hashes */
                             if (calculatedMD5.toLowerCase() === receivedMD5.toLowerCase()) {
+                                /* Calculate and log timing statistics */
+                                const totalTime = currentTime - readStartTime;
+                                const dataRate = totalBytesReceived / (totalTime / 1000);
+                                const avgLatency = packetLatencies.length > 0
+                                    ? packetLatencies.reduce((a, b) => a + b, 0) / packetLatencies.length
+                                    : 0;
+                                const minLatency = packetLatencies.length > 0
+                                    ? Math.min(...packetLatencies)
+                                    : 0;
+                                const maxLatency = packetLatencies.length > 0
+                                    ? Math.max(...packetLatencies)
+                                    : 0;
+
+                                this.logDebug(`ReadFlash timing: ${totalBytesReceived} bytes in ${totalTime}ms`);
+                                this.logDebug(`  Data rate: ${(dataRate / 1024 / 1024).toFixed(2)} MB/s (${dataRate.toFixed(0)} B/s)`);
+                                this.logDebug(`  Packet latency: min=${minLatency}ms, max=${maxLatency}ms, avg=${avgLatency.toFixed(1)}ms`);
+                                this.logDebug(`  Packets received: ${packetLatencies.length}`);
+
                                 resolve(data);
                             } else {
                                 const error = `MD5 mismatch! Expected: ${receivedMD5}, Got: ${calculatedMD5}`;
@@ -645,6 +818,12 @@ class ESPFlasher {
                             reject(new Error(error));
                         }
                     } else {
+                        /* Track packet latency */
+                        const packetLatency = currentTime - lastPacketTime;
+                        packetLatencies.push(packetLatency);
+                        lastPacketTime = currentTime;
+                        totalBytesReceived += rawData.length;
+
                         /* Append rawData to accumulated data */
                         const newData = new Uint8Array(data.length + rawData.length);
                         newData.set(data);
@@ -683,6 +862,14 @@ class ESPFlasher {
         return performRead(progressCallback);
     }
 
+    /**
+     * Calculate MD5 checksum of flash region
+     * @async
+     * @param {number} address - Start address
+     * @param {number} length - Number of bytes
+     * @returns {Promise<string>} MD5 hash (hex)
+     * @throws {Error} If checksum fails
+     */
     async checksumFlash(address, length) {
         return this.executeCommand(
             this.buildCommandPacketU32(SPI_FLASH_MD5, address, length, 0, 0),
@@ -708,6 +895,11 @@ class ESPFlasher {
         );
     }
 
+    /**
+     * Calculate local MD5 hash
+     * @param {Uint8Array|string} data - Data to hash
+     * @returns {string} MD5 hash (hex)
+     */
     calculateMD5(data) {
         /* Create MD5 hash using the Md5 class */
         const md5 = new this.Md5();
@@ -715,6 +907,15 @@ class ESPFlasher {
         return md5.hex();
     }
 
+    /**
+     * Read flash with comprehensive MD5 verification
+     * @async
+     * @param {number} address - Source address
+     * @param {number} size - Number of bytes
+     * @param {Function} [progressCallback] - Callback(read, total, stage)
+     * @returns {Promise<Uint8Array>} Verified data
+     * @throws {Error} If read/verification fails
+     */
     async readFlashSafe(address, size, progressCallback) {
         const BLOCK_SIZE = 64 * 0x1000;
 
@@ -727,9 +928,7 @@ class ESPFlasher {
             while (offset < size) {
                 const readSize = Math.min(BLOCK_SIZE, size - offset);
                 let cbr = (read, readBlockSize) => {
-                    if (progressCallback) {
-                        progressCallback(offset + read, size, 'reading');
-                    }
+                    progressCallback && progressCallback(offset + read, size, 'reading');
                 }
                 const blockData = await this.readFlash(address + offset, readSize, cbr);
 
@@ -738,25 +937,19 @@ class ESPFlasher {
                 offset += readSize;
 
                 /* Call progress callback */
-                if (progressCallback) {
-                    progressCallback(offset, size, 'reading');
-                }
+                progressCallback && progressCallback(offset, size, 'reading');
 
                 this.logDebug(`ReadFlashSafe: Read ${offset}/${size} bytes (${Math.round((offset / size) * 100)}%)`);
             }
 
             /* Step 2: Calculate MD5 of read data */
-            if (progressCallback) {
-                progressCallback(size, size, 'calc MD5 of input');
-            }
+            progressCallback && progressCallback(size, size, 'calc MD5 of input');
             this.logDebug(`ReadFlashSafe: Calculating MD5 of read data...`);
             const actualMD5 = await this.calculateMD5(allData);
             this.logDebug(`Actual MD5: ${actualMD5}`);
 
             /* Step 3: Get expected MD5 from flash */
-            if (progressCallback) {
-                progressCallback(size, size, 'calc MD5 in-chip');
-            }
+            progressCallback && progressCallback(size, size, 'calc MD5 in-chip');
 
             this.logDebug(`ReadFlashSafe: Calculating expected MD5 for ${size} bytes at 0x${address.toString(16).padStart(8, '0')}...`);
             const expectedMD5 = await this.checksumFlash(address, size);
@@ -779,29 +972,32 @@ class ESPFlasher {
         }
     }
 
+    /**
+     * Write flash with MD5 verification
+     * @async
+     * @param {number} address - Target address
+     * @param {Uint8Array} data - Data to write
+     * @param {Function} [progressCallback] - Callback(written, total, stage)
+     * @returns {Promise<Object>} {success: boolean, md5: string}
+     * @throws {Error} If write/verification fails
+     */
     async writeFlashSafe(address, data, progressCallback) {
         try {
             /* Step 1: Write data to flash */
             this.logDebug(`WriteFlashSafe: Writing ${data.length} bytes to 0x${address.toString(16).padStart(8, '0')}...`);
             await this.writeFlash(address, data, (offset, total) => {
-                if (progressCallback) {
-                    progressCallback(offset, total, 'writing');
-                }
+                progressCallback && progressCallback(offset, total, 'writing');
             });
             this.logDebug(`WriteFlashSafe: Write complete`);
 
             /* Step 2: Calculate MD5 of input data */
-            if (progressCallback) {
-                progressCallback(data.length, data.length, 'calc MD5 of input');
-            }
+            progressCallback && progressCallback(data.length, data.length, 'calc MD5 of input');
             this.logDebug(`WriteFlashSafe: Calculating MD5 of ${data.length} bytes to write...`);
             const expectedMD5 = this.calculateMD5(data);
             this.logDebug(`Input data MD5: ${expectedMD5}`);
 
             /* Step 3: Get MD5 from device */
-            if (progressCallback) {
-                progressCallback(data.length, data.length, 'calc MD5 in-chip');
-            }
+            progressCallback && progressCallback(data.length, data.length, 'calc MD5 in-chip');
             this.logDebug(`WriteFlashSafe: Calculating MD5 on device for verification...`);
             const deviceMD5 = await this.checksumFlash(address, data.length);
             this.logDebug(`Device MD5: ${deviceMD5}`);
@@ -816,9 +1012,7 @@ class ESPFlasher {
 
             this.logDebug(`WriteFlashSafe: MD5 verification passed ✓`);
 
-            if (progressCallback) {
-                progressCallback(data.length, data.length, expectedMD5, 'verified');
-            }
+            progressCallback && progressCallback(data.length, data.length, expectedMD5, 'verified');
 
             return { success: true, md5: expectedMD5 };
 
@@ -828,10 +1022,14 @@ class ESPFlasher {
         }
     }
 
-    async blankCheck(cbr) {
-        const startAddress = 0x000000;
-        const endAddress = 0x800000;
-        const blockSize = 0x200;
+    /**
+     * Check if flash memory is erased
+     * @async
+     * @param {Function} [cbr] - Progress callback
+     * @returns {Promise<void>}
+     */
+    async blankCheck(startAddress = 0x000000, endAddress = 0x800000, cbr = null) {
+        const blockSize = 0x1000;
 
         let totalReads = 0;
         let totalTime = 0;
@@ -872,6 +1070,15 @@ class ESPFlasher {
         }
     }
 
+    /**
+     * Write/Read stress test
+     * @async
+     * @param {number} address - Test address
+     * @param {number} size - Test data size
+     * @param {Function} [cbr] - Progress callback
+     * @returns {Promise<Object>} Test result
+     * @throws {Error} On critical failure
+     */
     async writeReadTest(address, size, cbr) {
         try {
             /* Step 1: Read original data */
@@ -973,6 +1180,12 @@ class ESPFlasher {
         }
     }
 
+    /**
+     * Build command packet with 32-bit arguments
+     * @param {number} command - Command code
+     * @param {...(number|Uint8Array)} values - Arguments
+     * @returns {Object} {command, payload: Uint8Array}
+     */
     buildCommandPacketU32(command, ...values) {
         /* Calculate total length for data */
         let totalLength = 0;
@@ -1004,6 +1217,12 @@ class ESPFlasher {
         return this.buildCommandPacket(command, data);
     }
 
+    /**
+     * Build raw command packet
+     * @param {number} command - Command code
+     * @param {Uint8Array} data - Payload
+     * @returns {Object} {command, payload: Uint8Array}
+     */
     buildCommandPacket(command, data) {
         /* Construct command packet */
         const direction = 0x00;
@@ -1036,6 +1255,10 @@ class ESPFlasher {
         return ret;
     }
 
+    /**
+     * Debug dump packet to console
+     * @param {Object} pkt - Parsed packet
+     */
     dumpPacket(pkt) {
 
         if (!this.devMode) {
@@ -1051,6 +1274,11 @@ class ESPFlasher {
         }
     }
 
+    /**
+     * Parse raw packet bytes
+     * @param {Uint8Array} packet - Raw packet data
+     * @returns {Object|null} Parsed packet or null if invalid
+     */
     parsePacket(packet) {
         var pkt = {};
 
@@ -1068,6 +1296,12 @@ class ESPFlasher {
         return pkt;
     }
 
+    /**
+     * Process received packet
+     * @async
+     * @param {Uint8Array} packet - Raw packet bytes
+     * @returns {Promise<void>}
+     */
     async processPacket(packet) {
         var pkt = this.parsePacket(packet);
 
@@ -1089,7 +1323,11 @@ class ESPFlasher {
         }
     }
 
-    /* MD5 implementation - constants and helper functions */
+    /* ==================== MD5 Hash Implementation ==================== */
+    /**
+     * MD5 Hash Implementation (from js-md5 library)
+     * Standalone client-side hashing for data verification
+     */
     Md5 = (function () {
         const ARRAY_BUFFER = typeof ArrayBuffer !== 'undefined';
         const HEX_CHARS = '0123456789abcdef'.split('');
@@ -1246,6 +1484,12 @@ class ESPFlasher {
             return this;
         };
 
+        /**
+         * Finalize hash computation
+         * @method finalize
+         * @memberof Md5
+         * @description Pads message and performs final hash operations
+         */
         Md5.prototype.finalize = function () {
             if (this.finalized) {
                 return;
@@ -1268,6 +1512,12 @@ class ESPFlasher {
             this.hash();
         };
 
+        /**
+         * Internal hash computation round
+         * @method hash
+         * @memberof Md5
+         * @description Performs one MD5 hash block computation
+         */
         Md5.prototype.hash = function () {
             var a, b, c, d, bc, da, blocks = this.blocks;
 
@@ -1437,6 +1687,7 @@ class ESPFlasher {
                 this.h3 = this.h3 + d << 0;
             }
         };
+
         /**
          * @method hex
          * @memberof Md5
@@ -1469,10 +1720,6 @@ class ESPFlasher {
                 HEX_CHARS[(h3 >>> 20) & 0x0F] + HEX_CHARS[(h3 >>> 16) & 0x0F] +
                 HEX_CHARS[(h3 >>> 28) & 0x0F] + HEX_CHARS[(h3 >>> 24) & 0x0F];
         };
-
-
         return Md5;
     })();
-
-
 }
