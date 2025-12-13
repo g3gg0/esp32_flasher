@@ -354,15 +354,127 @@
             margin: 5px 0;
             border-left: 3px solid #5a6bb8;
             border-radius: 3px;
+            position: relative;
+            overflow: hidden;
         }
 
         .nvs-item:hover {
             background: #353535;
         }
 
+        .nvs-item .mono {
+            word-break: break-all;
+            display: inline-block;
+            max-width: calc(100% - 100px);
+        }
+
         .nvs-item.crc-bad {
             border-left-color: #e57373;
             background: #3a2b2b;
+        }
+
+        .nvs-delete-btn {
+            background: #c05050;
+            color: #ffffff;
+            border: none;
+            padding: 2px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.9em;
+            position: absolute;
+            right: 8px;
+            top: 8px;
+        }
+
+        .nvs-delete-btn:hover {
+            background: #d06060;
+        }
+
+        .nvs-add-btn {
+            background: #5a6bb8;
+            color: #ffffff;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-left: 8px;
+        }
+
+        .nvs-add-btn:hover {
+            background: #6a7bc8;
+        }
+
+        .nvs-edit-btn {
+            background: #63d437;
+            color: #ffffff;
+            border: none;
+            padding: 2px 8px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.9em;
+            position: absolute;
+            right: 40px;
+            top: 8px;
+        }
+
+        .nvs-edit-btn:hover {
+            background: #e0af47;
+        }
+
+        .nvs-popup {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #2a2a2a;
+            border: 2px solid #5a6bb8;
+            border-radius: 8px;
+            padding: 20px;
+            z-index: 10001;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
+            min-width: 400px;
+        }
+
+        .nvs-popup-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 10000;
+        }
+
+        .nvs-popup h3 {
+            margin-bottom: 15px;
+            color: #7a8bdc;
+        }
+
+        .nvs-popup label {
+            display: block;
+            margin-top: 10px;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #c8c8c8;
+        }
+
+        .nvs-popup input,
+        .nvs-popup select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #5a6bb8;
+            border-radius: 4px;
+            background: #333333;
+            color: #d4d4d4;
+            font-size: 1em;
+        }
+
+        .nvs-popup-buttons {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
         }
 
         .crc-info {
@@ -1094,7 +1206,7 @@
                 deviceReadProgressTotal = deviceFlashSizeBytes;
                 deviceReadProgressDone = 0;
                 const totalSize = deviceFlashSizeBytes;
-                deviceSparse = buildDeviceSparse(totalSize, true);
+                deviceSparse = buildDeviceSparse(totalSize, false);
 
                 parser = new ESP32Parser(deviceSparse);
                 displayFileInfo({
@@ -1530,7 +1642,7 @@
                 deviceReadProgressTotal = deviceFlashSizeBytes;
                 deviceReadProgressDone = 0;
                 const totalSize = deviceFlashSizeBytes;
-                deviceSparse = buildDeviceSparse(totalSize, true);
+                deviceSparse = buildDeviceSparse(totalSize, false);
 
                 parser = new ESP32Parser(deviceSparse);
 
@@ -1770,7 +1882,7 @@
             setFetchOverlayReason('Applying flash size');
             showFetchOverlay('Applying flash size...');
             try {
-                deviceSparse = buildDeviceSparse(deviceFlashSizeBytes, true);
+                deviceSparse = buildDeviceSparse(deviceFlashSizeBytes, false);
                 parser = new ESP32Parser(deviceSparse);
                 displayFileInfo({
                     name: 'ESP32 Device',
@@ -2323,6 +2435,11 @@
             const partition = parser.partitions[idx];
             const contentDiv = document.getElementById(`parsed-content-${idx}`);
 
+            if (!contentDiv) {
+                console.error(`Content div parsed-content-${idx} not found`);
+                return;
+            }
+
             // Show loading indicator
             contentDiv.innerHTML = '<div class="loading">⏳ Parsing NVS data...</div>';
 
@@ -2331,15 +2448,19 @@
                 try {
                     const pages = await parser.parseNVS(partition);
 
-                    let html = '<div class="success" style="margin-bottom: 10px;">Found ' + pages.length + ' NVS pages</div>';
+                    let html = '<div class="success" style="margin-bottom: 10px;">Found ' + pages.length + ' NVS pages <button class="nvs-add-btn" onclick="event.stopPropagation(); showNVSAddNamespaceDialog(' + idx + ')">➕ Add Namespace</button></div>';
 
                     const namespaceGroups = {};
+                    const allNamespaces = new Set();
                     let totalItems = 0;
 
                     pages.forEach(page => {
                         page.items.forEach(item => {
                             if (item.nsIndex === 0) {
-                                // Skip namespace definitions in the item list
+                                // Collect namespace definitions
+                                if (item.namespace) {
+                                    allNamespaces.add(item.namespace);
+                                }
                                 return;
                             }
 
@@ -2349,6 +2470,7 @@
                             }
 
                             const ns = item.namespace || 'Unknown';
+                            allNamespaces.add(ns);
                             if (!namespaceGroups[ns]) {
                                 namespaceGroups[ns] = [];
                             }
@@ -2357,30 +2479,62 @@
                         });
                     });
 
-                    if (totalItems === 0) {
-                        html += '<div class="error">No NVS items found in this partition.</div>';
+                    // Ensure all namespaces appear in namespaceGroups (even if empty)
+                    allNamespaces.forEach(ns => {
+                        if (!namespaceGroups[ns]) {
+                            namespaceGroups[ns] = [];
+                        }
+                    });
+
+                    if (allNamespaces.size === 0) {
+                        html += '<div class="error">No namespaces found in this partition.</div>';
                     } else {
                         Object.keys(namespaceGroups).sort().forEach(ns => {
-                            html += `<div class="nvs-namespace">Namespace: ${ns} (${namespaceGroups[ns].length} items)</div>`;
+                            html += `<div class="nvs-namespace">Namespace: ${ns} (${namespaceGroups[ns].length} items)<button class="nvs-add-btn" onclick="event.stopPropagation(); showNVSAddDialog(${idx}, '${ns}')">➕ Add Item</button></div>`;
                             namespaceGroups[ns].forEach(item => {
                                 const tooltip = `Offset: 0x${item.offset.toString(16).toUpperCase()} (${item.offset}), Size: ${item.entrySize} bytes`;
                                 const crcBad = (item.headerCrcValid === false) || (item.dataCrcValid === false);
-                                html += `<div class="nvs-item ${crcBad ? 'crc-bad' : ''}" title="${tooltip}">`;
+                                html += `<div class="nvs-item ${crcBad ? 'crc-bad' : ''}" title="${tooltip}" style="padding-right: 80px;">`;
+                                html += `<button class="nvs-edit-btn" onclick="event.stopPropagation(); showNVSEditDialog(${idx}, '${ns}', '${item.key}', '${item.typeName}', ${JSON.stringify(item.value).replace(/"/g, '&quot;')})">✏️</button>`;
+                                html += `<button class="nvs-delete-btn" onclick="event.stopPropagation(); deleteNVSItem(${idx}, '${ns}', '${item.key}')">❌</button>`;
                                 html += `<strong>${item.key}</strong> <span class="badge">${item.typeName}</span><br>`;
                                 html += `Value: <span class="mono">${formatNVSValue(item)}</span>`;
 
-                                if (item.headerCrcCalc !== undefined) {
-                                    const headerStatus = item.headerCrcValid ? '<span class="ok">OK</span>' : '<span class="bad">BAD</span>';
-                                    const storedHex = (item.crc32 >>> 0).toString(16).toUpperCase().padStart(8, '0');
-                                    const calcHex = (item.headerCrcCalc >>> 0).toString(16).toUpperCase().padStart(8, '0');
-                                    html += `<div class="crc-info">Header CRC: ${headerStatus} (stored 0x${storedHex}, calc 0x${calcHex})</div>`;
-                                }
-
-                                if (item.dataCrcCalc !== undefined) {
-                                    const dataStatus = item.dataCrcValid ? '<span class="ok">OK</span>' : '<span class="bad">BAD</span>';
-                                    const storedHex = (item.dataCrcStored >>> 0).toString(16).toUpperCase().padStart(8, '0');
-                                    const calcHex = (item.dataCrcCalc >>> 0).toString(16).toUpperCase().padStart(8, '0');
-                                    html += `<div class="crc-info">Data CRC: ${dataStatus} (stored 0x${storedHex}, calc 0x${calcHex})</div>`;
+                                if (item.headerCrcCalc !== undefined || item.dataCrcCalc !== undefined) {
+                                    const headerValid = item.headerCrcCalc === undefined || item.headerCrcValid;
+                                    const dataValid = item.dataCrcCalc === undefined || item.dataCrcValid;
+                                    const allValid = headerValid && dataValid;
+                                    
+                                    if (allValid) {
+                                        /* Both CRCs OK - show compact version with hover info */
+                                        let hoverText = '';
+                                        if (item.headerCrcCalc !== undefined) {
+                                            const storedHex = (item.crc32 >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                            const calcHex = (item.headerCrcCalc >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                            hoverText += `Header CRC: stored 0x${storedHex}, calc 0x${calcHex}`;
+                                        }
+                                        if (item.dataCrcCalc !== undefined) {
+                                            const storedHex = (item.dataCrcStored >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                            const calcHex = (item.dataCrcCalc >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                            if (hoverText) hoverText += '\\n';
+                                            hoverText += `Data CRC: stored 0x${storedHex}, calc 0x${calcHex}`;
+                                        }
+                                        html += `<div class="crc-info" title="${hoverText}">CRCs: <span class="ok">OK</span> <span style="color: #9a9a9a;">ℹ️</span></div>`;
+                                    } else {
+                                        /* At least one CRC failed - show full details */
+                                        if (item.headerCrcCalc !== undefined) {
+                                            const headerStatus = item.headerCrcValid ? '<span class="ok">OK</span>' : '<span class="bad">BAD</span>';
+                                            const storedHex = (item.crc32 >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                            const calcHex = (item.headerCrcCalc >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                            html += `<div class="crc-info">Header CRC: ${headerStatus} (stored 0x${storedHex}, calc 0x${calcHex})</div>`;
+                                        }
+                                        if (item.dataCrcCalc !== undefined) {
+                                            const dataStatus = item.dataCrcValid ? '<span class="ok">OK</span>' : '<span class="bad">BAD</span>';
+                                            const storedHex = (item.dataCrcStored >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                            const calcHex = (item.dataCrcCalc >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                            html += `<div class="crc-info">Data CRC: ${dataStatus} (stored 0x${storedHex}, calc 0x${calcHex})</div>`;
+                                        }
+                                    }
                                 }
                                 html += `</div>`;
                             });
@@ -2405,30 +2559,51 @@
                 const chunkInfo = `<span style="color: #888;">[Chunk ${item.chunkIndex}]</span> `;
 
                 if (item.rawValue) {
-                    let hexValue = Array.from(item.rawValue)
-                        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
-                        .join(' ');
-                    let asciiValue = '';
-                    for (let i = 0; i < item.rawValue.length; i++) {
-                        const byte = item.rawValue[i];
-                        asciiValue += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                    let hexLines = [];
+                    let asciiLines = [];
+                    const width = 32;
+                    
+                    for (let i = 0; i < item.rawValue.length; i += width) {
+                        const chunk = item.rawValue.slice(i, i + width);
+                        const hexLine = Array.from(chunk)
+                            .map(b => b.toString(width).padStart(2, '0').toUpperCase())
+                            .join(' ');
+                        hexLines.push(hexLine);
+                        
+                        let asciiLine = '';
+                        for (let j = 0; j < chunk.length; j++) {
+                            const byte = chunk[j];
+                            asciiLine += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                        }
+                        asciiLines.push(asciiLine);
                     }
-                    return chunkInfo + `Hex: ${hexValue}<br><span style="color: #d4a574;">ASCII: ${asciiValue}</span>`;
+                    
+                    return chunkInfo + `Hex:<br>${hexLines.join('<br>')}<br><span style="color: #d4a574;">ASCII:<br>${asciiLines.join('<br>')}</span>`;
                 }
                 return chunkInfo + item.value;
             }
 
             // For regular Blobs with raw data
             if (item.typeName === 'Blob' && item.rawValue) {
-                let hexValue = Array.from(item.rawValue)
-                    .map(b => b.toString(16).padStart(2, '0').toUpperCase())
-                    .join(' ');
-                let asciiValue = '';
-                for (let i = 0; i < item.rawValue.length; i++) {
-                    const byte = item.rawValue[i];
-                    asciiValue += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                let hexLines = [];
+                let asciiLines = [];
+                
+                for (let i = 0; i < item.rawValue.length; i += 16) {
+                    const chunk = item.rawValue.slice(i, i + 16);
+                    const hexLine = Array.from(chunk)
+                        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+                        .join(' ');
+                    hexLines.push(hexLine);
+                    
+                    let asciiLine = '';
+                    for (let j = 0; j < chunk.length; j++) {
+                        const byte = chunk[j];
+                        asciiLine += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                    }
+                    asciiLines.push(asciiLine);
                 }
-                return `Hex: ${hexValue}<br><span style="color: #d4a574;">ASCII: ${asciiValue}</span>`;
+                
+                return `Hex:<br>${hexLines.join('<br>')}<br><span style="color: #d4a574;">ASCII:<br>${asciiLines.join('<br>')}</span>`;
             }
 
             return item.value;
@@ -2920,6 +3095,379 @@
         function showError(message) {
             const content = document.getElementById('partitionsContent');
             content.innerHTML = `<div class="error">${message}</div>`;
+        }
+
+        async function deleteNVSItem(partitionIdx, namespace, key) {
+            if (!parser || !parser.sparseImage) {
+                alert('No firmware loaded.');
+                return;
+            }
+
+            const partition = parser.partitions[partitionIdx];
+            if (!partition) {
+                alert('Partition not found.');
+                return;
+            }
+
+            try {
+                await parser.deleteNVSItem(partition, namespace, key);
+                
+                // Refresh the NVS display
+                parseNVSPartition(partitionIdx);
+                updateMemoryMap();
+                
+                setDeviceStatus(`Deleted NVS item: ${namespace}.${key}`, 'success');
+            } catch (error) {
+                alert('Error deleting NVS item: ' + error.message);
+            }
+        }
+
+        let currentNVSAddPartition = null;
+        let currentNVSAddNamespace = null;
+
+        function showNVSAddDialog(partitionIdx, namespace) {
+            currentNVSAddPartition = partitionIdx;
+            currentNVSAddNamespace = namespace;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'nvs-popup-overlay';
+            overlay.onclick = closeNVSAddDialog;
+
+            const popup = document.createElement('div');
+            popup.className = 'nvs-popup';
+            popup.onclick = (e) => e.stopPropagation();
+
+            popup.innerHTML = `
+                <h3>Add NVS Item to ${namespace}</h3>
+                <label for="nvs-add-key">Key:</label>
+                <input type="text" id="nvs-add-key" maxlength="15" placeholder="Key name (max 15 chars)">
+                
+                <label for="nvs-add-type">Type:</label>
+                <select id="nvs-add-type" onchange="updateNVSAddValueInput()">
+                    <option value="U8">U8 (Unsigned 8-bit)</option>
+                    <option value="U16">U16 (Unsigned 16-bit)</option>
+                    <option value="U32">U32 (Unsigned 32-bit)</option>
+                    <option value="U64">U64 (Unsigned 64-bit)</option>
+                    <option value="I8">I8 (Signed 8-bit)</option>
+                    <option value="I16">I16 (Signed 16-bit)</option>
+                    <option value="I32">I32 (Signed 32-bit)</option>
+                    <option value="I64">I64 (Signed 64-bit)</option>
+                    <option value="String">String</option>
+                    <option value="Blob">Blob (Hex)</option>
+                </select>
+                
+                <label for="nvs-add-value">Value:</label>
+                <input type="text" id="nvs-add-value" placeholder="Enter value">
+                <div id="nvs-add-value-hint" style="font-size: 0.85em; color: #888; margin-top: 5px;">Enter a number (0-255)</div>
+                
+                <div class="nvs-popup-buttons">
+                    <button class="btn" onclick="closeNVSAddDialog()">Cancel</button>
+                    <button class="btn" onclick="submitNVSAddDialog()" style="background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Add</button>
+                </div>
+            `;
+
+            overlay.appendChild(popup);
+            document.body.appendChild(overlay);
+
+            // Initialize value input hint
+            setTimeout(() => {
+                updateNVSAddValueInput();
+                document.getElementById('nvs-add-key').focus();
+            }, 100);
+        }
+
+        function showNVSAddNamespaceDialog(partitionIdx) {
+            currentNVSAddPartition = partitionIdx;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'nvs-popup-overlay';
+            overlay.onclick = closeNVSAddDialog;
+
+            const popup = document.createElement('div');
+            popup.className = 'nvs-popup';
+            popup.onclick = (e) => e.stopPropagation();
+
+            popup.innerHTML = `
+                <h3>Add New Namespace</h3>
+                <label for="nvs-namespace-name">Namespace Name:</label>
+                <input type="text" id="nvs-namespace-name" maxlength="15" placeholder="Namespace name (max 15 chars)">
+                <div style="font-size: 0.85em; color: #888; margin-top: 5px;">Enter a unique namespace name</div>
+                
+                <div class="nvs-popup-buttons">
+                    <button class="btn" onclick="closeNVSAddDialog()">Cancel</button>
+                    <button class="btn" onclick="submitNVSAddNamespaceDialog()" style="background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Create</button>
+                </div>
+            `;
+
+            overlay.appendChild(popup);
+            document.body.appendChild(overlay);
+
+            setTimeout(() => {
+                document.getElementById('nvs-namespace-name').focus();
+            }, 100);
+        }
+
+        function showNVSEditDialog(partitionIdx, namespace, key, type, value) {
+            currentNVSAddPartition = partitionIdx;
+            currentNVSAddNamespace = namespace;
+            window.currentNVSEditKey = key;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'nvs-popup-overlay';
+            overlay.onclick = closeNVSAddDialog;
+
+            const popup = document.createElement('div');
+            popup.className = 'nvs-popup';
+            popup.onclick = (e) => e.stopPropagation();
+
+            // Format value for display in input
+            let displayValue = value;
+            if (type === 'String') {
+                displayValue = value.replace(/^"|"$/g, '');
+            } else if (type === 'Blob') {
+                // Extract hex from formatted blob value
+                if (typeof value === 'string') {
+                    const hexMatch = value.match(/Hex: ([0-9A-F ]+)/i);
+                    if (hexMatch) {
+                        displayValue = hexMatch[1];
+                    }
+                }
+            }
+
+            popup.innerHTML = `
+                <h3>Edit NVS Item: ${key}</h3>
+                <label>Key: <strong>${key}</strong> (read-only)</label>
+                
+                <label for="nvs-add-type">Type:</label>
+                <select id="nvs-add-type" onchange="updateNVSAddValueInput()">
+                    <option value="U8" ${type === 'U8' ? 'selected' : ''}>U8 (Unsigned 8-bit)</option>
+                    <option value="U16" ${type === 'U16' ? 'selected' : ''}>U16 (Unsigned 16-bit)</option>
+                    <option value="U32" ${type === 'U32' ? 'selected' : ''}>U32 (Unsigned 32-bit)</option>
+                    <option value="U64" ${type === 'U64' ? 'selected' : ''}>U64 (Unsigned 64-bit)</option>
+                    <option value="I8" ${type === 'I8' ? 'selected' : ''}>I8 (Signed 8-bit)</option>
+                    <option value="I16" ${type === 'I16' ? 'selected' : ''}>I16 (Signed 16-bit)</option>
+                    <option value="I32" ${type === 'I32' ? 'selected' : ''}>I32 (Signed 32-bit)</option>
+                    <option value="I64" ${type === 'I64' ? 'selected' : ''}>I64 (Signed 64-bit)</option>
+                    <option value="String" ${type === 'String' ? 'selected' : ''}>String</option>
+                    <option value="Blob" ${type === 'Blob' ? 'selected' : ''}>Blob (Hex)</option>
+                </select>
+                
+                <label for="nvs-add-value">Value:</label>
+                <input type="text" id="nvs-add-value" placeholder="Enter value" value="${displayValue}">
+                <div id="nvs-add-value-hint" style="font-size: 0.85em; color: #888; margin-top: 5px;">Enter a number (0-255)</div>
+                
+                <div class="nvs-popup-buttons">
+                    <button class="btn" onclick="closeNVSAddDialog()">Cancel</button>
+                    <button class="btn" onclick="submitNVSEditDialog()" style="background: linear-gradient(135deg, #d49f37 0%, #b58f30 100%);">Save</button>
+                </div>
+            `;
+
+            overlay.appendChild(popup);
+            document.body.appendChild(overlay);
+
+            // Initialize value input hint
+            setTimeout(() => {
+                updateNVSAddValueInput();
+                document.getElementById('nvs-add-value').focus();
+                document.getElementById('nvs-add-value').select();
+            }, 100);
+        }
+
+        function updateNVSAddValueInput() {
+            const typeSelect = document.getElementById('nvs-add-type');
+            const valueInput = document.getElementById('nvs-add-value');
+            const hint = document.getElementById('nvs-add-value-hint');
+            
+            if (!typeSelect || !valueInput || !hint) return;
+            
+            const type = typeSelect.value;
+            
+            switch(type) {
+                case 'U8':
+                    valueInput.type = 'number';
+                    valueInput.placeholder = 'Enter number (0-255)';
+                    hint.textContent = 'Range: 0 to 255';
+                    break;
+                case 'U16':
+                    valueInput.type = 'number';
+                    valueInput.placeholder = 'Enter number (0-65535)';
+                    hint.textContent = 'Range: 0 to 65535';
+                    break;
+                case 'U32':
+                    valueInput.type = 'number';
+                    valueInput.placeholder = 'Enter number (0-4294967295)';
+                    hint.textContent = 'Range: 0 to 4294967295';
+                    break;
+                case 'U64':
+                    valueInput.type = 'text';
+                    valueInput.placeholder = 'Enter number (0-18446744073709551615)';
+                    hint.textContent = 'Range: 0 to 18446744073709551615';
+                    break;
+                case 'I8':
+                    valueInput.type = 'number';
+                    valueInput.placeholder = 'Enter number (-128 to 127)';
+                    hint.textContent = 'Range: -128 to 127';
+                    break;
+                case 'I16':
+                    valueInput.type = 'number';
+                    valueInput.placeholder = 'Enter number (-32768 to 32767)';
+                    hint.textContent = 'Range: -32768 to 32767';
+                    break;
+                case 'I32':
+                    valueInput.type = 'number';
+                    valueInput.placeholder = 'Enter number (-2147483648 to 2147483647)';
+                    hint.textContent = 'Range: -2147483648 to 2147483647';
+                    break;
+                case 'I64':
+                    valueInput.type = 'text';
+                    valueInput.placeholder = 'Enter number (-9223372036854775808 to 9223372036854775807)';
+                    hint.textContent = 'Range: -9223372036854775808 to 9223372036854775807';
+                    break;
+                case 'String':
+                    valueInput.type = 'text';
+                    valueInput.placeholder = 'Enter string value';
+                    hint.textContent = 'Enter any text (max 64 bytes)';
+                    break;
+                case 'Blob':
+                    valueInput.type = 'text';
+                    valueInput.placeholder = 'Enter hex bytes (e.g., 01 02 03 FF)';
+                    hint.textContent = 'Enter hex bytes separated by spaces';
+                    break;
+            }
+        }
+
+        function closeNVSAddDialog() {
+            const overlay = document.querySelector('.nvs-popup-overlay');
+            if (overlay) {
+                document.body.removeChild(overlay);
+            }
+            currentNVSAddPartition = null;
+            currentNVSAddNamespace = null;
+        }
+
+        async function submitNVSAddDialog() {
+            const key = document.getElementById('nvs-add-key').value.trim();
+            const type = document.getElementById('nvs-add-type').value;
+            const value = document.getElementById('nvs-add-value').value.trim();
+
+            if (!key) {
+                alert('Please enter a key name.');
+                return;
+            }
+
+            if (key.length > 15) {
+                alert('Key name must be 15 characters or less.');
+                return;
+            }
+
+            if (!value) {
+                alert('Please enter a value.');
+                return;
+            }
+
+            // Save partition index and namespace before closing dialog
+            const partitionIdx = currentNVSAddPartition;
+            const namespace = currentNVSAddNamespace;
+
+            try {
+                const partition = parser.partitions[partitionIdx];
+                await parser.addNVSItem(partition, namespace, key, type, value);
+                
+                closeNVSAddDialog();
+                
+                // Ensure the details row is visible before parsing
+                const detailsRow = document.getElementById(`details-${partitionIdx}`);
+                if (detailsRow && !detailsRow.classList.contains('visible')) {
+                    detailsRow.classList.add('visible');
+                }
+                
+                parseNVSPartition(partitionIdx);
+                updateMemoryMap();
+                
+                setDeviceStatus(`Added NVS item: ${namespace}.${key}`, 'success');
+            } catch (error) {
+                alert('Error adding NVS item: ' + error.message);
+            }
+        }
+
+        async function submitNVSEditDialog() {
+            const oldKey = window.currentNVSEditKey;
+            const type = document.getElementById('nvs-add-type').value;
+            const value = document.getElementById('nvs-add-value').value.trim();
+
+            if (!value) {
+                alert('Please enter a value.');
+                return;
+            }
+
+            // Save partition index and namespace before closing dialog
+            const partitionIdx = currentNVSAddPartition;
+            const namespace = currentNVSAddNamespace;
+
+            try {
+                const partition = parser.partitions[partitionIdx];
+                
+                // Delete old entry
+                await parser.deleteNVSItem(partition, namespace, oldKey);
+                console.log(`Deleted old NVS item: ${namespace}/${oldKey}`);
+                
+                // Add new entry with same key
+                await parser.addNVSItem(partition, namespace, oldKey, type, value);
+                console.log(`Added updated NVS item: ${namespace}/${oldKey} = ${value} (${type})`);
+                
+                closeNVSAddDialog();
+                
+                // Ensure the details row is visible before parsing
+                const detailsRow = document.getElementById(`details-${partitionIdx}`);
+                if (detailsRow && !detailsRow.classList.contains('visible')) {
+                    detailsRow.classList.add('visible');
+                }
+                
+                parseNVSPartition(partitionIdx);
+                updateMemoryMap();
+                
+                setDeviceStatus(`Updated NVS item: ${namespace}.${oldKey}`, 'success');
+            } catch (error) {
+                alert('Error updating NVS item: ' + error.message);
+            }
+        }
+
+        async function submitNVSAddNamespaceDialog() {
+            const namespaceName = document.getElementById('nvs-namespace-name').value.trim();
+
+            if (!namespaceName) {
+                alert('Please enter a namespace name.');
+                return;
+            }
+
+            if (namespaceName.length > 15) {
+                alert('Namespace name must be 15 characters or less.');
+                return;
+            }
+
+            // Save partition index before closing dialog
+            const partitionIdx = currentNVSAddPartition;
+
+            try {
+                const partition = parser.partitions[partitionIdx];
+                await parser.addNVSNamespace(partition, namespaceName);
+                console.log(`Added namespace: ${namespaceName}`);
+                
+                closeNVSAddDialog();
+                
+                // Ensure the details row is visible before parsing
+                const detailsRow = document.getElementById(`details-${partitionIdx}`);
+                if (detailsRow && !detailsRow.classList.contains('visible')) {
+                    detailsRow.classList.add('visible');
+                }
+                
+                parseNVSPartition(partitionIdx);
+                updateMemoryMap();
+                
+                setDeviceStatus(`Created namespace: ${namespaceName}`, 'success');
+            } catch (error) {
+                alert('Error creating namespace: ' + error.message);
+            }
         }
     </script>
 </body>

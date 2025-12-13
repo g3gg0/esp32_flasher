@@ -37,6 +37,7 @@ class SlipLayer {
         this.buffer = [];
         this.escaping = false;
         this.verbose = true;
+        this.logPackets = false;
     }
 
     /**
@@ -47,25 +48,25 @@ class SlipLayer {
      */
     logSlipData(data, type, label) {
         if (!this.verbose) return;
-        
+
         const isEncode = type === 'ENCODE';
         const color = isEncode ? 'color: #FFC107; font-weight: bold' : 'color: #9C27B0; font-weight: bold';
         const bgColor = isEncode ? 'background: #F57F17; color: #000' : 'background: #6A1B9A; color: #fff';
         const symbol = isEncode ? '▶' : '◀';
-        
+
         const maxBytes = 128;
         const bytesToShow = Math.min(data.length, maxBytes);
         const truncated = data.length > maxBytes;
-        
+
         let hexStr = '';
         let asciiStr = '';
         let lines = [];
-        
+
         for (let i = 0; i < bytesToShow; i++) {
             const byte = data[i];
             hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
             asciiStr += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
-            
+
             if ((i + 1) % 16 === 0 || i === bytesToShow - 1) {
                 const hexPadding = ' '.repeat(Math.max(0, (16 - ((i % 16) + 1)) * 3));
                 lines.push(`    ${hexStr}${hexPadding} | ${asciiStr}`);
@@ -73,10 +74,12 @@ class SlipLayer {
                 asciiStr = '';
             }
         }
-        
-        const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
-        console.log(`%c${symbol} SLIP ${type}%c ${label} [${data.length} bytes]${truncMsg}`, bgColor, color);
-        lines.forEach(line => console.log('%c' + line, 'font-family: monospace; font-size: 11px; color: #888'));
+
+        if (this.logPackets) {
+            const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
+            console.log(`%c${symbol} SLIP ${type}%c ${label} [${data.length} bytes]${truncMsg}`, bgColor, color);
+            lines.forEach(line => console.log('%c' + line, 'font-family: monospace; font-size: 11px; color: #888'));
+        }
     }
 
     /**
@@ -91,7 +94,9 @@ class SlipLayer {
         const SLIP_ESC_END = 0xDC;
         const SLIP_ESC_ESC = 0xDD;
 
-        this.logSlipData(packet, 'ENCODE', 'Payload before framing');
+        if (this.logPackets) {
+            this.logSlipData(packet, 'ENCODE', 'Payload before framing');
+        }
 
         let slipFrame = [SLIP_END];
 
@@ -107,7 +112,7 @@ class SlipLayer {
 
         slipFrame.push(SLIP_END);
         const result = new Uint8Array(slipFrame);
-        
+
         return result;
     }
 
@@ -146,10 +151,12 @@ class SlipLayer {
             }
         }
 
-        // Log decoded packets
-        for (let i = 0; i < outputPackets.length; i++) {
-            const label = outputPackets.length > 1 ? `Decoded packet ${i + 1}/${outputPackets.length}` : 'Decoded packet';
-            this.logSlipData(outputPackets[i], 'DECODE', label);
+        if (this.logPackets) {
+            // Log decoded packets
+            for (let i = 0; i < outputPackets.length; i++) {
+                const label = outputPackets.length > 1 ? `Decoded packet ${i + 1}/${outputPackets.length}` : 'Decoded packet';
+                this.logSlipData(outputPackets[i], 'DECODE', label);
+            }
         }
 
         return outputPackets;
@@ -189,7 +196,7 @@ class ESPFlasher {
 
         /* Command execution lock to prevent concurrent command execution */
         this._commandLock = Promise.resolve();
-        
+
         /* Verbose serial logging */
         this.verboseSerial = true;
     }
@@ -202,25 +209,25 @@ class ESPFlasher {
      */
     logSerialData(data, direction, maxBytes = 256) {
         if (!this.verboseSerial) return;
-        
+
         const isTX = direction === 'TX';
         const color = isTX ? 'color: #4CAF50; font-weight: bold' : 'color: #2196F3; font-weight: bold';
         const bgColor = isTX ? 'background: #1b5e20; color: #fff' : 'background: #0d47a1; color: #fff';
         const arrow = isTX ? '→' : '←';
-        
+
         const bytesToShow = Math.min(data.length, maxBytes);
         const truncated = data.length > maxBytes;
-        
+
         // Format hex string with spaces every 2 bytes and newline every 16 bytes
         let hexStr = '';
         let asciiStr = '';
         let lines = [];
-        
+
         for (let i = 0; i < bytesToShow; i++) {
             const byte = data[i];
             hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
             asciiStr += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
-            
+
             if ((i + 1) % 16 === 0 || i === bytesToShow - 1) {
                 // Pad hex string to align ASCII
                 const hexPadding = ' '.repeat(Math.max(0, (16 - ((i % 16) + 1)) * 3));
@@ -229,10 +236,11 @@ class ESPFlasher {
                 asciiStr = '';
             }
         }
-        
-        const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
-        console.log(`%c${arrow} ${direction}%c [${data.length} bytes]${truncMsg}`, bgColor, color);
-        lines.forEach(line => console.log('%c' + line, 'font-family: monospace; font-size: 11px'));
+        if (this.logPackets) {
+            const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
+            console.log(`%c${arrow} ${direction}%c [${data.length} bytes]${truncMsg}`, bgColor, color);
+            lines.forEach(line => console.log('%c' + line, 'font-family: monospace; font-size: 11px'));
+        }
     }
 
     /**
@@ -352,7 +360,7 @@ class ESPFlasher {
      */
     async executeCommand(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
         /* Acquire command lock to ensure only one command executes at a time */
-        return this._commandLock = this._commandLock.then(() => 
+        return this._commandLock = this._commandLock.then(() =>
             this._executeCommandUnlocked(packet, callback, default_callback, timeout, hasTimeoutCbr)
         );
     }
@@ -368,7 +376,7 @@ class ESPFlasher {
         }
 
         var pkt = this.parsePacket(packet.payload);
-        
+
         /* Log command execution with parameters */
         const commandNames = {
             0x02: 'FLASH_BEGIN', 0x03: 'FLASH_DATA', 0x04: 'FLASH_END',
@@ -381,7 +389,7 @@ class ESPFlasher {
         };
         const cmdName = commandNames[packet.command] || `0x${packet.command.toString(16)}`;
         console.log(`%c[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'color: #4CAF50; font-weight: bold', 'params:', pkt);
-        
+
         this.dumpPacket(pkt);
 
         const responsePromise = new Promise((resolve, reject) => {
