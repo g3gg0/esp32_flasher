@@ -1,0 +1,58 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build: Combined HTML",
+            "type": "shell",
+            "command": "node",
+            "args": ["build.js"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Build: Watch Mode",
+            "type": "shell",
+            "command": "node",
+            "args": ["build.js"],
+            "isBackground": true,
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "showReuseMessage": false
+            },
+            "problemMatcher": {
+                "pattern": {
+                    "regexp": "^$",
+                    "file": 1,
+                    "location": 2,
+                    "message": 3
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "^Building:",
+                    "endsPattern": "^✓ Build completed"
+                }
+            },
+            "runOptions": {
+                "runOn": "folderOpen"
+            }
+        },
+        {
+            "label": "Build: Auto on Save",
+            "type": "shell",
+            "command": "echo",
+            "args": ["Build on save enabled. Edit .html or .js files to trigger build."],
+            "problemMatcher": []
+        }
+    ]
+}
