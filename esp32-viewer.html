@@ -1,0 +1,2384 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Firmware Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            color: #d4d4d4;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1f35 0%, #1c1424 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1900px;
+            margin: 0 auto;
+            background: #2a2a2a;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #3d4a7a 0%, #2d1f3d 100%);
+            color: #e0e0e0;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .drop-zone {
+            border: 3px dashed #5a6bb8;
+            border-radius: 10px;
+            padding: 10px 10px;
+            text-align: center;
+            background: #333333;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 30px;
+        }
+
+        .drop-zone:hover {
+            background: #3a3f5a;
+            border-color: #7a6bb8;
+        }
+
+        .drop-zone.drag-over {
+            background: #404560;
+            border-color: #8a7bc8;
+            transform: scale(1.02);
+        }
+
+        .drop-zone i {
+            font-size: 4em;
+            color: #7a8bdc;
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        .drop-zone p {
+            font-size: 1.2em;
+            color: #a0a0a0;
+            margin: 10px 0;
+        }
+
+        .drop-zone .file-input {
+            display: none;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #5a6bb8 0%, #6a5294 100%);
+            color: #e8e8e8;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(90, 107, 184, 0.5);
+        }
+
+        .file-info {
+            background: #333333;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .file-info.visible {
+            display: block;
+        }
+
+        .file-info h3 {
+            color: #7a8bdc;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .info-item {
+            background: #252525;
+            padding: 12px;
+            border-radius: 5px;
+            border-left: 3px solid #5a6bb8;
+        }
+
+        .info-item label {
+            font-weight: bold;
+            color: #9a9a9a;
+            font-size: 0.9em;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .info-item span {
+            color: #c8c8c8;
+            font-size: 1em;
+            word-break: break-all;
+        }
+
+        .size-selector {
+            cursor: pointer;
+            text-decoration: underline dotted;
+            color: #6ec589;
+        }
+
+        .size-selector:hover {
+            color: #8bf0a8;
+        }
+
+        .size-select {
+            background: #252525;
+            color: #c8c8c8;
+            border: 1px solid #5a6bb8;
+            border-radius: 4px;
+            padding: 4px 6px;
+            font-size: 0.95em;
+            outline: none;
+        }
+
+        .size-select:focus {
+            border-color: #8bf0a8;
+            box-shadow: 0 0 0 2px rgba(139, 240, 168, 0.2);
+        }
+
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #404040;
+            margin-bottom: 20px;
+            gap: 10px;
+        }
+
+        .tab {
+            padding: 15px 30px;
+            background: #2a2a2a;
+            border: none;
+            cursor: pointer;
+            font-size: 1em;
+            border-radius: 5px 5px 0 0;
+            transition: all 0.3s ease;
+        }
+
+        .tab:hover {
+            background: #3a3a3a;
+        }
+
+        .tab.active {
+            background: linear-gradient(135deg, #3d4565 0%, #3a2e4a 100%);
+            color: #e8e8e8;
+            font-weight: bold;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #2d2d2d;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        th {
+            background: linear-gradient(135deg, #3d4565 0%, #3a2e4a 100%);
+            color: #e0e0e0;
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #404040;
+        }
+
+        tr:hover {
+            background: #383840;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .fat-file-row {
+            cursor: pointer;
+        }
+
+        .fat-file-row:hover {
+            background: #3d3e48;
+            box-shadow: inset 0 0 10px rgba(100, 100, 255, 0.2);
+        }
+
+        .expandable {
+            cursor: pointer;
+        }
+
+        .expandable:hover {
+            background: #3d3e48;
+        }
+
+        .details-row {
+            display: none;
+            background: #333338;
+        }
+
+        .details-row.visible {
+            display: table-row;
+        }
+
+        .details-content {
+            padding: 20px;
+            border-left: 3px solid #5a6bb8;
+        }
+
+        .details-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 10px;
+        }
+
+        .detail-item {
+            background: #3a3a3a;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .detail-item strong {
+            color: #7a8bdc;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            font-weight: bold;
+            background: #404040;
+        }
+
+        .badge.app {
+            color: #6b9aeb;
+        }
+
+        .badge.data {
+            color: #b883d8;
+        }
+
+        .badge.nvs {
+            color: #f39c63;
+        }
+
+        .badge.fat {
+            color: #6ec589;
+        }
+
+        .code-block {
+            background: #1e1e1e;
+            color: #7a8bdc;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            margin: 10px 0;
+        }
+
+        .nvs-namespace {
+            background: linear-gradient(90deg, #5a6bb8 0%, #6a5294 100%);
+            color: #e8e8e8;
+            padding: 10px 15px;
+            margin-top: 15px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .nvs-item {
+            background: #2d2d2d;
+            padding: 12px;
+            margin: 5px 0;
+            border-left: 3px solid #5a6bb8;
+            border-radius: 3px;
+        }
+
+        .nvs-item:hover {
+            background: #353535;
+        }
+
+        .nvs-item.crc-bad {
+            border-left-color: #e57373;
+            background: #3a2b2b;
+        }
+
+        .crc-info {
+            font-size: 0.85em;
+            color: #b0b0b0;
+            margin-top: 4px;
+        }
+
+        .crc-info .bad {
+            color: #e57373;
+            font-weight: 600;
+        }
+
+        .crc-info .ok {
+            color: #81c784;
+            font-weight: 600;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #7a8bdc;
+            font-size: 1.2em;
+        }
+
+        .error {
+            background: #3d1f1f;
+            color: #e88888;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 3px solid #c05050;
+            margin: 10px 0;
+        }
+
+        .success {
+            background: #1f3d24;
+            color: #88d899;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 3px solid #50a05e;
+            margin: 10px 0;
+        }
+
+        .mono {
+            font-family: 'Courier New', monospace;
+            background: #3a3a3a;
+            color: #d0d0d0;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .download-btn {
+            background: #4d8f52;
+            color: #e8e8e8;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin: 5px;
+        }
+
+        .download-btn:hover {
+            background: #5aa05e;
+        }
+
+        .replace-btn {
+            background: #8f4d4d;
+            color: #e8e8e8;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin: 5px;
+        }
+
+        .replace-btn:hover {
+            background: #a05a5a;
+        }
+
+        .hex-btn {
+            background: #5a6bb8;
+            color: #e8e8e8;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin: 5px;
+        }
+
+        .hex-btn:hover {
+            background: #6a7bc8;
+        }
+
+        .hex-viewer {
+            font-family: 'Courier New', monospace;
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 0.9em;
+            line-height: 1.6;
+        }
+
+        .hex-line {
+            display: flex;
+            margin: 2px 0;
+        }
+
+        .hex-offset {
+            color: #7a8bb8;
+            margin-right: 15px;
+            min-width: 80px;
+        }
+
+        .hex-bytes {
+            color: #88d899;
+            margin-right: 15px;
+            flex: 1;
+        }
+
+        .hex-ascii {
+            color: #d4a574;
+        }
+
+        .hex-controls {
+            background: #3a3a3a;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .hex-controls label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .hex-controls input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #5a5a5a;
+            border-radius: 4px;
+            background: #2a2a2a;
+            color: #d4d4d4;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Fetch overlay */
+        #fetchOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+
+        .fetch-overlay-box {
+            background: #1f1f1f;
+            color: #e0e0e0;
+            padding: 20px 28px;
+            border-radius: 10px;
+            border: 1px solid #444;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+            text-align: center;
+            min-width: 260px;
+        }
+
+        .fetch-overlay-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .fetch-overlay-text {
+            font-size: 14px;
+            color: #c9d1d9;
+        }
+
+        /* Write overlay (red accent) */
+        #writeOverlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+
+        .write-overlay-box {
+            background: #2a1f1f;
+            color: #e0e0e0;
+            padding: 20px 28px;
+            border-radius: 10px;
+            border: 1px solid #c44;
+            box-shadow: 0 10px 30px rgba(200, 50, 50, 0.45);
+            text-align: center;
+            min-width: 260px;
+        }
+
+        .write-overlay-title {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #ff6b6b;
+        }
+
+        .write-overlay-text {
+            font-size: 14px;
+            color: #ffcccc;
+        }
+
+        /* Device status display */
+        #deviceStatusText {
+            font-size: 14px;
+            padding: 15px;
+            border-radius: 5px;
+            background: #252525;
+            border-left: 4px solid #6ec589;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+
+        #deviceStatusText.success {
+            border-left-color: #6ec589;
+            color: #a8e6b8;
+        }
+
+        #deviceStatusText.error {
+            border-left-color: #ff6b6b;
+            background: #3a2020;
+            color: #ffb3b3;
+        }
+
+        #deviceStatusText.loading {
+            border-left-color: #5a8fd8;
+            background: #202540;
+            color: #7aafff;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="fetchOverlay">
+        <div class="fetch-overlay-box">
+            <div class="fetch-overlay-title">Fetching firmware…</div>
+            <div class="fetch-overlay-text" id="fetchOverlayText">Please wait</div>
+        </div>
+    </div>
+    <div id="writeOverlay">
+        <div class="write-overlay-box">
+            <div class="write-overlay-title">Writing to Device…</div>
+            <div class="write-overlay-text" id="writeOverlayText">Please wait</div>
+        </div>
+    </div>
+    <div class="container">
+        <div class="header">
+            <h1>🔧 ESP32 Firmware Viewer</h1>
+            <p>Analyze ESP32 firmware images - View partitions, NVS data, and file systems</p>
+        </div>
+
+        <div class="content">
+            <div class="drop-zone" id="dropZone">
+                <i>📦</i>
+                <p><strong>Drop your ESP32 firmware (.bin) file here</strong></p>
+                <p>or</p>
+                <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
+                    <button class="btn" onclick="document.getElementById('fileInput').click()">Browse Files</button>
+                    <button class="btn" id="connectToggleBtn" style="background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);"
+                        onclick="toggleDeviceSession()">Connect to ESP32</button>
+                </div>
+                <input type="file" id="fileInput" class="file-input" accept=".bin">
+            </div>
+
+            <div class="file-info" id="fileInfo">
+                <h3>🎯 Target Information</h3>
+                <div class="info-grid" id="fileInfoGrid">
+                </div>
+                <div id="targetActions" style="display:none; margin-top:12px;">
+                    <div class="button-group" style="flex-wrap:wrap; gap:8px;display: none;">
+                        <button class="btn" id="targetResetBtn" onclick="deviceHardReset()" disabled>Reset</button>
+                        <button class="btn" id="targetSyncBtn" onclick="deviceSync()" disabled>Sync</button>
+                        <button class="btn" id="targetStubBtn" onclick="deviceLoadStub()" disabled>Download Stub</button>
+                        <button class="btn" id="targetFetchBtn" onclick="deviceFetch()" disabled>Refresh</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="deviceStatusContainer" style="display: none; margin-bottom: 20px;">
+                <div id="deviceStatusText" class="success" style="padding: 15px; border-radius: 5px; background: #252525; border-left: 4px solid #6ec589;"></div>
+            </div>
+
+            <div id="tabContainer" style="display: none;">
+                <div style="display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 10px;">
+                    <button class="btn" onclick="saveImage()">Save Image</button>
+                    <button class="btn" id="writeToDeviceBtn" onclick="writeToDevice()" style="display: none; background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%);">Write to Device</button>
+                </div>
+                <div class="tabs">
+                    <button class="tab active" onclick="switchTab('bootloader', event)">Bootloader</button>
+                    <button class="tab" onclick="switchTab('partitions', event)">Partitions</button>
+                    <button class="tab" onclick="switchTab('raw', event)">Hex Viewer</button>
+                </div>
+
+                <div class="tab-content active" id="bootloader-tab">
+                    <h3>Bootloader</h3>
+                    <div id="bootloaderContent"></div>
+                </div>
+
+                <div class="tab-content" id="partitions-tab">
+                    <h3>Partition Table</h3>
+                    <div id="partitionsContent"></div>
+                </div>
+
+                <div class="tab-content" id="nvs-tab">
+                    <h3>Non-Volatile Storage (NVS)</h3>
+                    <div id="nvsContent"></div>
+                </div>
+
+                <div class="tab-content" id="raw-tab">
+                    <h3>Hex Viewer</h3>
+                    <div class="hex-controls">
+                        <div>
+                            <label for="hexOffset">Offset (hex):</label>
+                            <input type="text" id="hexOffset" value="0" placeholder="0x0" onchange="updateHexView()">
+                        </div>
+                        <div>
+                            <label for="hexLength">Length (hex):</label>
+                            <input type="text" id="hexLength" value="100" placeholder="0x100"
+                                onchange="updateHexView()">
+                        </div>
+                        <div>
+                            <label for="hexWidth">Width (bytes/line):</label>
+                            <input type="number" id="hexWidth" value="32" min="4" max="64" step="4"
+                                onchange="updateHexView()">
+                        </div>
+                        <div style="display: flex; align-items: flex-end;">
+                            <button class="btn" onclick="updateHexView()">Update View</button>
+                        </div>
+                    </div>
+                    <div id="rawContent"></div>
+                </div>
+            </div>
+
+            <input type="file" id="partitionFileInput" class="file-input" style="display:none" accept=".bin">
+        </div>
+    </div>
+
+    <script src="chips.js"></script>
+    <script src="flasher.js"></script>
+    <script src="esp32-parser.js"></script>
+    <script>
+        let parser = null;
+        let currentFile = null;
+        let replaceTargetPartition = null;
+
+        let deviceFlasher = null;
+        let deviceMode = false;
+        let deviceSparse = null;
+        let deviceFlashSizeBytes = 0x00800000; /* Default 8 MiB */
+        let deviceReadProgressTotal = 0;
+        let deviceReadProgressDone = 0;
+        let fetchOverlayReason = '';
+        let fetchOverlayActiveReads = 0;
+        
+        /* Performance tracking for read/write operations */
+        let readStartTime = null;
+        let readSlowWarningShown = false;
+        let writeStartTime = null;
+        let writeSlowWarningShown = false;
+        const SLOW_SPEED_THRESHOLD = 200 * 1024; /* 200 KiB/s in bytes/s */
+        const SPEED_CHECK_DELAY = 1000; /* 1 second before checking speed */
+
+        function buildDeviceSparse(totalSize, logReads = false) {
+            return new SparseImage(totalSize,
+                async (readAddr, readLen) => {
+                    const addr = readAddr & ~0x0FFF;
+                    const maxChunk = 0x00800000;
+                    const desired = Math.min(readLen, maxChunk);
+                    let len = (desired + 0x1000) & ~0x0FFF;
+                    
+                    /* Ensure we don't read beyond configured flash size */
+                    if (addr >= totalSize) {
+                        throw new Error(`Read address 0x${addr.toString(16)} exceeds flash size 0x${totalSize.toString(16)}`);
+                    }
+                    len = Math.min(len, totalSize - addr);
+                    if (len <= 0) {
+                        throw new Error(`Invalid read length at address 0x${addr.toString(16)}`);
+                    }
+                    
+                    if (logReads) {
+                        console.log('  Reading', `0x${addr.toString(16)}`, len);
+                    }
+                    const overlayWasVisible = isFetchOverlayVisible();
+                    fetchOverlayActiveReads++;
+                    if (!overlayWasVisible) {
+                        showFetchOverlay(fetchOverlayReason || 'Reading flash from ESP32...');
+                    }
+                    const readTotal = len;
+                    try {
+                        updateFetchOverlayProgress(addr, 0, readTotal);
+                        const ret = await deviceFlasher.readFlashPlain(addr, len, (bytesRead, totalBytes) => {
+                            const effectiveTotal = totalBytes || readTotal;
+                            updateFetchOverlayProgress(addr + bytesRead, bytesRead, effectiveTotal);
+                        });
+                        deviceReadProgressDone += ret.byteLength;
+                        updateFetchOverlayProgress(addr + ret.byteLength, readTotal, readTotal);
+                        const chunk = { address: addr, data: ret };
+                        if (logReads) {
+                            console.log('  Got', `0x${addr.toString(16)}`, ret.byteLength, chunk);
+                        }
+                        return chunk;
+                    } finally {
+                        fetchOverlayActiveReads = Math.max(0, fetchOverlayActiveReads - 1);
+                        if (!overlayWasVisible && fetchOverlayActiveReads === 0) {
+                            hideFetchOverlay();
+                        }
+                    }
+                },
+                async (writeAddr, writeData) => {
+                    /* Write callback for flushing changes to device */
+                    if (logReads) {
+                        console.log('  Writing', `0x${writeAddr.toString(16)}`, writeData.length, 'bytes');
+                    }
+                    await deviceFlasher.writeFlash(writeAddr, writeData, (offset, total, status) => {
+                        updateWriteOverlayProgress(writeAddr + offset, offset, total);
+                    });
+                    if (logReads) {
+                        console.log('  Wrote', `0x${writeAddr.toString(16)}`, writeData.length, 'bytes');
+                    }
+                }
+            );
+        }
+
+        async function openFlasherMenu() {
+            await toggleDeviceSession();
+        }
+
+        async function toggleDeviceSession() {
+            const btn = document.getElementById('connectToggleBtn');
+            const isDisconnect = btn && btn.dataset.state === 'connected';
+
+            if (isDisconnect) {
+                await disconnectDeviceSession();
+                return;
+            }
+
+            try {
+                setDeviceStatus('Requesting serial port...', 'loading');
+                deviceFlasher = new ESPFlasher();
+                
+                /* Set up callback for unexpected device disconnection */
+                deviceFlasher.disconnected = () => {
+                    handleUnexpectedDeviceDisconnect();
+                };
+                
+                await deviceFlasher.openPort();
+                setDeviceButtons({ connected: true });
+
+                setDeviceStatus('Resetting ESP32...', 'loading');
+                await deviceFlasher.hardReset(true);
+
+                setDeviceStatus('Syncing...', 'loading');
+                await deviceFlasher.sync();
+                const isStub = await deviceFlasher.isStubLoader();
+                setDeviceButtons({ connected: true, synced: true, stub: isStub });
+
+                if (!isStub) {
+                    setDeviceStatus('Loading stub...', 'loading');
+                    const stubLoaded = await deviceFlasher.downloadStub();
+                    setDeviceButtons({ connected: true, synced: true, stub: stubLoaded });
+                }
+
+                setDeviceStatus('Fetching bootloader and partition table...', 'loading');
+                setFetchOverlayReason('Reading flash from ESP32');
+                showFetchOverlay('Reading flash from ESP32...');
+                deviceMode = true;
+                deviceReadProgressTotal = deviceFlashSizeBytes;
+                deviceReadProgressDone = 0;
+                const totalSize = deviceFlashSizeBytes;
+                deviceSparse = buildDeviceSparse(totalSize, true);
+
+                parser = new ESP32Parser(deviceSparse);
+                displayFileInfo({
+                    name: 'ESP32 Device',
+                    size: totalSize,
+                    type: `device/${deviceFlasher.current_chip || 'esp32'}`,
+                    lastModified: Date.now()
+                });
+
+                await parseAndDisplay(true);
+                setDeviceStatus('Connected to ' + deviceFlasher.current_chip + '. Firmware loaded and parsed.', 'success');
+                setToggleButtonState(true);
+            } catch (e) {
+                setDeviceStatus('Connection failed: ' + e.message, 'error');
+                setDeviceButtons({ connected: false });
+                setToggleButtonState(false);
+            } finally {
+                hideFetchOverlay();
+                setFetchOverlayReason('');
+            }
+        }
+
+        async function disconnectDeviceSession() {
+            if (deviceFlasher) {
+                try {
+                    await deviceFlasher.disconnect();
+                } catch (e) {
+                    console.warn('Device disconnect error:', e);
+                }
+            }
+
+            clearDeviceState();
+        }
+
+        function handleUnexpectedDeviceDisconnect() {
+            /* Called when device is unexpectedly disconnected (pulled out, lost connection, etc) */
+            setDeviceStatus('Device unexpectedly disconnected. Please reconnect.', 'error');
+            clearDeviceState();
+        }
+
+        function clearDeviceState() {
+            /* Clear all device information and reset to disconnected state */
+            deviceFlasher = null;
+            deviceSparse = null;
+            deviceMode = false;
+            parser = null;
+            currentFile = null;
+
+            setDeviceButtons({ connected: false, synced: false, stub: false });
+            setToggleButtonState(false);
+            
+            /* Hide file info section */
+            const fileInfo = document.getElementById('fileInfo');
+            if (fileInfo) {
+                fileInfo.classList.remove('visible');
+            }
+            
+            /* Hide tab container */
+            const tabContainer = document.getElementById('tabContainer');
+            if (tabContainer) {
+                tabContainer.style.display = 'none';
+            }
+            
+            /* Clear content in all tabs */
+            const contentDivs = document.querySelectorAll('[id$="Content"]');
+            contentDivs.forEach(div => {
+                div.innerHTML = '';
+            });
+        }
+
+        function setToggleButtonState(connected) {
+            const btn = document.getElementById('connectToggleBtn');
+            if (!btn) return;
+            if (connected) {
+                btn.textContent = 'Disconnect';
+                btn.style.background = 'linear-gradient(135deg, #b71c1c 0%, #ef5350 100%)';
+                btn.dataset.state = 'connected';
+            } else {
+                btn.textContent = 'Connect to ESP32';
+                btn.style.background = 'linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%)';
+                btn.dataset.state = 'disconnected';
+            }
+        }
+
+        function setDeviceButtons({ connected = false, synced = false, stub = false }) {
+            const targetActions = document.getElementById('targetActions');
+            if (targetActions) {
+                targetActions.style.display = connected ? 'block' : 'none';
+            }
+
+            const btnReset = document.getElementById('targetResetBtn');
+            const btnSync = document.getElementById('targetSyncBtn');
+            const btnStub = document.getElementById('targetStubBtn');
+            const btnFetch = document.getElementById('targetFetchBtn');
+
+            if (btnReset) btnReset.disabled = !connected;
+            if (btnSync) btnSync.disabled = !connected;
+            if (btnStub) btnStub.disabled = !synced || stub;
+            if (btnFetch) btnFetch.disabled = !synced;
+        }
+
+        function setDeviceStatus(text, cls = 'success') {
+            const el = document.getElementById('deviceStatusText');
+            const container = document.getElementById('deviceStatusContainer');
+            if (el && container) {
+                el.className = cls;
+                el.textContent = text;
+                container.style.display = 'block';
+            } else {
+                console.log(`[${cls}] ${text}`);
+            }
+        }
+
+        function showFetchOverlay(text) {
+            const overlay = document.getElementById('fetchOverlay');
+            const label = document.getElementById('fetchOverlayText');
+            if (label) {
+                label.textContent = text || fetchOverlayReason || 'Fetching firmware...';
+            }
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+            readStartTime = Date.now();
+            readSlowWarningShown = false;
+        }
+
+        function setFetchOverlayReason(reason) {
+            fetchOverlayReason = reason || '';
+            const overlay = document.getElementById('fetchOverlay');
+            const label = document.getElementById('fetchOverlayText');
+            if (overlay && label && overlay.style.display === 'flex') {
+                label.textContent = fetchOverlayReason || label.textContent || 'Fetching firmware...';
+            }
+        }
+
+        function isFetchOverlayVisible() {
+            const overlay = document.getElementById('fetchOverlay');
+            return overlay && overlay.style.display === 'flex';
+        }
+
+        function updateFetchOverlayProgress(address, bytesRead, totalBytes) {
+            const label = document.getElementById('fetchOverlayText');
+            if (!label) {
+                return;
+            }
+
+            const kbRead = Math.round(bytesRead / 1024);
+            const kbTotal = Math.round(totalBytes / 1024);
+            const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesRead / totalBytes) * 100)) : 0;
+            
+            let text = `Reading 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbRead} / ${kbTotal} KB)`;
+            
+            /* Calculate speed if operation has been running > 1 second */
+            if (readStartTime && !readSlowWarningShown) {
+                const elapsedMs = Date.now() - readStartTime;
+                if (elapsedMs > SPEED_CHECK_DELAY && bytesRead > 0) {
+                    const speedBytesPerSec = (bytesRead / elapsedMs) * 1000;
+                    const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
+                    text += ` – ${speedKiBPerSec} KiB/s`;
+                    
+                    /* Show warning if speed is too slow */
+                    if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
+                        text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
+                        readSlowWarningShown = true;
+                    }
+                }
+            }
+            
+            label.textContent = text;
+        }
+
+        function hideFetchOverlay() {
+            const overlay = document.getElementById('fetchOverlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+            fetchOverlayActiveReads = 0;
+            readStartTime = null;
+            readSlowWarningShown = false;
+        }
+
+        function showWriteOverlay(text) {
+            const overlay = document.getElementById('writeOverlay');
+            const label = document.getElementById('writeOverlayText');
+            if (label) {
+                label.textContent = text || 'Writing to device...';
+            }
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+            writeStartTime = Date.now();
+            writeSlowWarningShown = false;
+        }
+
+        function updateWriteOverlayProgress(address, bytesWritten, totalBytes) {
+            const label = document.getElementById('writeOverlayText');
+            if (!label) {
+                return;
+            }
+
+            const kbWritten = Math.round(bytesWritten / 1024);
+            const kbTotal = Math.round(totalBytes / 1024);
+            const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesWritten / totalBytes) * 100)) : 0;
+            
+            let text = `Writing 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbWritten} / ${kbTotal} KB)`;
+            
+            /* Calculate speed if operation has been running > 1 second */
+            if (writeStartTime && !writeSlowWarningShown) {
+                const elapsedMs = Date.now() - writeStartTime;
+                if (elapsedMs > SPEED_CHECK_DELAY && bytesWritten > 0) {
+                    const speedBytesPerSec = (bytesWritten / elapsedMs) * 1000;
+                    const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
+                    text += ` – ${speedKiBPerSec} KiB/s`;
+                    
+                    /* Show warning if speed is too slow */
+                    if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
+                        text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
+                        writeSlowWarningShown = true;
+                    }
+                }
+            }
+            
+            label.textContent = text;
+        }
+
+        function hideWriteOverlay() {
+            const overlay = document.getElementById('writeOverlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+            writeStartTime = null;
+            writeSlowWarningShown = false;
+        }
+
+        async function deviceConnect() {
+            try {
+                setDeviceStatus('Requesting serial port...', 'loading');
+                deviceFlasher = new ESPFlasher();
+                await deviceFlasher.openPort();
+                setDeviceStatus('Connected. You may Hard Reset, then Sync.', 'success');
+                setDeviceButtons({ connected: true });
+            } catch (e) {
+                setDeviceStatus('Connection failed: ' + e.message, 'error');
+                setDeviceButtons({ connected: false });
+            }
+        }
+
+        async function deviceHardReset() {
+            if (!deviceFlasher) return;
+            try {
+                setDeviceStatus('Resetting...', 'loading');
+                await deviceFlasher.hardReset(true);
+                setDeviceStatus('Reset sequence sent.', 'success');
+            } catch (e) {
+                setDeviceStatus('Reset failed: ' + e.message, 'error');
+            }
+        }
+
+        async function deviceSync() {
+            if (!deviceFlasher) return;
+            try {
+                setDeviceStatus('Syncing...', 'loading');
+                await deviceFlasher.sync();
+                setDeviceStatus('Synced to ' + deviceFlasher.current_chip + '.', 'success');
+                setDeviceButtons({ connected: true, synced: true, stub: await deviceFlasher.isStubLoader() });
+            } catch (e) {
+                setDeviceStatus('Sync failed: ' + e.message, 'error');
+            }
+        }
+
+        async function deviceLoadStub() {
+            if (!deviceFlasher) return;
+            try {
+                setDeviceStatus('Loading stub...', 'loading');
+                const ok = await deviceFlasher.downloadStub();
+                setDeviceButtons({ connected: true, synced: true, stub: ok });
+                setDeviceStatus(ok ? 'Stub loaded.' : 'Stub load failed', ok ? 'success' : 'error');
+            } catch (e) {
+                setDeviceStatus('Stub error: ' + e.message, 'error');
+            }
+        }
+
+        async function deviceFetch() {
+            if (!deviceFlasher) return;
+            try {
+                deviceMode = true;
+                setDeviceStatus('Fetching bootloader and partition table...', 'loading');
+                setFetchOverlayReason('Reading flash from ESP32');
+                showFetchOverlay('Reading flash from ESP32...');
+                deviceReadProgressTotal = deviceFlashSizeBytes;
+                deviceReadProgressDone = 0;
+                const totalSize = deviceFlashSizeBytes;
+                deviceSparse = buildDeviceSparse(totalSize, true);
+
+                parser = new ESP32Parser(deviceSparse);
+
+                /* Fake file info for UI */
+                displayFileInfo({
+                    name: 'ESP32 Device',
+                    size: totalSize,
+                    type: `device/${deviceFlasher.current_chip || 'esp32'}`,
+                    lastModified: Date.now()
+                });
+
+                await parseAndDisplay();
+                setDeviceStatus('Fetched and parsed. You can explore partitions.', 'success');
+            } catch (e) {
+                setDeviceStatus('Fetch failed: ' + e.message, 'error');
+            } finally {
+                hideFetchOverlay();
+                setFetchOverlayReason('');
+            }
+        }
+
+        // File drop handling
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drag-over');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        const partitionFileInput = document.getElementById('partitionFileInput');
+        partitionFileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0 && replaceTargetPartition !== null) {
+                handlePartitionReplaceFile(e.target.files[0], replaceTargetPartition);
+            }
+        });
+
+        async function handleFile(file) {
+            await disconnectDeviceSession();
+            currentFile = file;
+            const reader = new FileReader();
+
+            reader.onload = (e) => {
+                try {
+                    parser = new ESP32Parser(e.target.result);
+                    displayFileInfo(file);
+                    parseAndDisplay(true).catch(err => showError('Error parsing file: ' + err.message));
+                } catch (error) {
+                    showError('Error parsing file: ' + error.message);
+                }
+            };
+
+            reader.readAsArrayBuffer(file);
+        }
+
+        function displayFileInfo(file) {
+            const fileInfo = document.getElementById('fileInfo');
+            const grid = document.getElementById('fileInfoGrid');
+
+            const typeLabel = (() => {
+                const t = file.type || 'application/octet-stream';
+                if (t.startsWith('device/') && deviceFlasher && deviceFlasher.current_chip) {
+                    return `device/${deviceFlasher.current_chip}`;
+                }
+                return t;
+            })();
+
+            const isDevice = deviceMode || (file.type && file.type.startsWith('device/'));
+            const sizeValueBytes = isDevice ? deviceFlashSizeBytes : file.size;
+            const sizeMarkup = isDevice
+                ? `<select id="deviceSizeSelect" class="size-select" title="Select device flash size">
+                        <option value="1">1 MiB</option>
+                        <option value="2">2 MiB</option>
+                        <option value="4">4 MiB</option>
+                        <option value="8">8 MiB</option>
+                        <option value="16">16 MiB</option>
+                   </select>`
+                : `<span>${formatBytes(sizeValueBytes)}</span>`;
+
+            grid.innerHTML = `
+                <div class="info-item">
+                    <label>Filename</label>
+                    <span>${file.name}</span>
+                </div>
+                <div class="info-item">
+                    <label>Size</label>
+                    ${sizeMarkup}
+                </div>
+                <div class="info-item">
+                    <label>Type</label>
+                    <span>${typeLabel}</span>
+                </div>
+                <div class="info-item">
+                    <label>Last Modified</label>
+                    <span>${new Date(file.lastModified).toLocaleString()}</span>
+                </div>
+            `;
+
+            if (isDevice) {
+                const sel = document.getElementById('deviceSizeSelect');
+                if (sel) {
+                    const currentMiB = Math.round(deviceFlashSizeBytes / (1024 * 1024));
+                    sel.value = String(currentMiB);
+                    sel.addEventListener('change', () => {
+                        const parsed = parseInt(sel.value, 10);
+                        applyDeviceFlashSize(parsed * 1024 * 1024);
+                    });
+                }
+            }
+
+            fileInfo.classList.add('visible');
+            
+            // Show/hide Write to Device button based on device mode
+            const writeBtn = document.getElementById('writeToDeviceBtn');
+            if (writeBtn) {
+                writeBtn.style.display = isDevice ? 'inline-block' : 'none';
+            }
+        }
+
+        async function applyDeviceFlashSize(sizeBytes) {
+            if (!deviceFlasher) {
+                return;
+            }
+
+            deviceFlashSizeBytes = sizeBytes;
+            deviceMode = true;
+
+            setFetchOverlayReason('Applying flash size');
+            showFetchOverlay('Applying flash size...');
+            try {
+                deviceSparse = buildDeviceSparse(deviceFlashSizeBytes, true);
+                parser = new ESP32Parser(deviceSparse);
+                displayFileInfo({
+                    name: 'ESP32 Device',
+                    size: deviceFlashSizeBytes,
+                    type: `device/${deviceFlasher.current_chip || 'esp32'}`,
+                    lastModified: Date.now()
+                });
+
+                await parseAndDisplay(true);
+                setDeviceStatus('Flash size set to ' + (deviceFlashSizeBytes / (1024 * 1024)) + ' MiB.', 'success');
+            } catch (e) {
+                alert('Error applying flash size: ' + e.message);
+            } finally {
+                hideFetchOverlay();
+                setFetchOverlayReason('');
+            }
+        }
+
+        async function parseAndDisplay(focusBootloader = false) {
+            // Parse bootloader first to detect partition table offset
+            const bootImage = await parseBootloader();
+            console.log("Bootloader parsed:", bootImage);
+
+            // Auto-detect partition table offset based on bootloader end/FF padding
+            const detectedOffset = await parser.detectPartitionTableOffset(bootImage);
+            console.log("Detected partition table offset: ", detectedOffset ? `0x${detectedOffset.toString(16)}` : 'not found');
+            const partOffset = detectedOffset || 0x9000;
+
+            await parser.parsePartitions(partOffset);
+
+            // Compute SHA-1 only in file mode to avoid heavy device reads
+            if (!deviceMode) {
+                await Promise.all(parser.partitions.map(async (part) => {
+                    part.sha1 = await parser.computePartitionSHA1(part);
+                }));
+            }
+
+            await displayPartitions();
+
+            // Show tabs
+            document.getElementById('tabContainer').style.display = 'block';
+
+            if (focusBootloader) {
+                switchTab('bootloader');
+            }
+        }
+
+        async function parseBootloader() {
+            const contentDiv = document.getElementById('bootloaderContent');
+            // We don't know the partition table offset yet, so use a reasonable max search size
+            const maxBootloaderLength = 0x10000; // 64KB should be more than enough for any bootloader
+            const partition = { offset: 0, length: maxBootloaderLength, label: 'bootloader' };
+
+            contentDiv.innerHTML = '<div class="loading">⏳ Parsing bootloader...</div>';
+
+            try {
+                const image = await parser.parseImage(partition.offset, partition.length);
+
+                // Validate SHA256 (appended) and compute region/full hashes
+                let sha256Validation = null;
+                let sha256Calculated = null;
+                let sha256RegionCalc = null;
+
+                const calcSliceEnd = Math.min(partition.offset + partition.length, parser.buffer.length);
+                if (calcSliceEnd > partition.offset) {
+                    const calcData = parser.buffer.slice(partition.offset, calcSliceEnd);
+                    const calcHash = await ESP32Parser.calculateSHA256(calcData);
+                    sha256Calculated = ESP32Parser.bytesToHex(calcHash);
+                }
+
+                if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined && image.sha256DataEnd > image.sha256DataStart) {
+                    console.log(`Bootloader SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
+                    const regionData = parser.buffer.slice(image.sha256DataStart, image.sha256DataEnd);
+                    const regionHash = await ESP32Parser.calculateSHA256(regionData);
+                    sha256RegionCalc = ESP32Parser.bytesToHex(regionHash);
+                }
+
+                if (image.sha256) {
+                    sha256Validation = await parser.validateImageSHA256(image);
+                    if (sha256Validation && !sha256Validation.calculated && sha256RegionCalc) {
+                        sha256Validation.calculated = sha256RegionCalc;
+                    }
+                }
+
+                let html = '';
+
+                if (image.error) {
+                    html = `<div class="error">${image.error}</div>`;
+                } else {
+                    html = '<div class="success">Bootloader parsed successfully</div>';
+
+                    html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
+                    html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
+                    html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
+                    html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
+                    html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
+                    html += '</div>';
+
+                    html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
+                    html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
+                    html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
+                    html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
+                    html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
+                    html += '</div>';
+
+                    // App Description (if found)
+                    if (image.appDesc && image.appDesc.found) {
+                        html += '<h4 style="margin-top: 15px;">Application Description</h4>';
+                        html += '<div class="info-grid">';
+                        if (image.appDesc.projectName) {
+                            html += `<div class="info-item"><label>Project Name:</label><span>${image.appDesc.projectName}</span></div>`;
+                        }
+                        if (image.appDesc.version) {
+                            html += `<div class="info-item"><label>Version:</label><span>${image.appDesc.version}</span></div>`;
+                        }
+                        if (image.appDesc.idfVer) {
+                            html += `<div class="info-item"><label>ESP-IDF Version:</label><span>${image.appDesc.idfVer}</span></div>`;
+                        }
+                        html += `<div class="info-item"><label>Secure Version:</label><span>${image.appDesc.secureVersion}</span></div>`;
+                        if (image.appDesc.date && image.appDesc.time) {
+                            html += `<div class="info-item"><label>Build Date/Time:</label><span>${image.appDesc.date} ${image.appDesc.time}</span></div>`;
+                        }
+                        if (image.appDesc.appElfSha256) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>App ELF SHA256:</label><span class="mono" title="Reference only - ELF file not available for validation">${image.appDesc.appElfSha256} <span style="color: #9a9a9a;">ℹ️</span></span></div>`;
+                        }
+                        html += '</div>';
+                    }
+
+                    html += '<h4 style="margin-top: 15px;">Validation</h4>';
+                    html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>Checksum:</label><span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
+                    html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
+                    if (image.sha256) {
+                        const validIcon = sha256Validation && sha256Validation.valid ?
+                            '<span style="color: #6ec589; font-size: 1.2em;" title="Hash verified over header..checksum region">✓</span>' :
+                            sha256Validation && sha256Validation.valid === false ?
+                                '<span style="color: #e88888; font-size: 1.2em;" title="' + sha256Validation.reason + '">✗</span>' :
+                                '<span style="color: #9a9a9a; font-size: 1.2em;" title="Validating...">⏳</span>';
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Image SHA256 (appended):</label><span class="mono">${image.sha256} ${validIcon}</span></div>`;
+                    }
+                    if (sha256RegionCalc) {
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Region SHA256 (header..checksum):</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                    }
+                    if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
+                        const regionLen = image.sha256DataEnd - image.sha256DataStart;
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
+                    }
+                    if (sha256Calculated) {
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Calculated SHA256 (full bootloader region):</label><span class="mono">${sha256Calculated}</span></div>`;
+                        if (image.sha256 && sha256Validation && sha256Validation.valid === false && sha256Validation.calculated) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Expected vs Calc (region):</label><span class="mono" style="color: #e88888;">${sha256Validation.expected} ≠ ${sha256Validation.calculated}</span></div>`;
+                        }
+                    }
+                    html += '</div>';
+
+                    html += '<h4 style="margin-top: 15px;">Segments</h4>';
+                    html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
+                    image.segmentList.forEach((seg, sidx) => {
+                        html += '<tr>';
+                        html += `<td>${sidx}</td>`;
+                        html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
+                        html += `<td>${formatBytes(seg.length)}</td>`;
+                        html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
+                        html += '</tr>';
+                    });
+                    html += '</tbody></table>';
+                }
+
+                contentDiv.innerHTML = html;
+
+                // Find bootloader end (where 0xFF padding starts)
+                let bootloaderEnd = image.endOffset || 0;
+                // Scan forward from endOffset to find where 0xFF padding begins
+                const scanSize = 256; // Check in 256-byte blocks
+                for (let pos = bootloaderEnd; pos < maxBootloaderLength; pos += scanSize) {
+                    let allFF = true;
+                    const checkLen = Math.min(scanSize, maxBootloaderLength - pos);
+                    for (let i = 0; i < checkLen; i++) {
+                        if ((await parser.view.getUint8(pos + i)) !== 0xFF) {
+                            allFF = false;
+                            bootloaderEnd = pos + i + 1;
+                            break;
+                        }
+                    }
+                    if (allFF) {
+                        // Found start of 0xFF region, bootloader ends here
+                        break;
+                    }
+                }
+                
+                image.bootloaderEnd = bootloaderEnd;
+                return image;
+            } catch (error) {
+                console.error('Bootloader parsing error:', error);
+                contentDiv.innerHTML = `<div class="error">Error parsing bootloader: ${error.message}</div>`;
+                return null;
+            }
+        }
+
+        async function displayPartitions() {
+            const content = document.getElementById('partitionsContent');
+            const partitions = parser.partitions;
+
+            if (partitions.length === 0) {
+                content.innerHTML = '<div class="error">No partitions found in this firmware image.</div>';
+                return;
+            }
+
+            let html = '<table><thead><tr>';
+            html += '<th>#</th><th>Label</th><th>Type</th><th>Offset</th><th>Size</th><th>Actions</th>';
+            html += '</tr></thead><tbody>';
+
+            for (let idx = 0; idx < partitions.length; idx++) {
+                const part = partitions[idx];
+                const badgeClass = part.type === 0 ? 'app' : 'data';
+
+                // Check if APP partition has valid magic
+                let magicIndicator = '';
+                if (part.type === 0) { // APP partition
+                    const hasValidMagic = await parser.hasValidImageMagic(part);
+                    if (hasValidMagic) {
+                        magicIndicator = '<span style="color: #6ec589; font-size: 1.1em; margin-left: 5px;" title="Valid ESP32 image magic (0xE9)">✓</span>';
+                    } else {
+                        magicIndicator = '<span style="color: #e88888; font-size: 1.1em; margin-left: 5px;" title="Invalid or missing ESP32 image magic">✗</span>';
+                    }
+                }
+
+                html += `<tr class="expandable" onclick="togglePartitionDetails(${idx})">`;
+                html += `<td>${part.num}</td>`;
+                html += `<td><strong>${part.label}${magicIndicator}</strong></td>`;
+                html += `<td><span class="badge ${badgeClass}">${part.typeName}</span></td>`;
+                html += `<td class="mono">0x${part.offset.toString(16).toUpperCase().padStart(6, '0')}</td>`;
+                html += `<td>${formatBytes(part.length)}</td>`;
+                html += `<td>
+                    <button class="hex-btn" onclick="event.stopPropagation(); viewPartitionHex(${idx})">Hex View</button>
+                    <button class="download-btn" onclick="event.stopPropagation(); downloadPartition(${idx})">Download</button>
+                    <button class="replace-btn" onclick="event.stopPropagation(); replacePartition(${idx})">Replace</button>
+                    <button class="replace-btn" onclick="event.stopPropagation(); clearPartition(${idx})">Clear</button>
+                </td>`;
+                html += '</tr>';
+
+                // Details row
+                html += `<tr class="details-row" id="details-${idx}">`;
+                html += `<td colspan="6"><div class="details-content">`;
+                html += `<div class="details-grid">`;
+                html += `<div class="detail-item"><strong>Type Code:</strong> 0x${part.type.toString(16).toUpperCase()}</div>`;
+                html += `<div class="detail-item"><strong>SubType Code:</strong> 0x${part.subType.toString(16).toUpperCase()}</div>`;
+                html += `<div class="detail-item"><strong>Offset (decimal):</strong> ${part.offset}</div>`;
+                html += `<div class="detail-item"><strong>Size (decimal):</strong> ${part.length} bytes</div>`;
+                html += `<div class="detail-item"><strong>End Offset:</strong> 0x${(part.offset + part.length).toString(16).toUpperCase()}</div>`;
+
+                // Add parse buttons for specific partition types
+                if (part.subType === 0x02) { // NVS
+                    html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseNVSPartition(${idx})">Parse NVS</button></div>`;
+                } else if (part.type === 0) { // APP
+                    html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseImagePartitionInline(${idx})">Parse Image</button></div>`;
+                } else if (part.subType === 0x81) { // FAT
+                    html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseFATPartition(${idx})">Parse FAT</button></div>`;
+                }
+                //html += `<div class="detail-item" style="grid-column: 1 / -1;"><strong>SHA-1:</strong> <span class="mono">${part.sha1 || 'n/a'}</span></div>`;
+
+                html += `</div>`;
+
+                // Add content area for inline parsed data
+                html += `<div id="parsed-content-${idx}" style="margin-top: 15px;"></div>`;
+
+                html += `</div></td></tr>`;
+            }
+
+            html += '</tbody></table>';
+            content.innerHTML = html;
+        }
+
+        function replacePartition(idx) {
+            replaceTargetPartition = idx;
+            const input = document.getElementById('partitionFileInput');
+            if (!input) {
+                alert('Partition file input not found.');
+                return;
+            }
+            input.value = '';
+            input.click();
+        }
+
+        async function clearPartition(idx) {
+            if (!parser || (!parser.buffer && !parser.sparseImage)) {
+                alert('No firmware file loaded.');
+                return;
+            }
+
+            const part = parser.partitions[idx];
+            if (!part) {
+                alert('Partition not found.');
+                return;
+            }
+
+            try {
+                const start = part.offset;
+                const end = start + part.length;
+
+                const totalSize = parser.sparseImage ? parser.sparseImage.size : parser.buffer.length;
+                if (end > totalSize) {
+                    alert('Partition range exceeds firmware image size.');
+                    return;
+                }
+
+                // Fill partition with 0xFF
+                if (parser.sparseImage) {
+                    // For sparse image (device mode), stage changes in memory only
+                    const clearData = new Uint8Array(part.length);
+                    clearData.fill(0xFF);
+                    parser.sparseImage.write(start, clearData);
+                    // Note: changes staged but not committed to device until "Write to Device" is clicked
+                } else {
+                    // For regular buffer (file mode)
+                    parser.buffer.fill(0xFF, start, end);
+                }
+
+                if (!deviceMode) {
+                    part.sha1 = await parser.computePartitionSHA1(part);
+                }
+
+                await displayPartitions();
+
+                const parsedContent = document.getElementById('parsed-content-' + idx);
+                if (parsedContent) {
+                    parsedContent.innerHTML = '';
+                }
+
+                const rawTab = document.querySelector('.tab.active');
+                if (rawTab && rawTab.textContent.toLowerCase().includes('raw')) {
+                    updateHexView();
+                }
+
+                alert(`Partition "${part.label}" cleared (filled with 0xFF).`);
+            } catch (err) {
+                alert('Error clearing partition: ' + err.message);
+            }
+        }
+
+        function handlePartitionReplaceFile(file, idx) {
+            if (!parser || (!parser.buffer && !parser.sparseImage)) {
+                alert('No firmware file loaded.');
+                return;
+            }
+
+            const part = parser.partitions[idx];
+            if (!part) {
+                alert('Partition not found.');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async function (e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    if (data.length > part.length) {
+                        alert('Selected file is larger than the partition size.');
+                        return;
+                    }
+
+                    const start = part.offset;
+                    const end = start + part.length;
+
+                    const totalSize = parser.sparseImage ? parser.sparseImage.size : parser.buffer.length;
+                    if (end > totalSize) {
+                        alert('Partition range exceeds firmware image size.');
+                        return;
+                    }
+
+                    // Fill partition with 0xFF, then write data
+                    if (parser.sparseImage) {
+                        // For sparse image (device mode), stage changes in memory only
+                        const paddedData = new Uint8Array(part.length);
+                        paddedData.fill(0xFF);
+                        paddedData.set(data, 0);
+                        parser.sparseImage.write(start, paddedData);
+                        // Note: changes staged but not committed to device until "Write to Device" is clicked
+                    } else {
+                        // For regular buffer (file mode)
+                        parser.buffer.fill(0xFF, start, end);
+                        parser.buffer.set(data, start);
+                    }
+
+                    if (!deviceMode) {
+                        part.sha1 = await parser.computePartitionSHA1(part);
+                    }
+
+                    await displayPartitions();
+
+                    const parsedContent = document.getElementById('parsed-content-' + idx);
+                    if (parsedContent) {
+                        parsedContent.innerHTML = '';
+                    }
+
+                    const rawTab = document.querySelector('.tab.active');
+                    if (rawTab && rawTab.textContent.toLowerCase().includes('raw')) {
+                        updateHexView();
+                    }
+                } catch (err) {
+                    alert('Error replacing partition: ' + err.message);
+                } finally {
+                    replaceTargetPartition = null;
+                    const inputEl = document.getElementById('partitionFileInput');
+                    if (inputEl) {
+                        inputEl.value = '';
+                    }
+                }
+            };
+            reader.onerror = function () {
+                alert('Failed to read the selected file.');
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        async function saveImage() {
+            if (!parser || !parser.sparseImage) {
+                alert('No firmware image loaded.');
+                return;
+            }
+
+            showFetchOverlay('Preparing image download...');
+            try {
+                const data = await parser.sparseImage.slice_async(0, parser.sparseImage.size);
+                const blob = new Blob([data], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'firmware_modified.bin';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                alert('Error preparing image: ' + error.message);
+            } finally {
+                hideFetchOverlay();
+            }
+        }
+
+        async function writeToDevice() {
+            if (!deviceFlasher || !deviceMode) {
+                alert('No device connected.');
+                return;
+            }
+
+            if (!parser || !parser.sparseImage) {
+                alert('No firmware image loaded.');
+                return;
+            }
+
+            // Check if there are any pending writes
+            if (!parser.sparseImage.writeBuffer || parser.sparseImage.writeBuffer.length === 0) {
+                alert('No changes to write. Please modify partitions first.');
+                return;
+            }
+
+            const writeCount = parser.sparseImage.writeBuffer.length;
+            const totalBytes = parser.sparseImage.writeBuffer.reduce((sum, seg) => sum + seg.data.length, 0);
+
+            showWriteOverlay('Writing modified segments...');
+
+            try {
+                setDeviceStatus('Writing modified segments to device...', 'loading');
+                updateWriteOverlayProgress(0, 0, totalBytes);
+
+                // Flush writes all segments in writeBuffer to device via writeDataCallback
+                await parser.sparseImage.flush();
+
+                setDeviceStatus('Firmware written successfully. Resetting device...', 'success');
+                await deviceFlasher.hardReset(false);
+                setDeviceStatus('Device reset. Write complete.', 'success');
+            } catch (error) {
+                console.error('Write error:', error);
+                setDeviceStatus('Write failed: ' + error.message, 'error');
+                alert('Error writing to device: ' + error.message);
+            } finally {
+                hideWriteOverlay();
+            }
+        }
+
+        function togglePartitionDetails(idx) {
+            const row = document.getElementById(`details-${idx}`);
+            row.classList.toggle('visible');
+        }
+
+        function parseNVSPartition(idx) {
+            const partition = parser.partitions[idx];
+            const contentDiv = document.getElementById(`parsed-content-${idx}`);
+
+            // Show loading indicator
+            contentDiv.innerHTML = '<div class="loading">⏳ Parsing NVS data...</div>';
+
+            // Use setTimeout to allow UI to update
+            setTimeout(async () => {
+                try {
+                    const pages = await parser.parseNVS(partition);
+
+                    let html = '<div class="success" style="margin-bottom: 10px;">Found ' + pages.length + ' NVS pages</div>';
+
+                    const namespaceGroups = {};
+                    let totalItems = 0;
+
+                    pages.forEach(page => {
+                        page.items.forEach(item => {
+                            if (item.nsIndex === 0) {
+                                // Skip namespace definitions in the item list
+                                return;
+                            }
+
+                            // Skip blob index entries (show only the actual blob chunks with data)
+                            if (item.isBlobIndex) {
+                                return;
+                            }
+
+                            const ns = item.namespace || 'Unknown';
+                            if (!namespaceGroups[ns]) {
+                                namespaceGroups[ns] = [];
+                            }
+                            namespaceGroups[ns].push(item);
+                            totalItems++;
+                        });
+                    });
+
+                    if (totalItems === 0) {
+                        html += '<div class="error">No NVS items found in this partition.</div>';
+                    } else {
+                        Object.keys(namespaceGroups).sort().forEach(ns => {
+                            html += `<div class="nvs-namespace">Namespace: ${ns} (${namespaceGroups[ns].length} items)</div>`;
+                            namespaceGroups[ns].forEach(item => {
+                                const tooltip = `Offset: 0x${item.offset.toString(16).toUpperCase()} (${item.offset}), Size: ${item.entrySize} bytes`;
+                                const crcBad = (item.headerCrcValid === false) || (item.dataCrcValid === false);
+                                html += `<div class="nvs-item ${crcBad ? 'crc-bad' : ''}" title="${tooltip}">`;
+                                html += `<strong>${item.key}</strong> <span class="badge">${item.typeName}</span><br>`;
+                                html += `Value: <span class="mono">${formatNVSValue(item)}</span>`;
+
+                                if (item.headerCrcCalc !== undefined) {
+                                    const headerStatus = item.headerCrcValid ? '<span class="ok">OK</span>' : '<span class="bad">BAD</span>';
+                                    const storedHex = (item.crc32 >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                    const calcHex = (item.headerCrcCalc >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                    html += `<div class="crc-info">Header CRC: ${headerStatus} (stored 0x${storedHex}, calc 0x${calcHex})</div>`;
+                                }
+
+                                if (item.dataCrcCalc !== undefined) {
+                                    const dataStatus = item.dataCrcValid ? '<span class="ok">OK</span>' : '<span class="bad">BAD</span>';
+                                    const storedHex = (item.dataCrcStored >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                    const calcHex = (item.dataCrcCalc >>> 0).toString(16).toUpperCase().padStart(8, '0');
+                                    html += `<div class="crc-info">Data CRC: ${dataStatus} (stored 0x${storedHex}, calc 0x${calcHex})</div>`;
+                                }
+                                html += `</div>`;
+                            });
+                        });
+                    }
+
+                    contentDiv.innerHTML = html;
+                } catch (error) {
+                    console.error('NVS parsing error:', error);
+                    contentDiv.innerHTML = `<div class="error">Error parsing NVS: ${error.message}</div>`;
+                }
+            }, 100);
+        }
+
+        function formatNVSValue(item) {
+            if (item.value === null) return 'null';
+            if (typeof item.value === 'object') return JSON.stringify(item.value);
+            if (item.typeName === 'String') return `"${item.value}"`;
+
+            // For Blob chunks, show chunk info and data
+            if (item.typeName === 'Blob' && item.chunkIndex !== undefined && item.chunkIndex !== 0xFF) {
+                const chunkInfo = `<span style="color: #888;">[Chunk ${item.chunkIndex}]</span> `;
+
+                if (item.rawValue) {
+                    let hexValue = Array.from(item.rawValue)
+                        .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+                        .join(' ');
+                    let asciiValue = '';
+                    for (let i = 0; i < item.rawValue.length; i++) {
+                        const byte = item.rawValue[i];
+                        asciiValue += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                    }
+                    return chunkInfo + `Hex: ${hexValue}<br><span style="color: #d4a574;">ASCII: ${asciiValue}</span>`;
+                }
+                return chunkInfo + item.value;
+            }
+
+            // For regular Blobs with raw data
+            if (item.typeName === 'Blob' && item.rawValue) {
+                let hexValue = Array.from(item.rawValue)
+                    .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+                    .join(' ');
+                let asciiValue = '';
+                for (let i = 0; i < item.rawValue.length; i++) {
+                    const byte = item.rawValue[i];
+                    asciiValue += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                }
+                return `Hex: ${hexValue}<br><span style="color: #d4a574;">ASCII: ${asciiValue}</span>`;
+            }
+
+            return item.value;
+        }
+
+        let currentFATInfo = null;
+        let currentFATPartition = null;
+
+        function parseFATPartition(idx) {
+            const partition = parser.partitions[idx];
+            const contentDiv = document.getElementById(`parsed-content-${idx}`);
+
+            // Show loading indicator
+            contentDiv.innerHTML = '<div class="loading">⏳ Parsing FAT filesystem...</div>';
+
+            // Use setTimeout to allow UI to update
+            setTimeout(async () => {
+                try {
+                    const fatInfo = await parser.parseFATFilesystem(partition);
+
+                    if (fatInfo.error) {
+                        contentDiv.innerHTML = `<div class="error">${fatInfo.error}</div>`;
+                        return;
+                    }
+
+                    // Store for file downloads
+                    currentFATInfo = fatInfo;
+                    currentFATPartition = partition;
+
+                    let html = '<div class="success" style="margin-bottom: 10px;">FAT filesystem parsed successfully</div>';
+
+                    // Filesystem info
+                    html += '<h4 style="margin-top: 15px;">Filesystem Information</h4>';
+                    html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>Type:</label><span>${fatInfo.fatType}</span></div>`;
+                    html += `<div class="info-item"><label>Volume Label:</label><span>${fatInfo.volumeLabel}</span></div>`;
+                    html += `<div class="info-item"><label>Bytes/Sector:</label><span>${fatInfo.bytesPerSector}</span></div>`;
+                    html += `<div class="info-item"><label>Sectors/Cluster:</label><span>${fatInfo.sectorsPerCluster}</span></div>`;
+                    html += `<div class="info-item"><label>Total Sectors:</label><span>${fatInfo.totalSectors}</span></div>`;
+                    html += `<div class="info-item"><label>Total Clusters:</label><span>${fatInfo.totalClusters}</span></div>`;
+                    html += '</div>';
+
+                    // Wear leveling info
+                    if (fatInfo.wearLeveling && fatInfo.wearLeveling.wlState) {
+                        const wl = fatInfo.wearLeveling.wlState;
+                        html += '<h4 style="margin-top: 15px;">Wear Leveling</h4>';
+                        html += '<div class="info-grid">';
+                        html += `<div class="info-item"><label>Move Count:</label><span>${wl.moveCount}</span></div>`;
+                        html += `<div class="info-item"><label>Access Count:</label><span>${wl.accessCount}</span></div>`;
+                        html += `<div class="info-item"><label>Max Count:</label><span>${wl.maxCount}</span></div>`;
+                        html += `<div class="info-item"><label>Block Size:</label><span>0x${wl.blockSize.toString(16).toUpperCase()}</span></div>`;
+                        html += `<div class="info-item"><label>Version:</label><span>${wl.version}</span></div>`;
+                        html += `<div class="info-item"><label>Device ID:</label><span>0x${wl.deviceId.toString(16).toUpperCase()}</span></div>`;
+                        html += '</div>';
+                    }
+
+                    // Files list
+                    html += '<h4 style="margin-top: 15px;">Files (' + countTotalFiles(fatInfo.files) + ' total entries)</h4>';
+                    if (fatInfo.files.length > 0) {
+                        html += '<table style="margin-top: 10px;"><thead><tr>';
+                        html += '<th>Path</th><th>Size</th><th>Attributes</th><th>Date</th><th>Time</th><th>Cluster</th>';
+                        html += '</tr></thead><tbody>';
+
+                        renderFATFiles(fatInfo.files, 0).forEach(row => {
+                            html += row;
+                        });
+
+                        html += '</tbody></table>';
+                    } else {
+                        html += '<div style="margin-top: 10px; color: #888;">No files found</div>';
+                    }
+
+                    contentDiv.innerHTML = html;
+                } catch (error) {
+                    console.error('FAT parsing error:', error);
+                    contentDiv.innerHTML = `<div class="error">Error parsing FAT: ${error.message}</div>`;
+                }
+            }, 100);
+        }
+
+        async function downloadFATFile(fileId) {
+            const file = window[fileId];
+            if (!file || !currentFATInfo || !currentFATPartition) {
+                alert('File data not available');
+                return;
+            }
+
+            // Show loading indicator
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'fat-loading-indicator';
+            loadingDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: white; padding: 20px 40px; border-radius: 8px; z-index: 10000; font-size: 16px;';
+            loadingDiv.textContent = `Loading ${file.name}...`;
+            document.body.appendChild(loadingDiv);
+
+            try {
+                const blob = await parser.extractFATFile(currentFATPartition, currentFATInfo, file);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = file.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Download error:', error);
+                alert('Error downloading file: ' + error.message);
+            } finally {
+                // Remove loading indicator
+                const indicator = document.getElementById('fat-loading-indicator');
+                if (indicator) {
+                    document.body.removeChild(indicator);
+                }
+            }
+        }
+
+        function countTotalFiles(files) {
+            let count = files.length;
+            files.forEach(file => {
+                if (file.children && file.children.length > 0) {
+                    count += countTotalFiles(file.children);
+                }
+            });
+            return count;
+        }
+
+        function renderFATFiles(files, depth) {
+            const rows = [];
+            const indent = '&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(depth);
+
+            files.forEach((file, fileIdx) => {
+                const fileId = `fat-file-${depth}-${fileIdx}-${file.cluster}`;
+                const clickable = !file.isDirectory && file.size > 0;
+                const cursorStyle = clickable ? 'cursor: pointer;' : '';
+                const hoverClass = clickable ? 'class="fat-file-row"' : '';
+
+                let row = `<tr ${hoverClass} style="${cursorStyle}" ${clickable ? `onclick="downloadFATFile('${fileId}')"` : ''}>`;
+
+                // Path column with indentation
+                const icon = file.isDirectory ? '📁' : '📄';
+                row += `<td>${indent}${icon} <strong>${file.path || file.name}</strong></td>`;
+
+                // Size (show - for directories)
+                row += `<td>${file.isDirectory ? '-' : formatBytes(file.size)}</td>`;
+
+                // Attributes
+                row += `<td>${file.attributes.join(', ') || 'None'}</td>`;
+
+                // Date & Time
+                row += `<td class="mono">${file.date}</td>`;
+                row += `<td class="mono">${file.time}</td>`;
+
+                // Store file data for download
+                if (clickable) {
+                    window[fileId] = file;
+                }
+
+                // Cluster
+                row += `<td class="mono">0x${file.cluster.toString(16).toUpperCase()}</td>`;
+                row += '</tr>';
+
+                rows.push(row);
+
+                // Add children if directory
+                if (file.children && file.children.length > 0) {
+                    rows.push(...renderFATFiles(file.children, depth + 1));
+                }
+            });
+
+            return rows;
+        }
+
+        function parseImagePartitionInline(idx) {
+            const partition = parser.partitions[idx];
+            const contentDiv = document.getElementById(`parsed-content-${idx}`);
+
+            // Show loading
+            contentDiv.innerHTML = '<div class="loading">⏳ Parsing firmware image...</div>';
+
+            // Use setTimeout to allow UI to update
+            setTimeout(async () => {
+                try {
+                    const image = await parser.parseImage(partition.offset, partition.length);
+
+                    // Validate SHA256 (appended) and compute region/full hashes
+                    let sha256Validation = null;
+                    let sha256Calculated = null;
+                    let sha256RegionCalc = null;
+
+                    const calcSliceEnd = Math.min(partition.offset + partition.length, parser.buffer.length);
+                    if (calcSliceEnd > partition.offset) {
+                        const calcData = parser.buffer.slice(partition.offset, calcSliceEnd);
+                        const calcHash = await ESP32Parser.calculateSHA256(calcData);
+                        sha256Calculated = ESP32Parser.bytesToHex(calcHash);
+                    }
+
+                    if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined && image.sha256DataEnd > image.sha256DataStart) {
+                        console.log(`Image SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
+                        const regionData = parser.buffer.slice(image.sha256DataStart, image.sha256DataEnd);
+                        const regionHash = await ESP32Parser.calculateSHA256(regionData);
+                        sha256RegionCalc = ESP32Parser.bytesToHex(regionHash);
+                    }
+
+                    if (image.sha256) {
+                        sha256Validation = await parser.validateImageSHA256(image);
+                        // If validation didn't compute, reuse region calc
+                        if (sha256Validation && !sha256Validation.calculated && sha256RegionCalc) {
+                            sha256Validation.calculated = sha256RegionCalc;
+                        }
+                    }
+
+                    let html = '';
+
+                    if (image.error) {
+                        html = `<div class="error">${image.error}</div>`;
+                    } else {
+                        html = '<div class="success">Firmware image parsed successfully</div>';
+
+                        html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
+                        html += '<div class="info-grid">';
+                        html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
+                        html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
+                        html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
+                        html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
+                        html += '</div>';
+
+                        html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
+                        html += '<div class="info-grid">';
+                        html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
+                        html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
+                        html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
+                        html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
+                        html += '</div>';
+
+                        html += '<h4 style="margin-top: 15px;">Chip Revision</h4>';
+                        html += '<div class="info-grid">';
+                        html += `<div class="info-item"><label>Min Chip Rev:</label><span>v${image.minChipRevMajor}.${image.minChipRevMinor} (${image.minChipRevFull})</span></div>`;
+                        html += `<div class="info-item"><label>Max Chip Rev:</label><span>v${image.maxChipRevMajor}.${image.maxChipRevMinor} (${image.maxChipRevFull})</span></div>`;
+                        html += `<div class="info-item"><label>Legacy Min Rev:</label><span>${image.minChipRev}</span></div>`;
+                        html += '</div>';
+
+                        // App Description (if found)
+                        if (image.appDesc && image.appDesc.found) {
+                            html += '<h4 style="margin-top: 15px;">Application Description</h4>';
+                            html += '<div class="info-grid">';
+                            if (image.appDesc.projectName) {
+                                html += `<div class="info-item"><label>Project Name:</label><span>${image.appDesc.projectName}</span></div>`;
+                            }
+                            if (image.appDesc.version) {
+                                html += `<div class="info-item"><label>Version:</label><span>${image.appDesc.version}</span></div>`;
+                            }
+                            if (image.appDesc.idfVer) {
+                                html += `<div class="info-item"><label>ESP-IDF Version:</label><span>${image.appDesc.idfVer}</span></div>`;
+                            }
+                            html += `<div class="info-item"><label>Secure Version:</label><span>${image.appDesc.secureVersion}</span></div>`;
+                            if (image.appDesc.date && image.appDesc.time) {
+                                html += `<div class="info-item"><label>Build Date/Time:</label><span>${image.appDesc.date} ${image.appDesc.time}</span></div>`;
+                            }
+                            if (image.appDesc.appElfSha256) {
+                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>App ELF SHA256:</label><span class="mono" title="Reference only - ELF file not available for validation">${image.appDesc.appElfSha256} <span style="color: #9a9a9a;">ℹ️</span></span></div>`;
+                            }
+                            html += '</div>';
+                        }
+
+                        html += '<h4 style="margin-top: 15px;">Validation</h4>';
+                        html += '<div class="info-grid">';
+                        html += `<div class="info-item"><label>Checksum:</label><span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
+                        html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
+                        if (image.sha256) {
+                            const validIcon = sha256Validation && sha256Validation.valid ?
+                                '<span style="color: #6ec589; font-size: 1.2em;" title="Hash verified over header..checksum region">✓</span>' :
+                                sha256Validation && sha256Validation.valid === false ?
+                                    '<span style="color: #e88888; font-size: 1.2em;" title="' + sha256Validation.reason + '">✗</span>' :
+                                    '<span style="color: #9a9a9a; font-size: 1.2em;" title="Validating...">⏳</span>';
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Image SHA256 (appended):</label><span class="mono">${image.sha256} ${validIcon}</span></div>`;
+                        }
+                        if (sha256RegionCalc) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Region SHA256 (header..checksum):</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                        }
+                        if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
+                            const regionLen = image.sha256DataEnd - image.sha256DataStart;
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
+                        }
+                        if (sha256Calculated) {
+                            if (image.sha256 && sha256Validation && sha256Validation.valid === false && sha256Validation.calculated) {
+                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Expected vs Calc (region):</label><span class="mono" style="color: #e88888;">${sha256Validation.expected} ≠ ${sha256Validation.calculated}</span></div>`;
+                            }
+                        }
+                        html += '</div>';
+
+                        html += '<h4 style="margin-top: 15px;">Segments</h4>';
+                        html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
+                        image.segmentList.forEach((seg, sidx) => {
+                            html += '<tr>';
+                            html += `<td>${sidx}</td>`;
+                            html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
+                            html += `<td>${formatBytes(seg.length)}</td>`;
+                            html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
+                            html += '</tr>';
+                        });
+                        html += '</tbody></table>';
+                    }
+
+                    contentDiv.innerHTML = html;
+                } catch (error) {
+                    console.error('Image parsing error:', error);
+                    contentDiv.innerHTML = `<div class="error">Error parsing image: ${error.message}</div>`;
+                }
+            }, 100);
+        }
+
+        async function downloadPartition(idx) {
+            const partition = parser.partitions[idx];
+            setFetchOverlayReason(`Download ${partition.label}`);
+            showFetchOverlay(`Downloading ${partition.label}...`);
+            try {
+                const blob = await parser.exportPartitionData(partition);
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${partition.label}_0x${partition.offset.toString(16)}.bin`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Partition download error:', error);
+                alert('Error downloading partition: ' + error.message);
+            } finally {
+                hideFetchOverlay();
+                setFetchOverlayReason('');
+            }
+        }
+
+        async function viewPartitionHex(idx) {
+            const partition = parser.partitions[idx];
+            document.getElementById('hexOffset').value = '0x' + partition.offset.toString(16).toUpperCase();
+            document.getElementById('hexLength').value = '0x' + Math.min(partition.length, 0x1000).toString(16).toUpperCase();
+            switchTab('raw');
+            updateHexView();
+        }
+
+        async function updateHexView() {
+            const offsetStr = document.getElementById('hexOffset').value.trim();
+            const lengthStr = document.getElementById('hexLength').value.trim();
+            const rawContent = document.getElementById('rawContent');
+
+            if (!parser) {
+                rawContent.innerHTML = '<div class="error">No firmware loaded</div>';
+                return;
+            }
+
+            // Show loading indicator
+            rawContent.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading hex view...</div>';
+
+            try {
+                const offset = parseInt(offsetStr, 16);
+                const length = parseInt(lengthStr, 16);
+
+                if (isNaN(offset) || isNaN(length)) {
+                    rawContent.innerHTML = '<div class="error">Invalid offset or length. Use hex format (e.g., 0x1000)</div>';
+                    return;
+                }
+
+                const totalLen = (parser && parser.buffer && typeof parser.buffer.length === 'number')
+                    ? parser.buffer.length
+                    : (parser.view && parser.view.buffer && parser.view.buffer.byteLength) ? parser.view.buffer.byteLength : 0;
+
+                if (offset < 0 || offset >= totalLen) {
+                    rawContent.innerHTML = '<div class="error">Offset out of range</div>';
+                    return;
+                }
+
+                const actualLength = Math.min(length, totalLen - offset);
+                if (actualLength > 0x10000) {
+                    rawContent.innerHTML = '<div class="error">Length too large. Maximum is 0x10000 (64KB)</div>';
+                    return;
+                }
+
+                const hexView = await generateHexView(offset, actualLength);
+                rawContent.innerHTML = hexView;
+            } catch (error) {
+                rawContent.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function generateHexView(offset, length) {
+            let bytes;
+            if (parser && parser.sparseImage && typeof parser.sparseImage.subarray_async === 'function') {
+                bytes = await parser.sparseImage.subarray_async(offset, offset + length);
+            } else if (parser && parser.buffer && typeof parser.buffer.subarray === 'function') {
+                bytes = parser.buffer.subarray(offset, offset + length);
+            } else {
+                bytes = new Uint8Array(parser.view.buffer, offset, length);
+            }
+            const widthInput = document.getElementById('hexWidth');
+            const bytesPerLine = widthInput ? parseInt(widthInput.value) || 16 : 16;
+
+            let html = '<div class="hex-viewer">';
+
+            for (let i = 0; i < bytes.length; i += bytesPerLine) {
+                const lineOffset = offset + i;
+                const lineBytes = bytes.slice(i, Math.min(i + bytesPerLine, bytes.length));
+
+                html += '<div>';
+
+                // Offset (colored)
+                html += `<span class="hex-offset">${lineOffset.toString(16).toUpperCase().padStart(8, '0')}</span>  `;
+
+                // Hex bytes (colored)
+                let hexPart = '';
+                for (let j = 0; j < bytesPerLine; j++) {
+                    if (j < lineBytes.length) {
+                        const byte = lineBytes[j];
+                        hexPart += byte.toString(16).toUpperCase().padStart(2, '0') + ' ';
+                    } else {
+                        hexPart += '   ';
+                    }
+
+                    if (j === Math.floor(bytesPerLine / 2) - 1) {
+                        hexPart += ' ';
+                    }
+                }
+                html += `<span class="hex-bytes">${hexPart}</span>`;
+
+                // Add spacing before ASCII
+                html += '   ';
+
+                // ASCII representation (colored)
+                let asciiPart = '';
+                for (let j = 0; j < lineBytes.length; j++) {
+                    const byte = lineBytes[j];
+                    asciiPart += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                }
+                html += `<span class="hex-ascii">${asciiPart}</span>`;
+
+                html += '</div>';
+            }
+
+            html += '</div>';
+            return html;
+        }
+
+        function switchTab(tabName, event) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+
+            if (event?.target) {
+                event.target.classList.add('active');
+            } else {
+                // Find and activate by tab name if no event
+                document.querySelectorAll('.tab').forEach(tab => {
+                    if (tab.textContent.toLowerCase().includes(tabName)) {
+                        tab.classList.add('active');
+                    }
+                });
+            }
+
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function showError(message) {
+            const content = document.getElementById('partitionsContent');
+            content.innerHTML = `<div class="error">${message}</div>`;
+        }
+    </script>
+</body>
+
+</html>
