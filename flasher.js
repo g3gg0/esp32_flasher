@@ -134,6 +134,9 @@ class ESPFlasher {
         this.logDebug = () => { };
         this.logError = () => { };
         this.reader = null;
+
+        /* Command execution lock to prevent concurrent command execution */
+        this._commandLock = Promise.resolve();
     }
 
     /**
@@ -251,6 +254,18 @@ class ESPFlasher {
      * @throws {Error} On timeout or command failure
      */
     async executeCommand(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
+        /* Acquire command lock to ensure only one command executes at a time */
+        return this._commandLock = this._commandLock.then(() => 
+            this._executeCommandUnlocked(packet, callback, default_callback, timeout, hasTimeoutCbr)
+        );
+    }
+
+    /**
+     * Internal command execution (unlocked)
+     * @async
+     * @private
+     */
+    async _executeCommandUnlocked(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
         if (!this.port || !this.port.writable) {
             throw new Error("Port is not writable.");
         }
