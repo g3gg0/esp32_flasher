@@ -961,10 +961,15 @@
         /* Performance tracking for read/write operations */
         let readStartTime = null;
         let readSlowWarningShown = false;
+        let readWarningShownTime = null;
+        let readWarningHideTimeout = null;
         let writeStartTime = null;
         let writeSlowWarningShown = false;
+        let writeWarningShownTime = null;
+        let writeWarningHideTimeout = null;
         const SLOW_SPEED_THRESHOLD = 200 * 1024; /* 200 KiB/s in bytes/s */
-        const SPEED_CHECK_DELAY = 1000; /* 1 second before checking speed */
+        const SPEED_CHECK_DELAY = 5000; /* 1 second before checking speed */
+        const WARNING_MIN_DISPLAY_TIME = 10000; /* Keep warning visible for at least 10 seconds */
 
         function buildDeviceSparse(totalSize, logReads = false) {
             return new SparseImage(totalSize,
@@ -1501,24 +1506,39 @@
             const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesRead / totalBytes) * 100)) : 0;
 
             let text = `Reading 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbRead} / ${kbTotal} KB)`;
+            let addWarning = false;
 
             /* Calculate speed if operation has been running > 1 second */
-            if (readStartTime && !readSlowWarningShown) {
+            if (readStartTime) {
                 const elapsedMs = Date.now() - readStartTime;
                 if (elapsedMs > SPEED_CHECK_DELAY && bytesRead > 0) {
                     const speedBytesPerSec = (bytesRead / elapsedMs) * 1000;
                     const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
-                    text += ` – ${speedKiBPerSec} KiB/s`;
+                    text += ` - ${speedKiBPerSec} KiB/s`;
 
                     /* Show warning if speed is too slow */
                     if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
-                        text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
-                        readSlowWarningShown = true;
+                        addWarning = true;
+                        if (!readSlowWarningShown) {
+                            readSlowWarningShown = true;
+                            readWarningShownTime = Date.now();
+                        }
                     }
+                }
+            } else if (readSlowWarningShown && readWarningShownTime) {
+                /* Keep showing warning if still within minimum display time */
+                const warningElapsedMs = Date.now() - readWarningShownTime;
+                if (warningElapsedMs < WARNING_MIN_DISPLAY_TIME) {
+                    addWarning = true;
                 }
             }
 
-            label.textContent = text;
+
+            if (addWarning) {
+                text += `<br><br>⚠️ SLOW: due to hardware/stub bug, ESP32-S3 and C3 are very slow with onchip USB-JTAG`;
+            }
+
+            label.innerHTML = text;
         }
 
         function hideFetchOverlay() {
@@ -1528,7 +1548,19 @@
             }
             fetchOverlayActiveReads = 0;
             readStartTime = null;
-            readSlowWarningShown = false;
+            /* Clear any existing timeout and set new one for warning minimum display time */
+            if (readWarningHideTimeout) {
+                clearTimeout(readWarningHideTimeout);
+            }
+            if (readSlowWarningShown && readWarningShownTime) {
+                const timeElapsed = Date.now() - readWarningShownTime;
+                const timeRemaining = Math.max(0, WARNING_MIN_DISPLAY_TIME - timeElapsed);
+                readWarningHideTimeout = setTimeout(() => {
+                    readSlowWarningShown = false;
+                    readWarningShownTime = null;
+                    readWarningHideTimeout = null;
+                }, timeRemaining);
+            }
         }
 
         function showWriteOverlay(text) {
@@ -1542,6 +1574,7 @@
             }
             writeStartTime = Date.now();
             writeSlowWarningShown = false;
+            writeWarningShownTime = null;
         }
 
         function updateWriteOverlayProgress(address, bytesWritten, totalBytes) {
@@ -1557,7 +1590,7 @@
             let text = `Writing 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbWritten} / ${kbTotal} KB)`;
 
             /* Calculate speed if operation has been running > 1 second */
-            if (writeStartTime && !writeSlowWarningShown) {
+            if (writeStartTime) {
                 const elapsedMs = Date.now() - writeStartTime;
                 if (elapsedMs > SPEED_CHECK_DELAY && bytesWritten > 0) {
                     const speedBytesPerSec = (bytesWritten / elapsedMs) * 1000;
@@ -1567,12 +1600,21 @@
                     /* Show warning if speed is too slow */
                     if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
                         text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
-                        writeSlowWarningShown = true;
+                        if (!writeSlowWarningShown) {
+                            writeSlowWarningShown = true;
+                            writeWarningShownTime = Date.now();
+                        }
                     }
+                }
+            } else if (writeSlowWarningShown && writeWarningShownTime) {
+                /* Keep showing warning if still within minimum display time */
+                const warningElapsedMs = Date.now() - writeWarningShownTime;
+                if (warningElapsedMs < WARNING_MIN_DISPLAY_TIME) {
+                    text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
                 }
             }
 
-            label.textContent = text;
+            label.innerHTML = text;
         }
 
         function hideWriteOverlay() {
@@ -1581,7 +1623,19 @@
                 overlay.style.display = 'none';
             }
             writeStartTime = null;
-            writeSlowWarningShown = false;
+            /* Clear any existing timeout and set new one for warning minimum display time */
+            if (writeWarningHideTimeout) {
+                clearTimeout(writeWarningHideTimeout);
+            }
+            if (writeSlowWarningShown && writeWarningShownTime) {
+                const timeElapsed = Date.now() - writeWarningShownTime;
+                const timeRemaining = Math.max(0, WARNING_MIN_DISPLAY_TIME - timeElapsed);
+                writeWarningHideTimeout = setTimeout(() => {
+                    writeSlowWarningShown = false;
+                    writeWarningShownTime = null;
+                    writeWarningHideTimeout = null;
+                }, timeRemaining);
+            }
         }
 
         async function deviceConnect() {
@@ -2504,7 +2558,7 @@
                                     const headerValid = item.headerCrcCalc === undefined || item.headerCrcValid;
                                     const dataValid = item.dataCrcCalc === undefined || item.dataCrcValid;
                                     const allValid = headerValid && dataValid;
-                                    
+
                                     if (allValid) {
                                         /* Both CRCs OK - show compact version with hover info */
                                         let hoverText = '';
@@ -2562,14 +2616,14 @@
                     let hexLines = [];
                     let asciiLines = [];
                     const width = 32;
-                    
+
                     for (let i = 0; i < item.rawValue.length; i += width) {
                         const chunk = item.rawValue.slice(i, i + width);
                         const hexLine = Array.from(chunk)
                             .map(b => b.toString(width).padStart(2, '0').toUpperCase())
                             .join(' ');
                         hexLines.push(hexLine);
-                        
+
                         let asciiLine = '';
                         for (let j = 0; j < chunk.length; j++) {
                             const byte = chunk[j];
@@ -2577,7 +2631,7 @@
                         }
                         asciiLines.push(asciiLine);
                     }
-                    
+
                     return chunkInfo + `Hex:<br>${hexLines.join('<br>')}<br><span style="color: #d4a574;">ASCII:<br>${asciiLines.join('<br>')}</span>`;
                 }
                 return chunkInfo + item.value;
@@ -2587,14 +2641,14 @@
             if (item.typeName === 'Blob' && item.rawValue) {
                 let hexLines = [];
                 let asciiLines = [];
-                
+
                 for (let i = 0; i < item.rawValue.length; i += 16) {
                     const chunk = item.rawValue.slice(i, i + 16);
                     const hexLine = Array.from(chunk)
                         .map(b => b.toString(16).padStart(2, '0').toUpperCase())
                         .join(' ');
                     hexLines.push(hexLine);
-                    
+
                     let asciiLine = '';
                     for (let j = 0; j < chunk.length; j++) {
                         const byte = chunk[j];
@@ -2602,7 +2656,7 @@
                     }
                     asciiLines.push(asciiLine);
                 }
-                
+
                 return `Hex:<br>${hexLines.join('<br>')}<br><span style="color: #d4a574;">ASCII:<br>${asciiLines.join('<br>')}</span>`;
             }
 
@@ -3111,11 +3165,11 @@
 
             try {
                 await parser.deleteNVSItem(partition, namespace, key);
-                
+
                 // Refresh the NVS display
                 parseNVSPartition(partitionIdx);
                 updateMemoryMap();
-                
+
                 setDeviceStatus(`Deleted NVS item: ${namespace}.${key}`, 'success');
             } catch (error) {
                 alert('Error deleting NVS item: ' + error.message);
@@ -3277,12 +3331,12 @@
             const typeSelect = document.getElementById('nvs-add-type');
             const valueInput = document.getElementById('nvs-add-value');
             const hint = document.getElementById('nvs-add-value-hint');
-            
+
             if (!typeSelect || !valueInput || !hint) return;
-            
+
             const type = typeSelect.value;
-            
-            switch(type) {
+
+            switch (type) {
                 case 'U8':
                     valueInput.type = 'number';
                     valueInput.placeholder = 'Enter number (0-255)';
@@ -3372,18 +3426,18 @@
             try {
                 const partition = parser.partitions[partitionIdx];
                 await parser.addNVSItem(partition, namespace, key, type, value);
-                
+
                 closeNVSAddDialog();
-                
+
                 // Ensure the details row is visible before parsing
                 const detailsRow = document.getElementById(`details-${partitionIdx}`);
                 if (detailsRow && !detailsRow.classList.contains('visible')) {
                     detailsRow.classList.add('visible');
                 }
-                
+
                 parseNVSPartition(partitionIdx);
                 updateMemoryMap();
-                
+
                 setDeviceStatus(`Added NVS item: ${namespace}.${key}`, 'success');
             } catch (error) {
                 alert('Error adding NVS item: ' + error.message);
@@ -3406,26 +3460,26 @@
 
             try {
                 const partition = parser.partitions[partitionIdx];
-                
+
                 // Delete old entry
                 await parser.deleteNVSItem(partition, namespace, oldKey);
                 console.log(`Deleted old NVS item: ${namespace}/${oldKey}`);
-                
+
                 // Add new entry with same key
                 await parser.addNVSItem(partition, namespace, oldKey, type, value);
                 console.log(`Added updated NVS item: ${namespace}/${oldKey} = ${value} (${type})`);
-                
+
                 closeNVSAddDialog();
-                
+
                 // Ensure the details row is visible before parsing
                 const detailsRow = document.getElementById(`details-${partitionIdx}`);
                 if (detailsRow && !detailsRow.classList.contains('visible')) {
                     detailsRow.classList.add('visible');
                 }
-                
+
                 parseNVSPartition(partitionIdx);
                 updateMemoryMap();
-                
+
                 setDeviceStatus(`Updated NVS item: ${namespace}.${oldKey}`, 'success');
             } catch (error) {
                 alert('Error updating NVS item: ' + error.message);
@@ -3452,18 +3506,18 @@
                 const partition = parser.partitions[partitionIdx];
                 await parser.addNVSNamespace(partition, namespaceName);
                 console.log(`Added namespace: ${namespaceName}`);
-                
+
                 closeNVSAddDialog();
-                
+
                 // Ensure the details row is visible before parsing
                 const detailsRow = document.getElementById(`details-${partitionIdx}`);
                 if (detailsRow && !detailsRow.classList.contains('visible')) {
                     detailsRow.classList.add('visible');
                 }
-                
+
                 parseNVSPartition(partitionIdx);
                 updateMemoryMap();
-                
+
                 setDeviceStatus(`Created namespace: ${namespaceName}`, 'success');
             } catch (error) {
                 alert('Error creating namespace: ' + error.message);
