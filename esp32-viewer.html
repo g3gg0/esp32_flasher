@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ESP32 Firmware Viewer</title>
+    <title>[g3gg0.de] ESP32 Firmware Editor</title>
     <style>
         * {
             margin: 0;
@@ -93,7 +93,7 @@
             background: linear-gradient(135deg, #5a6bb8 0%, #6a5294 100%);
             color: #e8e8e8;
             border: none;
-            padding: 12px 30px;
+            padding: 12px 16px;
             border-radius: 5px;
             cursor: pointer;
             font-size: 1em;
@@ -108,7 +108,7 @@
 
         .file-info {
             background: #333333;
-            padding: 20px;
+            padding: 10px;
             border-radius: 10px;
             margin-bottom: 20px;
             display: none;
@@ -132,7 +132,7 @@
 
         .info-item {
             background: #252525;
-            padding: 12px;
+            padding: 5px 8px;
             border-radius: 5px;
             border-left: 3px solid #5a6bb8;
         }
@@ -242,7 +242,7 @@
         }
 
         td {
-            padding: 12px 15px;
+            padding: 4px 4px;
             border-bottom: 1px solid #404040;
         }
 
@@ -281,7 +281,7 @@
         }
 
         .details-content {
-            padding: 20px;
+            padding: 15px;
             border-left: 3px solid #5a6bb8;
         }
 
@@ -293,7 +293,7 @@
 
         .detail-item {
             background: #3a3a3a;
-            padding: 10px;
+            padding: 4px 8px;
             border-radius: 5px;
         }
 
@@ -350,7 +350,7 @@
 
         .nvs-item {
             background: #2d2d2d;
-            padding: 12px;
+            padding: 5px 8px;
             margin: 5px 0;
             border-left: 3px solid #5a6bb8;
             border-radius: 3px;
@@ -616,6 +616,82 @@
             background: #202540;
             color: #7aafff;
         }
+
+        /* Memory map visualization */
+        #memoryMapContainer {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            display: none;
+        }
+
+        #memoryMapContainer h4 {
+            margin: 0 0 10px 0;
+            color: #7a8bdc;
+            font-size: 14px;
+        }
+
+        #memoryMap {
+            width: 100%;
+            height: 40px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid #444;
+        }
+
+        .memory-segment {
+            position: absolute;
+            height: 100%;
+            top: 0;
+            transition: all 0.3s ease;
+        }
+
+        .memory-segment.unread {
+            background: #3a3a3a;
+        }
+
+        .memory-segment.cached {
+            background: linear-gradient(180deg, #4CAF50 0%, #2e7d32 100%);
+        }
+
+        .memory-segment.modified {
+            background: linear-gradient(180deg, #f44336 0%, #b71c1c 100%);
+        }
+
+        #memoryMapLegend {
+            display: flex;
+            gap: 20px;
+            margin-top: 8px;
+            font-size: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 12px;
+            border-radius: 2px;
+            border: 1px solid #555;
+        }
+
+        .legend-color.unread {
+            background: #3a3a3a;
+        }
+
+        .legend-color.cached {
+            background: #4CAF50;
+        }
+
+        .legend-color.modified {
+            background: #f44336;
+        }
     </style>
 </head>
 
@@ -634,18 +710,17 @@
     </div>
     <div class="container">
         <div class="header">
-            <h1>🔧 ESP32 Firmware Viewer</h1>
+            <h1>[g3gg0.de] ESP32 Firmware Editor</h1>
             <p>Analyze ESP32 firmware images - View partitions, NVS data, and file systems</p>
         </div>
 
         <div class="content">
             <div class="drop-zone" id="dropZone">
-                <i>📦</i>
                 <p><strong>Drop your ESP32 firmware (.bin) file here</strong></p>
-                <p>or</p>
                 <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap;">
                     <button class="btn" onclick="document.getElementById('fileInput').click()">Browse Files</button>
-                    <button class="btn" id="connectToggleBtn" style="background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);"
+                    <button class="btn" id="connectToggleBtn"
+                        style="background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);"
                         onclick="toggleDeviceSession()">Connect to ESP32</button>
                 </div>
                 <input type="file" id="fileInput" class="file-input" accept=".bin">
@@ -659,20 +734,48 @@
                     <div class="button-group" style="flex-wrap:wrap; gap:8px;display: none;">
                         <button class="btn" id="targetResetBtn" onclick="deviceHardReset()" disabled>Reset</button>
                         <button class="btn" id="targetSyncBtn" onclick="deviceSync()" disabled>Sync</button>
-                        <button class="btn" id="targetStubBtn" onclick="deviceLoadStub()" disabled>Download Stub</button>
+                        <button class="btn" id="targetStubBtn" onclick="deviceLoadStub()" disabled>Download
+                            Stub</button>
                         <button class="btn" id="targetFetchBtn" onclick="deviceFetch()" disabled>Refresh</button>
                     </div>
+                </div>
+                <div class="button-group" style="display: flex; flex-wrap:wrap; gap:8px;">
+                    <button class="btn" id="deviceDisconnectBtn" onclick="toggleDeviceSession()"
+                        style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Disconnect</button>
+                    <button class="btn" id="writeToDeviceBtn" onclick="writeToDevice()"
+                        style="display: none; background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%);">Write to
+                        Device</button>
+                    <button class="btn" id="saveImageBtn" onclick="saveImage()">Save Image</button>
                 </div>
             </div>
 
             <div id="deviceStatusContainer" style="display: none; margin-bottom: 20px;">
-                <div id="deviceStatusText" class="success" style="padding: 15px; border-radius: 5px; background: #252525; border-left: 4px solid #6ec589;"></div>
+                <div id="deviceStatusText" class="success"
+                    style="padding: 15px; border-radius: 5px; background: #252525; border-left: 4px solid #6ec589;">
+                </div>
+            </div>
+
+            <div id="memoryMapContainer">
+                <h4>📊 Memory Map</h4>
+                <div id="memoryMap" style="cursor: pointer;" title="Click to show segments in console"></div>
+                <div id="memoryMapLegend">
+                    <div class="legend-item">
+                        <div class="legend-color unread"></div>
+                        <span>Unread</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color cached"></div>
+                        <span>Cached</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color modified"></div>
+                        <span>Modified</span>
+                    </div>
+                </div>
             </div>
 
             <div id="tabContainer" style="display: none;">
                 <div style="display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 10px;">
-                    <button class="btn" onclick="saveImage()">Save Image</button>
-                    <button class="btn" id="writeToDeviceBtn" onclick="writeToDevice()" style="display: none; background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%);">Write to Device</button>
                 </div>
                 <div class="tabs">
                     <button class="tab active" onclick="switchTab('bootloader', event)">Bootloader</button>
@@ -740,7 +843,9 @@
         let deviceReadProgressDone = 0;
         let fetchOverlayReason = '';
         let fetchOverlayActiveReads = 0;
-        
+        let intentionalDisconnect = false; /* Track intentional disconnects */
+        let bootloaderInfo = null;
+
         /* Performance tracking for read/write operations */
         let readStartTime = null;
         let readSlowWarningShown = false;
@@ -756,7 +861,7 @@
                     const maxChunk = 0x00800000;
                     const desired = Math.min(readLen, maxChunk);
                     let len = (desired + 0x1000) & ~0x0FFF;
-                    
+
                     /* Ensure we don't read beyond configured flash size */
                     if (addr >= totalSize) {
                         throw new Error(`Read address 0x${addr.toString(16)} exceeds flash size 0x${totalSize.toString(16)}`);
@@ -765,7 +870,7 @@
                     if (len <= 0) {
                         throw new Error(`Invalid read length at address 0x${addr.toString(16)}`);
                     }
-                    
+
                     if (logReads) {
                         console.log('  Reading', `0x${addr.toString(16)}`, len);
                     }
@@ -787,6 +892,8 @@
                         if (logReads) {
                             console.log('  Got', `0x${addr.toString(16)}`, ret.byteLength, chunk);
                         }
+                        /* Update memory map after successful read */
+                        setTimeout(() => updateMemoryMap(), 100);
                         return chunk;
                     } finally {
                         fetchOverlayActiveReads = Math.max(0, fetchOverlayActiveReads - 1);
@@ -800,12 +907,143 @@
                     if (logReads) {
                         console.log('  Writing', `0x${writeAddr.toString(16)}`, writeData.length, 'bytes');
                     }
+                    if (writeAddr % 0x1000 !== 0) {
+                        throw new Error(`Write address 0x${writeAddr.toString(16)} is not aligned to 0x1000 bytes`);
+                    }
+                    if (writeData.length % 0x1000 !== 0) {
+                        throw new Error(`Write data length ${writeData.length} is not aligned to 0x1000 bytes`);
+                    }
                     await deviceFlasher.writeFlash(writeAddr, writeData, (offset, total, status) => {
                         updateWriteOverlayProgress(writeAddr + offset, offset, total);
                     });
                     if (logReads) {
                         console.log('  Wrote', `0x${writeAddr.toString(16)}`, writeData.length, 'bytes');
                     }
+                },
+                async (sparseImage) => {
+                    /* Flush prepare callback: combine cached and write data into 0x1000-byte blocks */
+                    if (logReads) {
+                        console.log('Flush prepare: consolidating write buffer into 4KB-aligned blocks');
+                    }
+
+                    if (sparseImage.writeBuffer.length === 0) return;
+
+                    /* Get the range we need to cover */
+                    let minAddr = Infinity;
+                    let maxAddr = 0;
+
+                    for (const seg of sparseImage.writeBuffer) {
+                        minAddr = Math.min(minAddr, seg.address);
+                        maxAddr = Math.max(maxAddr, seg.address + seg.data.length);
+                    }
+
+                    if (minAddr === Infinity) return; /* Nothing to do */
+
+                    /* Align to 0x1000 byte boundaries */
+                    const blockStart = minAddr & ~0x0FFF;
+                    const blockEnd = (maxAddr + 0x0FFF) & ~0x0FFF;
+
+                    if (logReads) {
+                        console.log(`Prepare: processing range 0x${blockStart.toString(16)} - 0x${blockEnd.toString(16)}`);
+                    }
+
+                    /* Build aligned blocks: prefer writeBuffer-only materialization; otherwise read via sparse image */
+                    const blockMap = new Map(); /* blockAddr -> blockData */
+
+                    for (let blockAddr = blockStart; blockAddr < blockEnd; blockAddr += 0x1000) {
+                        const blockEndAddr = blockAddr + 0x1000;
+
+                        const overlaps = [];
+                        for (const seg of sparseImage.writeBuffer) {
+                            const segStart = seg.address;
+                            const segEnd = seg.address + seg.data.length;
+                            const overlapStart = Math.max(blockAddr, segStart);
+                            const overlapEnd = Math.min(blockEndAddr, segEnd);
+                            if (overlapStart < overlapEnd) {
+                                overlaps.push({ start: overlapStart, end: overlapEnd, seg });
+                            }
+                        }
+
+                        overlaps.sort((a, b) => a.start - b.start);
+
+                        let coveredCursor = blockAddr;
+                        for (const ov of overlaps) {
+                            if (ov.start > coveredCursor) {
+                                break;
+                            }
+                            if (ov.end > coveredCursor) {
+                                coveredCursor = ov.end;
+                            }
+                            if (coveredCursor >= blockEndAddr) {
+                                break;
+                            }
+                        }
+
+                        const fullyCovered = coveredCursor >= blockEndAddr;
+                        let blockData;
+
+                        if (fullyCovered) {
+                            blockData = new Uint8Array(0x1000);
+                            blockData.fill(0xFF);
+                            for (const ov of overlaps) {
+                                const srcOff = ov.start - ov.seg.address;
+                                const dstOff = ov.start - blockAddr;
+                                const len = ov.end - ov.start;
+                                blockData.set(ov.seg.data.slice(srcOff, srcOff + len), dstOff);
+                            }
+                        } else {
+                            blockData = await sparseImage.slice_async(blockAddr, blockEndAddr);
+                        }
+
+                        blockMap.set(blockAddr, blockData);
+                    }
+
+                    /* Merge touching/consecutive blocks */
+                    const mergedBlocks = [];
+                    const blockAddrs = Array.from(blockMap.keys()).sort((a, b) => a - b);
+
+                    let currentStart = null;
+                    let currentData = null;
+
+                    for (const blockAddr of blockAddrs) {
+                        if (currentStart === null) {
+                            /* Start new merged block */
+                            currentStart = blockAddr;
+                            currentData = new Uint8Array(blockMap.get(blockAddr));
+                        } else if (currentStart + currentData.length === blockAddr) {
+                            /* Consecutive block: merge it */
+                            const mergedData = new Uint8Array(currentData.length + 0x1000);
+                            mergedData.set(currentData, 0);
+                            mergedData.set(blockMap.get(blockAddr), currentData.length);
+                            currentData = mergedData;
+                        } else {
+                            /* Gap detected: save current merged block and start new one */
+                            mergedBlocks.push({ address: currentStart, data: currentData });
+                            if (logReads) {
+                                console.log(`  Merged block at 0x${currentStart.toString(16)}, size: ${currentData.length} bytes`);
+                            }
+                            currentStart = blockAddr;
+                            currentData = new Uint8Array(blockMap.get(blockAddr));
+                        }
+                    }
+
+                    /* Add final merged block */
+                    if (currentStart !== null) {
+                        mergedBlocks.push({ address: currentStart, data: currentData });
+                        if (logReads) {
+                            console.log(`  Merged block at 0x${currentStart.toString(16)}, size: ${currentData.length} bytes`);
+                        }
+                    }
+
+                    /* Replace write buffer with merged blocks */
+                    sparseImage.writeBuffer = mergedBlocks;
+
+                    if (logReads) {
+                        console.log(`Flush prepare complete: ${mergedBlocks.length} blocks aligned and ready`);
+                    }
+
+                    /* Update memory map after prepare */
+                    setTimeout(() => updateMemoryMap(), 100);
                 }
             );
         }
@@ -826,12 +1064,12 @@
             try {
                 setDeviceStatus('Requesting serial port...', 'loading');
                 deviceFlasher = new ESPFlasher();
-                
+
                 /* Set up callback for unexpected device disconnection */
                 deviceFlasher.disconnected = () => {
                     handleUnexpectedDeviceDisconnect();
                 };
-                
+
                 await deviceFlasher.openPort();
                 setDeviceButtons({ connected: true });
 
@@ -869,6 +1107,10 @@
                 await parseAndDisplay(true);
                 setDeviceStatus('Connected to ' + deviceFlasher.current_chip + '. Firmware loaded and parsed.', 'success');
                 setToggleButtonState(true);
+
+                /* Hide file drop/browse when in device mode */
+                const dropZone = document.getElementById('dropZone');
+                if (dropZone) dropZone.style.display = 'none';
             } catch (e) {
                 setDeviceStatus('Connection failed: ' + e.message, 'error');
                 setDeviceButtons({ connected: false });
@@ -876,10 +1118,13 @@
             } finally {
                 hideFetchOverlay();
                 setFetchOverlayReason('');
+                /* Update memory map after all reads complete */
+                updateMemoryMap();
             }
         }
 
         async function disconnectDeviceSession() {
+            intentionalDisconnect = true;
             if (deviceFlasher) {
                 try {
                     await deviceFlasher.disconnect();
@@ -893,7 +1138,9 @@
 
         function handleUnexpectedDeviceDisconnect() {
             /* Called when device is unexpectedly disconnected (pulled out, lost connection, etc) */
-            setDeviceStatus('Device unexpectedly disconnected. Please reconnect.', 'error');
+            if (!intentionalDisconnect) {
+                setDeviceStatus('Device unexpectedly disconnected. Please reconnect.', 'error');
+            }
             clearDeviceState();
         }
 
@@ -907,24 +1154,146 @@
 
             setDeviceButtons({ connected: false, synced: false, stub: false });
             setToggleButtonState(false);
-            
+
             /* Hide file info section */
             const fileInfo = document.getElementById('fileInfo');
             if (fileInfo) {
                 fileInfo.classList.remove('visible');
             }
-            
+
             /* Hide tab container */
             const tabContainer = document.getElementById('tabContainer');
             if (tabContainer) {
                 tabContainer.style.display = 'none';
             }
-            
+
+            /* Hide memory map */
+            const memoryMapContainer = document.getElementById('memoryMapContainer');
+            if (memoryMapContainer) {
+                memoryMapContainer.style.display = 'none';
+            }
+
             /* Clear content in all tabs */
             const contentDivs = document.querySelectorAll('[id$="Content"]');
             contentDivs.forEach(div => {
                 div.innerHTML = '';
             });
+
+            /* Keep Save Image button visible even when disconnected */
+            const saveBtn = document.getElementById('saveImageBtn');
+            if (saveBtn) {
+                saveBtn.style.display = 'inline-block';
+            }
+
+            /* Show file drop/browse when disconnected */
+            const dropZone = document.getElementById('dropZone');
+            if (dropZone) dropZone.style.display = 'block';
+        }
+
+        /**
+         * Update memory map visualization
+         */
+        function updateMemoryMap() {
+            if (!parser) return;
+
+            const container = document.getElementById('memoryMapContainer');
+            const map = document.getElementById('memoryMap');
+
+            if (!container || !map) return;
+
+            /* Show the map */
+            container.style.display = 'block';
+
+            /* Clear existing segments */
+            map.innerHTML = '';
+
+            let totalSize = 0;
+            let readBuffer = [];
+            let writeBuffer = [];
+
+            /* Get data based on mode */
+            if (parser.sparseImage) {
+                /* Device mode or sparse image */
+                totalSize = parser.sparseImage.size;
+                readBuffer = parser.sparseImage.readBuffer || [];
+                writeBuffer = parser.sparseImage.writeBuffer || [];
+            } else {
+                container.style.display = 'none';
+                return;
+            }
+
+            /* Create a coverage map */
+            const segmentSize = Math.max(1, Math.floor(totalSize / 1000)); /* 1000 segments max */
+            const segments = [];
+
+            for (let i = 0; i < totalSize; i += segmentSize) {
+                const end = Math.min(i + segmentSize, totalSize);
+                segments.push({ start: i, end: end, type: 'unread' });
+            }
+
+            /* Mark cached regions (readBuffer) */
+            for (const read of readBuffer) {
+                const readStart = read.address;
+                const readEnd = read.address + read.data.length;
+
+                for (let seg of segments) {
+                    if (seg.end <= readStart || seg.start >= readEnd) continue;
+                    seg.type = 'cached';
+                }
+            }
+
+            /* Mark modified regions (writeBuffer) - these override cached */
+            for (const write of writeBuffer) {
+                const writeStart = write.address;
+                const writeEnd = write.address + write.data.length;
+
+                for (let seg of segments) {
+                    if (seg.end <= writeStart || seg.start >= writeEnd) continue;
+                    seg.type = 'modified';
+                }
+            }
+
+            /* Render segments - merge adjacent segments of same type to avoid gaps */
+            const mergedSegments = [];
+            for (let i = 0; i < segments.length; i++) {
+                const seg = segments[i];
+                if (mergedSegments.length > 0 && mergedSegments[mergedSegments.length - 1].type === seg.type) {
+                    /* Extend previous segment */
+                    mergedSegments[mergedSegments.length - 1].end = seg.end;
+                } else {
+                    /* New segment */
+                    mergedSegments.push({ start: seg.start, end: seg.end, type: seg.type });
+                }
+            }
+
+            for (const seg of mergedSegments) {
+                const div = document.createElement('div');
+                div.className = `memory-segment ${seg.type}`;
+                const leftPercent = (seg.start / totalSize) * 100;
+                const widthPercent = ((seg.end - seg.start) / totalSize) * 100;
+                div.style.left = leftPercent + '%';
+                div.style.width = widthPercent + '%';
+                div.title = `0x${seg.start.toString(16).toUpperCase()} - 0x${seg.end.toString(16).toUpperCase()} (${seg.type})`;
+                map.appendChild(div);
+            }
+
+            /* Add click handler to show segments in console */
+            map.onclick = () => {
+                console.log('=== Memory Map Segments ===');
+                console.log(`Total Size: 0x${totalSize.toString(16).toUpperCase()} (${formatBytes(totalSize)})`);
+                console.log('\nRead Buffer Segments:');
+                readBuffer.forEach((seg, idx) => {
+                    console.log(`  [${idx}] 0x${seg.address.toString(16).toUpperCase()} - 0x${(seg.address + seg.data.length).toString(16).toUpperCase()} (${formatBytes(seg.data.length)})`);
+                });
+                console.log('\nWrite Buffer Segments:');
+                writeBuffer.forEach((seg, idx) => {
+                    console.log(`  [${idx}] 0x${seg.address.toString(16).toUpperCase()} - 0x${(seg.address + seg.data.length).toString(16).toUpperCase()} (${formatBytes(seg.data.length)})`);
+                });
+                console.log('\nMerged Display Segments:');
+                mergedSegments.forEach((seg, idx) => {
+                    console.log(`  [${idx}] 0x${seg.start.toString(16).toUpperCase()} - 0x${seg.end.toString(16).toUpperCase()} (${seg.type})`);
+                });
+            };
         }
 
         function setToggleButtonState(connected) {
@@ -951,11 +1320,13 @@
             const btnSync = document.getElementById('targetSyncBtn');
             const btnStub = document.getElementById('targetStubBtn');
             const btnFetch = document.getElementById('targetFetchBtn');
+            const btnDisconnect = document.getElementById('deviceDisconnectBtn');
 
             if (btnReset) btnReset.disabled = !connected;
             if (btnSync) btnSync.disabled = !connected;
             if (btnStub) btnStub.disabled = !synced || stub;
             if (btnFetch) btnFetch.disabled = !synced;
+            if (btnDisconnect) btnDisconnect.style.display = connected ? 'block' : 'none';
         }
 
         function setDeviceStatus(text, cls = 'success') {
@@ -965,6 +1336,16 @@
                 el.className = cls;
                 el.textContent = text;
                 container.style.display = 'block';
+                container.style.opacity = '1';
+                container.style.transition = 'opacity 0.5s ease-out';
+
+                /* Fade out after 5 seconds */
+                setTimeout(() => {
+                    container.style.opacity = '0';
+                    setTimeout(() => {
+                        container.style.display = 'none';
+                    }, 500);
+                }, 5000);
             } else {
                 console.log(`[${cls}] ${text}`);
             }
@@ -1006,9 +1387,9 @@
             const kbRead = Math.round(bytesRead / 1024);
             const kbTotal = Math.round(totalBytes / 1024);
             const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesRead / totalBytes) * 100)) : 0;
-            
+
             let text = `Reading 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbRead} / ${kbTotal} KB)`;
-            
+
             /* Calculate speed if operation has been running > 1 second */
             if (readStartTime && !readSlowWarningShown) {
                 const elapsedMs = Date.now() - readStartTime;
@@ -1016,7 +1397,7 @@
                     const speedBytesPerSec = (bytesRead / elapsedMs) * 1000;
                     const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
                     text += ` – ${speedKiBPerSec} KiB/s`;
-                    
+
                     /* Show warning if speed is too slow */
                     if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
                         text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
@@ -1024,7 +1405,7 @@
                     }
                 }
             }
-            
+
             label.textContent = text;
         }
 
@@ -1060,9 +1441,9 @@
             const kbWritten = Math.round(bytesWritten / 1024);
             const kbTotal = Math.round(totalBytes / 1024);
             const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesWritten / totalBytes) * 100)) : 0;
-            
+
             let text = `Writing 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbWritten} / ${kbTotal} KB)`;
-            
+
             /* Calculate speed if operation has been running > 1 second */
             if (writeStartTime && !writeSlowWarningShown) {
                 const elapsedMs = Date.now() - writeStartTime;
@@ -1070,7 +1451,7 @@
                     const speedBytesPerSec = (bytesWritten / elapsedMs) * 1000;
                     const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
                     text += ` – ${speedKiBPerSec} KiB/s`;
-                    
+
                     /* Show warning if speed is too slow */
                     if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
                         text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
@@ -1078,7 +1459,7 @@
                     }
                 }
             }
-            
+
             label.textContent = text;
         }
 
@@ -1208,21 +1589,104 @@
         });
 
         async function handleFile(file) {
-            await disconnectDeviceSession();
             currentFile = file;
-            const reader = new FileReader();
 
-            reader.onload = (e) => {
-                try {
-                    parser = new ESP32Parser(e.target.result);
-                    displayFileInfo(file);
-                    parseAndDisplay(true).catch(err => showError('Error parsing file: ' + err.message));
-                } catch (error) {
-                    showError('Error parsing file: ' + error.message);
-                }
-            };
+            /* If in device mode, compare and write changes to sparse image */
+            if (deviceMode && deviceSparse && parser) {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        showFetchOverlay('Comparing file with device memory...');
+                        const fileData = new Uint8Array(e.target.result);
+                        const fileSize = fileData.length;
 
-            reader.readAsArrayBuffer(file);
+                        /* Compare file data with cached read segments */
+                        let modifiedRegions = [];
+
+                        if (deviceSparse.readBuffer.length === 0) {
+                            /* No cached data - write entire file at offset 0 */
+                            modifiedRegions.push({ start: 0, end: fileSize });
+                        } else {
+                            /* Compare with cached regions */
+                            for (const segment of deviceSparse.readBuffer) {
+                                const segStart = segment.address;
+                                const segEnd = Math.min(segStart + segment.data.length, fileSize);
+
+                                if (segStart >= fileSize) continue;
+
+                                /* Compare this segment with file data */
+                                let regionStart = null;
+                                let regionEnd = null;
+
+                                for (let i = segStart; i < segEnd; i++) {
+                                    const deviceByte = segment.data[i - segStart];
+                                    const fileByte = fileData[i];
+
+                                    if (deviceByte !== fileByte) {
+                                        if (regionStart === null) {
+                                            regionStart = i;
+                                        }
+                                        regionEnd = i + 1;
+                                    } else {
+                                        if (regionStart !== null) {
+                                            modifiedRegions.push({ start: regionStart, end: regionEnd });
+                                            regionStart = null;
+                                            regionEnd = null;
+                                        }
+                                    }
+                                }
+
+                                /* Close any open region */
+                                if (regionStart !== null) {
+                                    modifiedRegions.push({ start: regionStart, end: regionEnd });
+                                }
+                            }
+                        }
+
+                        /* Write modified regions to sparse image */
+                        let totalModified = 0;
+                        for (const region of modifiedRegions) {
+                            const length = region.end - region.start;
+                            const data = fileData.slice(region.start, region.end);
+                            deviceSparse.write(region.start, data);
+                            totalModified += length;
+                        }
+
+                        hideFetchOverlay();
+
+                        if (totalModified > 0) {
+                            setDeviceStatus(`File loaded. ${modifiedRegions.length} modified region(s) detected (${formatBytes(totalModified)} changed). Use "Write to Device" to commit.`, 'success');
+                        } else {
+                            setDeviceStatus('File loaded. No differences detected with cached device memory.', 'success');
+                        }
+
+                        /* Update memory map and re-parse */
+                        updateMemoryMap();
+                        await parseAndDisplay(true);
+                    } catch (error) {
+                        hideFetchOverlay();
+                        showError('Error comparing file: ' + error.message);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            } else {
+                /* Normal file mode - disconnect device and load file via SparseImage */
+                await disconnectDeviceSession();
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const sparse = SparseImage.fromBuffer(e.target.result);
+                        parser = new ESP32Parser(sparse);
+                        displayFileInfo(file);
+                        parseAndDisplay(true).then(() => {
+                            updateMemoryMap();
+                        }).catch(err => showError('Error parsing file: ' + err.message));
+                    } catch (error) {
+                        showError('Error parsing file: ' + error.message);
+                    }
+                };
+                reader.readAsArrayBuffer(file);
+            }
         }
 
         function displayFileInfo(file) {
@@ -1281,11 +1745,17 @@
             }
 
             fileInfo.classList.add('visible');
-            
+
             // Show/hide Write to Device button based on device mode
             const writeBtn = document.getElementById('writeToDeviceBtn');
             if (writeBtn) {
                 writeBtn.style.display = isDevice ? 'inline-block' : 'none';
+            }
+
+            // Always show Save Image button for both file and device modes
+            const saveBtn = document.getElementById('saveImageBtn');
+            if (saveBtn) {
+                saveBtn.style.display = 'inline-block';
             }
         }
 
@@ -1321,15 +1791,14 @@
 
         async function parseAndDisplay(focusBootloader = false) {
             // Parse bootloader first to detect partition table offset
-            const bootImage = await parseBootloader();
-            console.log("Bootloader parsed:", bootImage);
+            bootloaderInfo = await parseBootloader();
+            console.log("Bootloader parsed:", bootloaderInfo);
 
             // Auto-detect partition table offset based on bootloader end/FF padding
-            const detectedOffset = await parser.detectPartitionTableOffset(bootImage);
+            const detectedOffset = await parser.detectPartitionTableOffset(bootloaderInfo);
             console.log("Detected partition table offset: ", detectedOffset ? `0x${detectedOffset.toString(16)}` : 'not found');
-            const partOffset = detectedOffset || 0x9000;
 
-            await parser.parsePartitions(partOffset);
+            detectedOffset && await parser.parsePartitions(detectedOffset);
 
             // Compute SHA-1 only in file mode to avoid heavy device reads
             if (!deviceMode) {
@@ -1469,6 +1938,14 @@
                         html += '</tr>';
                     });
                     html += '</tbody></table>';
+
+                    html += '<h4 style="margin-top: 15px;">Actions</h4>';
+                    html += '<div style="display: flex; gap: 10px; flex-wrap: wrap;">';
+                    html += '<button class="hex-btn" onclick="viewPartitionHex(-1)">Hex View</button>';
+                    html += '<button class="download-btn" onclick="downloadPartition(-1)">Download</button>';
+                    html += '<button class="replace-btn" onclick="replaceBootloader()">Replace</button>';
+                    html += '<button class="replace-btn" onclick="clearBootloader()">Clear</button>';
+                    html += '</div>';
                 }
 
                 contentDiv.innerHTML = html;
@@ -1492,8 +1969,29 @@
                         break;
                     }
                 }
-                
+
+                image.bootloaderStart = partition.offset;
                 image.bootloaderEnd = bootloaderEnd;
+
+                /* Auto-apply detected flash size in device mode */
+                if (deviceMode && image.spiSizeName) {
+                    /* Extract flash size from spiSizeName (e.g., "2 MiB", "4 MiB") */
+                    const flashSizeMatch = image.spiSizeName.match(/(\d+)\s*([KMG]i?B)/i);
+                    if (flashSizeMatch) {
+                        let sizeBytes = parseInt(flashSizeMatch[1], 10);
+                        const unit = flashSizeMatch[2].toUpperCase();
+
+                        if (unit === 'KIB' || unit === 'KB') sizeBytes *= 1024;
+                        else if (unit === 'MIB' || unit === 'MB') sizeBytes *= 1024 * 1024;
+                        else if (unit === 'GIB' || unit === 'GB') sizeBytes *= 1024 * 1024 * 1024;
+
+                        if (sizeBytes > 0 && sizeBytes !== deviceFlashSizeBytes) {
+                            console.log(`Detected flash size from bootloader: ${image.spiSizeName} (${sizeBytes} bytes)`);
+                            await applyDeviceFlashSize(sizeBytes);
+                        }
+                    }
+                }
+
                 return image;
             } catch (error) {
                 console.error('Bootloader parsing error:', error);
@@ -1587,6 +2085,49 @@
             input.click();
         }
 
+        function replaceBootloader() {
+            replaceTargetPartition = -1;
+            const input = document.getElementById('partitionFileInput');
+            if (!input) {
+                alert('Partition file input not found.');
+                return;
+            }
+            input.value = '';
+            input.click();
+        }
+
+        async function clearBootloader() {
+            if (!parser || (!parser.buffer && !parser.sparseImage)) {
+                alert('No firmware file loaded.');
+                return;
+            }
+
+            try {
+                const start = 0;
+                const length = 0x10000; /* 64KB bootloader max */
+                const end = start + length;
+
+                const totalSize = parser.sparseImage ? parser.sparseImage.size : parser.buffer.length;
+                if (end > totalSize) {
+                    alert('Bootloader region exceeds firmware image size.');
+                    return;
+                }
+
+                /* Fill bootloader with 0xFF */
+                parser.sparseImage.fill(0xFF, start, end);
+
+                if (!deviceMode) {
+                    /* Recompute bootloader in file mode */
+                    await parseBootloader();
+                }
+
+                updateMemoryMap();
+                alert('Bootloader cleared (filled with 0xFF).');
+            } catch (err) {
+                alert('Error clearing bootloader: ' + err.message);
+            }
+        }
+
         async function clearPartition(idx) {
             if (!parser || (!parser.buffer && !parser.sparseImage)) {
                 alert('No firmware file loaded.');
@@ -1610,16 +2151,7 @@
                 }
 
                 // Fill partition with 0xFF
-                if (parser.sparseImage) {
-                    // For sparse image (device mode), stage changes in memory only
-                    const clearData = new Uint8Array(part.length);
-                    clearData.fill(0xFF);
-                    parser.sparseImage.write(start, clearData);
-                    // Note: changes staged but not committed to device until "Write to Device" is clicked
-                } else {
-                    // For regular buffer (file mode)
-                    parser.buffer.fill(0xFF, start, end);
-                }
+                parser.sparseImage.fill(0xFF, start, end);
 
                 if (!deviceMode) {
                     part.sha1 = await parser.computePartitionSHA1(part);
@@ -1637,7 +2169,7 @@
                     updateHexView();
                 }
 
-                alert(`Partition "${part.label}" cleared (filled with 0xFF).`);
+                updateMemoryMap();
             } catch (err) {
                 alert('Error clearing partition: ' + err.message);
             }
@@ -1649,10 +2181,16 @@
                 return;
             }
 
-            const part = parser.partitions[idx];
-            if (!part) {
-                alert('Partition not found.');
-                return;
+            /* Handle bootloader (-1) and regular partitions */
+            let part;
+            if (idx === -1) {
+                part = { label: 'bootloader', offset: 0, length: 0x10000 };
+            } else {
+                part = parser.partitions[idx];
+                if (!part) {
+                    alert('Partition not found.');
+                    return;
+                }
             }
 
             const reader = new FileReader();
@@ -1667,31 +2205,25 @@
                     const start = part.offset;
                     const end = start + part.length;
 
-                    const totalSize = parser.sparseImage ? parser.sparseImage.size : parser.buffer.length;
+                    const totalSize = parser.sparseImage.size;
                     if (end > totalSize) {
                         alert('Partition range exceeds firmware image size.');
                         return;
                     }
 
-                    // Fill partition with 0xFF, then write data
-                    if (parser.sparseImage) {
-                        // For sparse image (device mode), stage changes in memory only
-                        const paddedData = new Uint8Array(part.length);
-                        paddedData.fill(0xFF);
-                        paddedData.set(data, 0);
-                        parser.sparseImage.write(start, paddedData);
-                        // Note: changes staged but not committed to device until "Write to Device" is clicked
-                    } else {
-                        // For regular buffer (file mode)
-                        parser.buffer.fill(0xFF, start, end);
-                        parser.buffer.set(data, start);
-                    }
+                    parser.sparseImage.fill(0xFF, start, end);
+                    parser.sparseImage.write(start, data);
 
-                    if (!deviceMode) {
+                    if (!deviceMode && idx !== -1) {
                         part.sha1 = await parser.computePartitionSHA1(part);
                     }
 
-                    await displayPartitions();
+                    /* Refresh bootloader or partitions */
+                    if (idx === -1) {
+                        await parseBootloader();
+                    } else {
+                        await displayPartitions();
+                    }
 
                     const parsedContent = document.getElementById('parsed-content-' + idx);
                     if (parsedContent) {
@@ -1702,6 +2234,8 @@
                     if (rawTab && rawTab.textContent.toLowerCase().includes('raw')) {
                         updateHexView();
                     }
+
+                    updateMemoryMap();
                 } catch (err) {
                     alert('Error replacing partition: ' + err.message);
                 } finally {
@@ -1768,13 +2302,7 @@
             try {
                 setDeviceStatus('Writing modified segments to device...', 'loading');
                 updateWriteOverlayProgress(0, 0, totalBytes);
-
-                // Flush writes all segments in writeBuffer to device via writeDataCallback
                 await parser.sparseImage.flush();
-
-                setDeviceStatus('Firmware written successfully. Resetting device...', 'success');
-                await deviceFlasher.hardReset(false);
-                setDeviceStatus('Device reset. Write complete.', 'success');
             } catch (error) {
                 console.error('Write error:', error);
                 setDeviceStatus('Write failed: ' + error.message, 'error');
@@ -1782,6 +2310,8 @@
             } finally {
                 hideWriteOverlay();
             }
+
+            await updateMemoryMap();
         }
 
         function togglePartitionDetails(idx) {
@@ -2211,7 +2741,14 @@
         }
 
         async function downloadPartition(idx) {
-            const partition = parser.partitions[idx];
+            /* Handle bootloader (-1) and regular partitions */
+            let partition;
+            if (idx === -1) {
+                partition = { label: 'bootloader', offset: bootloaderInfo.bootloaderStart, length: bootloaderInfo.bootloaderEnd - bootloaderInfo.bootloaderStart };
+            } else {
+                partition = parser.partitions[idx];
+            }
+
             setFetchOverlayReason(`Download ${partition.label}`);
             showFetchOverlay(`Downloading ${partition.label}...`);
             try {
@@ -2234,7 +2771,13 @@
         }
 
         async function viewPartitionHex(idx) {
-            const partition = parser.partitions[idx];
+            /* Handle bootloader (-1) and regular partitions */
+            let partition;
+            if (idx === -1) {
+                partition = { label: 'bootloader', offset: 0, length: 0x10000 };
+            } else {
+                partition = parser.partitions[idx];
+            }
             document.getElementById('hexOffset').value = '0x' + partition.offset.toString(16).toUpperCase();
             document.getElementById('hexLength').value = '0x' + Math.min(partition.length, 0x1000).toString(16).toUpperCase();
             switchTab('raw');

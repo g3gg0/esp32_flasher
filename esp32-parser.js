@@ -41,10 +41,12 @@
  *   - Allows batching writes and deferred commit operations
  */
 class SparseImage {
-    constructor(size, readDataCallback = null, writeDataCallback = null) {
+    constructor(size, readDataCallback = null, writeDataCallback = null, flushPrepareCallback = null, sectorSize = 0x100) {
         this.size = size;
         this.readDataCallback = readDataCallback;
         this.writeDataCallback = writeDataCallback;
+        this.flushPrepareCallback = flushPrepareCallback;
+        this.sectorSize = sectorSize || 0x100;
         this.readBuffer = []; // Array of {address, data} structures
         this.writeBuffer = []; // Array of {address, data} structures
         this.length = size;
@@ -55,9 +57,9 @@ class SparseImage {
     /**
      * Initialize from an existing ArrayBuffer/Uint8Array
      */
-    static fromBuffer(arrayBuffer) {
+    static fromBuffer(arrayBuffer, sectorSize = 0x100) {
         const buffer = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
-        const sparseImage = new SparseImage(buffer.length, null, null);
+        const sparseImage = new SparseImage(buffer.length, null, null, null, sectorSize);
         sparseImage.readBuffer.push({
             address: 0,
             data: buffer
@@ -197,6 +199,66 @@ class SparseImage {
         this.writeBuffer = this._mergeSegmentsGeneric(this.writeBuffer);
     }
 
+    _effectiveByte(pos) {
+        const w = this._findSegment(pos, this.writeBuffer);
+        if (w) return w.data[pos - w.address] & 0xFF;
+        const r = this._findSegment(pos, this.readBuffer);
+        if (r) return r.data[pos - r.address] & 0xFF;
+        return 0xFF;
+    }
+
+    _materializeRange(start, end) {
+        const len = end - start;
+        const out = new Uint8Array(len);
+        out.fill(0xFF);
+
+        for (const seg of this.readBuffer) {
+            const s0 = seg.address;
+            const s1 = seg.address + seg.data.length;
+            const o0 = Math.max(start, s0);
+            const o1 = Math.min(end, s1);
+            if (o0 < o1) {
+                const dstOff = o0 - start;
+                const srcOff = o0 - s0;
+                out.set(seg.data.subarray(srcOff, srcOff + (o1 - o0)), dstOff);
+            }
+        }
+
+        for (const seg of this.writeBuffer) {
+            const s0 = seg.address;
+            const s1 = seg.address + seg.data.length;
+            const o0 = Math.max(start, s0);
+            const o1 = Math.min(end, s1);
+            if (o0 < o1) {
+                const dstOff = o0 - start;
+                const srcOff = o0 - s0;
+                out.set(seg.data.subarray(srcOff, srcOff + (o1 - o0)), dstOff);
+            }
+        }
+
+        return out;
+    }
+
+    _materializeReadRange(start, end) {
+        const len = end - start;
+        const out = new Uint8Array(len);
+        out.fill(0xFF);
+
+        for (const seg of this.readBuffer) {
+            const s0 = seg.address;
+            const s1 = seg.address + seg.data.length;
+            const o0 = Math.max(start, s0);
+            const o1 = Math.min(end, s1);
+            if (o0 < o1) {
+                const dstOff = o0 - start;
+                const srcOff = o0 - s0;
+                out.set(seg.data.subarray(srcOff, srcOff + (o1 - o0)), dstOff);
+            }
+        }
+
+        return out;
+    }
+
     _addSegment(list, address, data) {
         list.push({ address, data });
         return this._mergeSegmentsGeneric(list);
@@ -207,7 +269,7 @@ class SparseImage {
      */
     async _ensureData(address, size) {
         /* Acquire lock to ensure only one _ensureData executes at a time */
-        return this._ensureDataLock = this._ensureDataLock.then(() => 
+        return this._ensureDataLock = this._ensureDataLock.then(() =>
             this._ensureDataUnlocked(address, size)
         );
     }
@@ -278,7 +340,173 @@ class SparseImage {
             throw new RangeError(`Address ${address} out of bounds [0, ${this.size})`);
         }
         const normalized = data instanceof Uint8Array ? data : new Uint8Array(data);
-        this.writeBuffer = this._addSegment(this.writeBuffer, address, normalized);
+        const start = address;
+        const end = Math.min(address + normalized.length, this.size);
+        if (end <= start) return;
+
+        /* Remove overlaps from existing write buffer, but preserve identical overlapping slices that already differ from read */
+        const newWrite = [];
+        for (const seg of this.writeBuffer) {
+            const segStart = seg.address;
+            const segEnd = seg.address + seg.data.length;
+            if (segEnd <= start || segStart >= end) {
+                newWrite.push(seg);
+                continue;
+            }
+
+            if (segStart < start) {
+                const leftLen = start - segStart;
+                const leftData = seg.data.slice(0, leftLen);
+                newWrite.push({ address: segStart, data: leftData });
+            }
+
+            if (segEnd > end) {
+                const rightLen = segEnd - end;
+                const rightData = seg.data.slice(seg.data.length - rightLen);
+                newWrite.push({ address: end, data: rightData });
+            }
+
+            const overlapStart = Math.max(segStart, start);
+            const overlapEnd = Math.min(segEnd, end);
+            if (overlapEnd > overlapStart) {
+                const existingSlice = seg.data.slice(overlapStart - segStart, overlapEnd - segStart);
+                const desiredSlice = normalized.slice(overlapStart - start, overlapEnd - start);
+
+                let identical = existingSlice.length === desiredSlice.length;
+                if (identical) {
+                    for (let i = 0; i < existingSlice.length; i++) {
+                        if (existingSlice[i] !== desiredSlice[i]) {
+                            identical = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (identical) {
+                    const baseline = this._materializeReadRange(overlapStart, overlapEnd);
+                    let differsFromRead = false;
+                    for (let i = 0; i < existingSlice.length; i++) {
+                        if (existingSlice[i] !== baseline[i]) {
+                            differsFromRead = true;
+                            break;
+                        }
+                    }
+                    if (differsFromRead) {
+                        newWrite.push({ address: overlapStart, data: existingSlice });
+                    }
+                }
+            }
+        }
+
+        /* Boundary helper across read and existing write buffers */
+        const nextBoundary = (pos) => {
+            let nb = end;
+            for (const s of this.readBuffer) {
+                if (s.address > pos && s.address < nb) nb = s.address;
+                const sEnd = s.address + s.data.length;
+                if (sEnd > pos && sEnd < nb) nb = sEnd;
+            }
+            for (const s of this.writeBuffer) {
+                if (s.address > pos && s.address < nb) nb = s.address;
+                const sEnd = s.address + s.data.length;
+                if (sEnd > pos && sEnd < nb) nb = sEnd;
+            }
+            return nb;
+        };
+
+        const sectorSize = this.sectorSize || 0x100;
+        const sectorMap = new Map(); /* address -> Uint8Array */
+
+        let cursor = start;
+        while (cursor < end) {
+            const boundary = nextBoundary(cursor);
+
+            let subPos = cursor;
+            while (subPos < boundary) {
+                while (subPos < boundary) {
+                    const desired = normalized[subPos - start] & 0xFF;
+                    const isCovered = this._findSegment(subPos, this.writeBuffer) || this._findSegment(subPos, this.readBuffer);
+                    if (isCovered) {
+                        const eff = this._effectiveByte(subPos);
+                        if (desired !== eff) break;
+                    } else {
+                        /* Uncached - always write */
+                        break;
+                    }
+                    subPos++;
+                }
+                if (subPos >= boundary) break;
+
+                const runStart = subPos;
+                while (subPos < boundary) {
+                    const desired = normalized[subPos - start] & 0xFF;
+                    const isCovered = this._findSegment(subPos, this.writeBuffer) || this._findSegment(subPos, this.readBuffer);
+                    if (isCovered) {
+                        const eff = this._effectiveByte(subPos);
+                        if (desired === eff) break;
+                    }
+                    /* Uncached or differs - continue run */
+                    subPos++;
+                }
+                const runEnd = subPos;
+
+                let pos = runStart;
+                while (pos < runEnd) {
+                    const sectorStart = Math.floor(pos / sectorSize) * sectorSize;
+                    const sectorEnd = Math.min(sectorStart + sectorSize, this.size);
+                    const limit = Math.min(runEnd, sectorEnd);
+                    const covered = this._isRangeCoveredAny(sectorStart, sectorEnd - sectorStart);
+
+                    if (covered) {
+                        let seg = sectorMap.get(sectorStart);
+                        if (!seg) {
+                            seg = this._materializeRange(sectorStart, sectorEnd);
+                            sectorMap.set(sectorStart, seg);
+                        }
+                        for (let p = pos; p < limit; p++) {
+                            seg[p - sectorStart] = normalized[p - start];
+                        }
+                    } else {
+                        const arr = normalized.slice(pos - start, limit - start);
+                        newWrite.push({ address: pos, data: arr });
+                    }
+                    pos = limit;
+                }
+            }
+
+            cursor = boundary;
+        }
+
+        for (const [addr, dataBuf] of sectorMap.entries()) {
+            const sectorEnd = Math.min(addr + sectorSize, this.size);
+            const baseline = this._materializeReadRange(addr, sectorEnd);
+            let same = true;
+            for (let i = 0; i < dataBuf.length; i++) {
+                if (dataBuf[i] !== baseline[i]) {
+                    same = false;
+                    break;
+                }
+            }
+            if (!same) {
+                newWrite.push({ address: addr, data: dataBuf });
+            }
+        }
+
+        this.writeBuffer = this._mergeSegmentsGeneric(newWrite);
+    }
+
+    fill(value, start = 0, end = this.size) {
+        if (start < 0 || start >= this.size) {
+            throw new RangeError(`Address ${start} out of bounds [0, ${this.size})`);
+        }
+        end = Math.min(end, this.size);
+        if (end <= start) return;
+
+        const desired = value & 0xFF;
+        const len = end - start;
+        const buf = new Uint8Array(len);
+        buf.fill(desired);
+        this.write(start, buf);
     }
 
     async flush() {
@@ -286,6 +514,11 @@ class SparseImage {
 
         // Consolidate write segments first (touching/overlapping writes coalesce)
         this._mergeWriteSegments();
+
+        /* Call prepare callback if provided */
+        if (this.flushPrepareCallback) {
+            await this.flushPrepareCallback(this);
+        }
 
         // Flush to backing store if provided
         if (this.writeDataCallback) {
@@ -482,7 +715,7 @@ class SparseImage {
         end = end === undefined ? this.size : end;
 
         const size = end - start;
-        
+
         // Ensure all data is loaded first
         await this._ensureData(start, size);
 
@@ -522,7 +755,7 @@ class SparseImage {
     getStats() {
         let totalCached = 0;
         const segments = [];
-        
+
         for (const segment of this.readBuffer) {
             totalCached += segment.data.length;
             segments.push({
@@ -597,7 +830,7 @@ class SparseImageDataView {
         const b1 = this.sparseImage._get(offset + 1);
         const b2 = this.sparseImage._get(offset + 2);
         const b3 = this.sparseImage._get(offset + 3);
-        return (littleEndian 
+        return (littleEndian
             ? (b3 << 24) | (b2 << 16) | (b1 << 8) | b0
             : (b0 << 24) | (b1 << 16) | (b2 << 8) | b3) >>> 0; /* Force unsigned 32-bit */
     }
@@ -659,7 +892,7 @@ class ESP32Parser {
         } else {
             throw new Error('Invalid constructor arguments for ESP32Parser. Provide Uint8Array/ArrayBuffer, SparseImage, or size with readDataCallback.');
         }
-        
+
         this.partitions = [];
         this.nvsData = [];
     }
@@ -785,16 +1018,16 @@ class ESP32Parser {
 
         console.log(`Detecting partition table offset starting from 0x${start.toString(16)}`);
         console.log(`Buffer length: 0x${len.toString(16)}, search limit: 0x${searchLimit.toString(16)}`);
- 
+
         while (!bestCandidate && ptr < searchLimit) {
             // Skip 0xFF bytes and check for 4K boundary alignment
             if ((await this.view.getUint8(ptr)) !== 0xFF && (ptr % sector === 0)) {
                 // Try to parse partition entries at this offset
                 const validCount = await this.validatePartitionTable(ptr);
-                
+
                 if (validCount > 0) {
                     console.log(`Found valid partition table at 0x${ptr.toString(16)} with ${validCount} entries`);
-                    
+
                     // Keep track of best candidate (most partitions)
                     if (validCount > bestPartitionCount) {
                         bestCandidate = ptr;
@@ -827,7 +1060,7 @@ class ESP32Parser {
             }
 
             const magic = await this.view.getUint16(currentOffset, true);
-            
+
             // End of partition table
             if (magic !== 0x50AA) {
                 break;
@@ -1177,10 +1410,10 @@ class ESP32Parser {
                         for (let i = 0; i < strSize; i++) {
                             strData[i] = await this.view.getUint8(offset + 32 + i);
                         }
-                        
+
                         // Check if data is all 0xFF (erased)
                         const allErased = strData.every(b => b === 0xFF);
-                        
+
                         // Convert to string
                         let strValue = '';
                         for (let i = 0; i < strData.length; i++) {
@@ -1189,7 +1422,7 @@ class ESP32Parser {
                                 strValue += String.fromCharCode(strData[i]);
                             }
                         }
-                        
+
                         item.value = allErased ? '<erased>' : strValue;
                         item.rawValue = strData;
                         const dataCrcCalc = ESP32Parser.crc32(strData, 0, strSize);
@@ -1220,10 +1453,10 @@ class ESP32Parser {
                         for (let i = 0; i < blobSize; i++) {
                             blobData[i] = await this.view.getUint8(offset + 32 + i);
                         }
-                        
+
                         // Check if data is all 0xFF (erased)
                         const allErased = blobData.every(b => b === 0xFF);
-                        
+
                         item.value = allErased ? '<erased>' : ESP32Parser.bytesToHex(blobData, ' ');
                         item.rawValue = blobData;
                         const dataCrcCalc = ESP32Parser.crc32(blobData, 0, blobSize);

@@ -368,6 +368,20 @@ class ESPFlasher {
         }
 
         var pkt = this.parsePacket(packet.payload);
+        
+        /* Log command execution with parameters */
+        const commandNames = {
+            0x02: 'FLASH_BEGIN', 0x03: 'FLASH_DATA', 0x04: 'FLASH_END',
+            0x05: 'MEM_BEGIN', 0x06: 'MEM_END', 0x07: 'MEM_DATA',
+            0x08: 'SYNC', 0x09: 'WRITE_REG', 0x0a: 'READ_REG',
+            0x0b: 'SPI_SET_PARAMS', 0x0d: 'SPI_ATTACH', 0x0f: 'CHANGE_BAUDRATE',
+            0x10: 'FLASH_DEFL_BEGIN', 0x11: 'FLASH_DEFL_DATA', 0x12: 'FLASH_DEFL_END',
+            0x13: 'SPI_FLASH_MD5', 0x14: 'GET_SECURITY_INFO',
+            0xd0: 'ERASE_FLASH', 0xd1: 'ERASE_REGION', 0xd2: 'READ_FLASH', 0xd3: 'RUN_USER_CODE'
+        };
+        const cmdName = commandNames[packet.command] || `0x${packet.command.toString(16)}`;
+        console.log(`%c[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'color: #4CAF50; font-weight: bold', 'params:', pkt);
+        
         this.dumpPacket(pkt);
 
         const responsePromise = new Promise((resolve, reject) => {
@@ -1006,7 +1020,7 @@ class ESPFlasher {
                 const md5String = decoder.decode(rawData);
                 resolve(md5String.trim());
             },
-            length / 500 // Timeout based on length
+            1000 + length / 500 // Timeout based on length
         );
     }
 
