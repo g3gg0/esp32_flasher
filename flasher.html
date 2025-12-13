@@ -852,7 +852,7 @@
                 const progressBar = document.getElementById('flashProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
 
-                await flasher.writeFlashSafe(address, data, (offset, total, status) => {
+                await flasher.writeFlash(address, data, (offset, total, status) => {
                     const percent = Math.round((offset / total) * 100);
                     progressBar.style.width = percent + '%';
                     progressBar.textContent = percent + `% (${status})`;
@@ -909,8 +909,8 @@
                 const progressBar = document.getElementById('flashProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
 
-                // Use readFlashSafe which handles MD5 verification
-                const allData = await flasher.readFlashSafe(address, totalSize, (offset, size, status) => {
+                // Use readFlash which handles MD5 verification
+                const allData = await flasher.readFlash(address, totalSize, (offset, size, status) => {
                     // Update progress
                     const percent = Math.round((offset / size) * 100);
                     progressBar.style.width = percent + '%';
