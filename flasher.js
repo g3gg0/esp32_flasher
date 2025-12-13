@@ -36,6 +36,47 @@ class SlipLayer {
     constructor() {
         this.buffer = [];
         this.escaping = false;
+        this.verbose = true;
+    }
+
+    /**
+     * Log SLIP layer data with color coding
+     * @param {Uint8Array} data - Data to log
+     * @param {string} type - 'ENCODE' or 'DECODE'
+     * @param {string} label - Description label
+     */
+    logSlipData(data, type, label) {
+        if (!this.verbose) return;
+        
+        const isEncode = type === 'ENCODE';
+        const color = isEncode ? 'color: #FFC107; font-weight: bold' : 'color: #9C27B0; font-weight: bold';
+        const bgColor = isEncode ? 'background: #F57F17; color: #000' : 'background: #6A1B9A; color: #fff';
+        const symbol = isEncode ? '▶' : '◀';
+        
+        const maxBytes = 128;
+        const bytesToShow = Math.min(data.length, maxBytes);
+        const truncated = data.length > maxBytes;
+        
+        let hexStr = '';
+        let asciiStr = '';
+        let lines = [];
+        
+        for (let i = 0; i < bytesToShow; i++) {
+            const byte = data[i];
+            hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
+            asciiStr += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+            
+            if ((i + 1) % 16 === 0 || i === bytesToShow - 1) {
+                const hexPadding = ' '.repeat(Math.max(0, (16 - ((i % 16) + 1)) * 3));
+                lines.push(`    ${hexStr}${hexPadding} | ${asciiStr}`);
+                hexStr = '';
+                asciiStr = '';
+            }
+        }
+        
+        const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
+        console.log(`%c${symbol} SLIP ${type}%c ${label} [${data.length} bytes]${truncMsg}`, bgColor, color);
+        lines.forEach(line => console.log('%c' + line, 'font-family: monospace; font-size: 11px; color: #888'));
     }
 
     /**
@@ -50,6 +91,8 @@ class SlipLayer {
         const SLIP_ESC_END = 0xDC;
         const SLIP_ESC_ESC = 0xDD;
 
+        this.logSlipData(packet, 'ENCODE', 'Payload before framing');
+
         let slipFrame = [SLIP_END];
 
         for (let byte of packet) {
@@ -63,7 +106,9 @@ class SlipLayer {
         }
 
         slipFrame.push(SLIP_END);
-        return new Uint8Array(slipFrame);
+        const result = new Uint8Array(slipFrame);
+        
+        return result;
     }
 
     /**
@@ -83,7 +128,8 @@ class SlipLayer {
         for (let byte of value) {
             if (byte === SLIP_END) {
                 if (this.buffer.length > 0) {
-                    outputPackets.push(new Uint8Array(this.buffer));
+                    const packet = new Uint8Array(this.buffer);
+                    outputPackets.push(packet);
                     this.buffer = [];
                 }
             } else if (this.escaping) {
@@ -98,6 +144,12 @@ class SlipLayer {
             } else {
                 this.buffer.push(byte);
             }
+        }
+
+        // Log decoded packets
+        for (let i = 0; i < outputPackets.length; i++) {
+            const label = outputPackets.length > 1 ? `Decoded packet ${i + 1}/${outputPackets.length}` : 'Decoded packet';
+            this.logSlipData(outputPackets[i], 'DECODE', label);
         }
 
         return outputPackets;
@@ -137,6 +189,50 @@ class ESPFlasher {
 
         /* Command execution lock to prevent concurrent command execution */
         this._commandLock = Promise.resolve();
+        
+        /* Verbose serial logging */
+        this.verboseSerial = true;
+    }
+
+    /**
+     * Format bytes as colored hex dump for console
+     * @param {Uint8Array} data - Data to format
+     * @param {string} direction - 'TX' or 'RX'
+     * @param {number} maxBytes - Maximum bytes to show (default: 256)
+     */
+    logSerialData(data, direction, maxBytes = 256) {
+        if (!this.verboseSerial) return;
+        
+        const isTX = direction === 'TX';
+        const color = isTX ? 'color: #4CAF50; font-weight: bold' : 'color: #2196F3; font-weight: bold';
+        const bgColor = isTX ? 'background: #1b5e20; color: #fff' : 'background: #0d47a1; color: #fff';
+        const arrow = isTX ? '→' : '←';
+        
+        const bytesToShow = Math.min(data.length, maxBytes);
+        const truncated = data.length > maxBytes;
+        
+        // Format hex string with spaces every 2 bytes and newline every 16 bytes
+        let hexStr = '';
+        let asciiStr = '';
+        let lines = [];
+        
+        for (let i = 0; i < bytesToShow; i++) {
+            const byte = data[i];
+            hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
+            asciiStr += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+            
+            if ((i + 1) % 16 === 0 || i === bytesToShow - 1) {
+                // Pad hex string to align ASCII
+                const hexPadding = ' '.repeat(Math.max(0, (16 - ((i % 16) + 1)) * 3));
+                lines.push(`  ${hexStr}${hexPadding} | ${asciiStr}`);
+                hexStr = '';
+                asciiStr = '';
+            }
+        }
+        
+        const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
+        console.log(`%c${arrow} ${direction}%c [${data.length} bytes]${truncMsg}`, bgColor, color);
+        lines.forEach(line => console.log('%c' + line, 'font-family: monospace; font-size: 11px'));
     }
 
     /**
@@ -183,6 +279,7 @@ class ESPFlasher {
                         break;
                     }
                     if (value) {
+                        this.logSerialData(value, 'RX');
                         const packets = this.slipLayer.decode(value);
                         for (let packet of packets) {
                             await this.processPacket(packet);
@@ -302,6 +399,7 @@ class ESPFlasher {
         // Send the packet
         const writer = this.port.writable.getWriter();
         const slipFrame = this.slipLayer.encode(packet.payload);
+        this.logSerialData(slipFrame, 'TX');
         await writer.write(slipFrame);
         writer.releaseLock();
 
@@ -861,6 +959,7 @@ class ESPFlasher {
                         /* Encode and write response */
                         const slipFrame = this.slipLayer.encode(resp);
                         const writer = this.port.writable.getWriter();
+                        this.logSerialData(slipFrame, 'TX');
                         await writer.write(slipFrame);
                         writer.releaseLock();
                         packet++;
