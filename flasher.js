@@ -359,10 +359,17 @@ class ESPFlasher {
      * @throws {Error} On timeout or command failure
      */
     async executeCommand(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
-        /* Acquire command lock to ensure only one command executes at a time */
-        return this._commandLock = this._commandLock.then(() =>
-            this._executeCommandUnlocked(packet, callback, default_callback, timeout, hasTimeoutCbr)
+        /* Create command promise first */
+        const commandPromise = this._executeCommandUnlocked(packet, callback, default_callback, timeout, hasTimeoutCbr);
+        
+        /* Chain it to the lock, ensuring lock always continues even on error */
+        this._commandLock = this._commandLock.then(
+            () => commandPromise,
+            () => commandPromise  /* On previous error, still execute our command */
         );
+        
+        /* Return our command directly to propagate result/error to caller */
+        return commandPromise;
     }
 
     /**
@@ -392,8 +399,8 @@ class ESPFlasher {
 
         this.dumpPacket(pkt);
 
-        const responsePromise = new Promise((resolve, reject) => {
-
+        return new Promise(async (resolve, reject) => {
+            /* Register response handlers */
             this.responseHandlers.clear();
             this.responseHandlers.set(packet.command, async (response) => {
                 if (callback) {
@@ -407,7 +414,8 @@ class ESPFlasher {
                 });
             }
 
-            setTimeout(() => {
+            /* Set timeout handler */
+            const timeoutHandle = setTimeout(() => {
                 if (hasTimeoutCbr) {
                     if (hasTimeoutCbr()) {
                         reject(new Error(`Timeout in command ${packet.command}`));
@@ -416,16 +424,27 @@ class ESPFlasher {
                     reject(new Error(`Timeout after ${timeout} ms waiting for response to command ${packet.command}`));
                 }
             }, timeout);
+
+            /* Send the packet with proper error handling */
+            let writer = null;
+            try {
+                writer = this.port.writable.getWriter();
+                const slipFrame = this.slipLayer.encode(packet.payload);
+                this.logSerialData(slipFrame, 'TX');
+                await writer.write(slipFrame);
+            } catch (error) {
+                clearTimeout(timeoutHandle);
+                reject(error);
+            } finally {
+                if (writer) {
+                    try {
+                        writer.releaseLock();
+                    } catch (e) {
+                        /* Ignore release errors */
+                    }
+                }
+            }
         });
-
-        // Send the packet
-        const writer = this.port.writable.getWriter();
-        const slipFrame = this.slipLayer.encode(packet.payload);
-        this.logSerialData(slipFrame, 'TX');
-        await writer.write(slipFrame);
-        writer.releaseLock();
-
-        return responsePromise;
     }
 
     /**
