@@ -2,6 +2,12 @@
 class ChipDescriptions {
     constructor() {
         this.chip_descriptions = {
+            /*
+                These are the flash stub loaders from esptool: 
+                https://github.com/espressif/esptool/tree/master/esptool/targets/stub_flasher/1
+                
+                The binaries in JSON format distributed in this directory are released as Free Software under GNU General Public License Version 2 or later. 
+            */
             "esp32s2": {
                 "mac_efuse_reg": 0x3F41A044,
                 "magic_value": 0x000007C6,
