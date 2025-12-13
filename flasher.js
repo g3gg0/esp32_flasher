@@ -250,6 +250,11 @@ class ESPFlasher {
      * @throws {Error} If port request fails
      */
     async openPort() {
+        /* Require Web Serial API (available in Chrome/Edge) */
+        if (typeof navigator === 'undefined' || !navigator.serial) {
+            throw new Error('Web Serial API not available. Please use Chrome or Edge.');
+        }
+
         return new Promise(async (resolve, reject) => {
 
             /* Request a port and open a connection */
