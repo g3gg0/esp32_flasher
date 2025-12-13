@@ -2620,7 +2620,7 @@
                     for (let i = 0; i < item.rawValue.length; i += width) {
                         const chunk = item.rawValue.slice(i, i + width);
                         const hexLine = Array.from(chunk)
-                            .map(b => b.toString(width).padStart(2, '0').toUpperCase())
+                            .map(b => b.toString(16).padStart(2, '0').toUpperCase())
                             .join(' ');
                         hexLines.push(hexLine);
 
