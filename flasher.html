@@ -1,3 +1,11 @@
+<!--
+Technical Limitation:
+Web Serial cannot change the baud rate without reopening the port, which may reset the device. Therefore, this tool keeps a single baud rate from start to end.
+ESP32 ROM prints its reset messages at 115200 baud. When using a USB-UART adapter with RX/TX wiring:
+- Use 115200 to see ROM reset messages (slower link), or
+- Use a higher baud (e.g., 921600) for speed but you will not see reset messages.
+This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
+-->
 <!DOCTYPE html>
 <html lang="en">
 
@@ -365,6 +373,38 @@
             animation: glow 1.5s ease-in-out infinite !important;
             border: 2px solid rgba(255, 255, 0, 0.8) !important;
         }
+
+        .device-popup {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(22, 27, 34, 0.95);
+            border: 1px solid #30363d;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+            padding: 12px 14px;
+            border-radius: 8px;
+            color: #f0f6fc;
+            font-size: 14px;
+            max-width: 420px;
+            z-index: 1000;
+            display: none;
+            line-height: 1.4;
+        }
+
+        .device-popup strong {
+            color: #79c0ff;
+        }
+
+        @keyframes blink-red {
+            0%, 100% { box-shadow: 0 0 0 rgba(0,0,0,0); }
+            50% { box-shadow: 0 0 12px rgba(248, 81, 73, 0.8); }
+        }
+        .device-popup.secure-warning {
+            border-color: #f85149;
+            background: rgba(62, 12, 12, 0.95);
+            color: #fff;
+            animation: blink-red 1s linear infinite;
+        }
     </style>
 </head>
 
@@ -526,11 +566,15 @@
         </div>
     </div>
 
+    <div id="devicePopup" class="device-popup"></div>
+
     <script src="chips.js"></script>
     <script src="flasher.js"></script>
     <script>
         let flasher = null;
         let selectedFile = null;
+        let devicePopupTimer = null;
+        let devicePopupContent = '';
 
         // Register presets for each chip type
         const registerPresets = {
@@ -628,6 +672,51 @@
             logContainer.innerHTML = '<div class="log-entry log-info">Log cleared.</div>';
         }
 
+        function showDevicePopup(message, state = null) {
+            const popup = document.getElementById('devicePopup');
+            if (!popup) {
+                return;
+            }
+
+            if (popup.style.display !== 'none' && devicePopupContent) {
+                devicePopupContent += '\n' + message;
+            } else {
+                devicePopupContent = message;
+            }
+
+            popup.innerHTML = '<strong>Device Info</strong><br>' + devicePopupContent.replace(/\n/g, '<br>');
+            if (state === 'secure') {
+                popup.classList.add('secure-warning');
+            } else {
+                popup.classList.remove('secure-warning');
+            }
+            popup.style.display = 'block';
+
+            if (devicePopupTimer) {
+                clearTimeout(devicePopupTimer);
+            }
+            devicePopupTimer = setTimeout(() => {
+                popup.style.display = 'none';
+                devicePopupContent = '';
+            }, 5000);
+        }
+
+        function formatDeviceStateMessage(state, data) {
+            if (state === 'secure') {
+                return '⚠️ Warning: Device is secured, this tool won\'t work with it';
+            }
+            if (state === 'download') {
+                return 'Device waiting for download (ROM bootloader)';
+            }
+            if (state === 'reboot' && data) {
+                const rstHex = '0x' + (data.rst ?? 0).toString(16);
+                const rstName = data.rstName || 'UNKNOWN';
+                const bootHex = '0x' + (data.boot ?? 0).toString(16);
+                return `Reboot: ${rstName} (${rstHex}), boot=${bootHex}`;
+            }
+            return `Device state: ${state}`;
+        }
+
         function updateStatus(status, badge = 'disconnected') {
             const statusEl = document.getElementById('connectionStatus');
             const badgeClass = `status-${badge}`;
@@ -686,6 +775,12 @@
                 flasher.logDebug = (msg) => log(`[DEBUG] ${msg}`, 'debug');
                 flasher.logError = (msg, detail = '') => log(`[ERROR] ${msg} ${detail}`, 'error');
 
+                flasher.deviceStateCallback = (state, data) => {
+                    const msg = formatDeviceStateMessage(state, data);
+                    showDevicePopup(msg, state);
+                    log(`Device state: ${msg}`, 'info');
+                };
+
                 flasher.disconnected = () => {
                     log('Device disconnected', 'warn');
                     updateStatus('Disconnected', 'disconnected');
@@ -693,10 +788,21 @@
                     document.getElementById('chipType').textContent = 'Not detected';
                     document.getElementById('macAddress').textContent = '--:--:--:--:--:--';
                     document.getElementById('stubStatus').textContent = 'Not loaded';
+                    const popup = document.getElementById('devicePopup');
+                    if (popup) {
+                        popup.style.display = 'none';
+                    }
+                    devicePopupContent = '';
+                    if (devicePopupTimer) {
+                        clearTimeout(devicePopupTimer);
+                        devicePopupTimer = null;
+                    }
                 };
 
                 await flasher.openPort();
                 log('Serial port opened successfully', 'info');
+                // Technical limitation note about baud rate and ROM messages
+                log('Note: Web Serial cannot change baud rate without reopening; to avoid unintended resets we keep one baud from start to end. The ROM prints reset messages at 115200. With USB-UART RX/TX wiring you must choose: slow baud (115200) to see reset messages, or high baud (e.g., 921600) to get speed but miss those messages. Native USB/JTAG on ESP32-S series is unaffected.', 'warn');
                 updateStatus('Connected', 'connected');
 
                 updateButtons(true, false, false);
@@ -732,6 +838,7 @@
                 const syncBtn = document.getElementById('syncBtn');
                 syncBtn.classList.add('highlighted');
                 log('Please click "Sync & Detect" to continue...', 'info');
+
 
             } catch (error) {
                 log(`Hard reset error: ${error.message}`, 'error');
@@ -782,6 +889,16 @@
                 // Clear any highlights
                 document.getElementById('hardResetBtn').classList.remove('highlighted');
                 document.getElementById('syncBtn').classList.remove('highlighted');
+
+                const popup = document.getElementById('devicePopup');
+                if (popup) {
+                    popup.style.display = 'none';
+                }
+                devicePopupContent = '';
+                if (devicePopupTimer) {
+                    clearTimeout(devicePopupTimer);
+                    devicePopupTimer = null;
+                }
             } catch (error) {
                 log(`Disconnect error: ${error.message}`, 'error');
             }

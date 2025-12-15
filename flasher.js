@@ -24,6 +24,29 @@ const ERASE_REGION = 0xd1;
 const READ_FLASH = 0xd2;
 const RUN_USER_CODE = 0xd3;
 
+/* ESP32 Reset Reason Codes (from ESP-IDF esp_system.h) */
+const RESET_REASON_MAP = {
+    0: { name: 'NO_MEAN', desc: 'No reset reason' },
+    1: { name: 'POWERON_RESET', desc: 'Vbat power on reset' },
+    3: { name: 'RTC_SW_SYS_RESET', desc: 'Software reset digital core' },
+    5: { name: 'DEEPSLEEP_RESET', desc: 'Deep Sleep reset digital core' },
+    7: { name: 'TG0WDT_SYS_RESET', desc: 'Timer Group0 Watch dog reset digital core' },
+    8: { name: 'TG1WDT_SYS_RESET', desc: 'Timer Group1 Watch dog reset digital core' },
+    9: { name: 'RTCWDT_SYS_RESET', desc: 'RTC Watch dog Reset digital core' },
+    10: { name: 'INTRUSION_RESET', desc: 'Intrusion tested to reset CPU' },
+    11: { name: 'TG0WDT_CPU_RESET', desc: 'Timer Group0 reset CPU' },
+    12: { name: 'RTC_SW_CPU_RESET', desc: 'Software reset CPU' },
+    13: { name: 'RTCWDT_CPU_RESET', desc: 'RTC Watch dog Reset CPU' },
+    15: { name: 'RTCWDT_BROWN_OUT_RESET', desc: 'Reset when the vdd voltage is not stable' },
+    16: { name: 'RTCWDT_RTC_RESET', desc: 'RTC Watch dog reset digital core and rtc module' },
+    17: { name: 'TG1WDT_CPU_RESET', desc: 'Timer Group1 reset CPU' },
+    18: { name: 'SUPER_WDT_RESET', desc: 'Super watchdog reset digital core and rtc module' },
+    19: { name: 'GLITCH_RTC_RESET', desc: 'Glitch reset digital core and rtc module' },
+    20: { name: 'EFUSE_RESET', desc: 'eFuse reset digital core' },
+    21: { name: 'USB_UART_CHIP_RESET', desc: 'USB UART reset digital core' },
+    22: { name: 'USB_JTAG_CHIP_RESET', desc: 'USB JTAG reset digital core' },
+    23: { name: 'POWER_GLITCH_RESET', desc: 'Power glitch reset digital core and rtc module' }
+};
 
 /**
  * SLIP Protocol Layer Handler
@@ -37,7 +60,7 @@ class SlipLayer {
         this.buffer = [];
         this.escaping = false;
         this.verbose = true;
-        this.logPackets = false;
+        this.logPackets = true;
     }
 
     /**
@@ -49,8 +72,9 @@ class SlipLayer {
     logSlipData(data, type, label) {
         if (!this.verbose) return;
 
-        const isEncode = type === 'ENCODE';
-        const color = isEncode ? 'color: #FFC107; font-weight: bold' : 'color: #9C27B0; font-weight: bold';
+        this._preSyncState = 'idle';
+        const isEncode = type === 'ENCODE'; const color = isEncode ? 'color: #FFC107; font-weight: bold' : 'color: #9C27B0; font-weight: bold';
+
         const bgColor = isEncode ? 'background: #F57F17; color: #000' : 'background: #6A1B9A; color: #fff';
         const symbol = isEncode ? '▶' : '◀';
 
@@ -190,15 +214,31 @@ class ESPFlasher {
         this.escaping = false;
         this.slipLayer = new SlipLayer();
 
+        this.synced = false;
+        this.consoleBuffer = '';
+        this._preSyncState = 'idle';
+
         this.logDebug = () => { };
         this.logError = () => { };
         this.reader = null;
 
         /* Command execution lock to prevent concurrent command execution */
         this._commandLock = Promise.resolve();
+        this.logPackets = true;
 
-        /* Verbose serial logging */
-        this.verboseSerial = true;
+        /*
+        Technical Limitation:
+            Web Serial cannot change the baud rate without reopening the port, which may reset the device.
+            Therefore, this tool keeps a single baud rate from start to end.
+            ESP32 ROM prints its reset messages at 115200 baud.
+            
+            When using a USB-UART adapter with RX/TX wiring:
+            - Use 115200 to see ROM reset messages (slower link), or
+            - Use a higher baud (e.g., 921600) for speed but you will not see reset messages.
+
+            This does not apply to native USB/JTAG interfaces of course.
+        */
+        this.initialBaudRate = 921600;
     }
 
     /**
@@ -208,7 +248,7 @@ class ESPFlasher {
      * @param {number} maxBytes - Maximum bytes to show (default: 256)
      */
     logSerialData(data, direction, maxBytes = 256) {
-        if (!this.verboseSerial) return;
+        if (!this.logPackets) return;
 
         const isTX = direction === 'TX';
         const color = isTX ? 'color: #4CAF50; font-weight: bold' : 'color: #2196F3; font-weight: bold';
@@ -260,11 +300,12 @@ class ESPFlasher {
             /* Request a port and open a connection */
             try {
                 this.port = await navigator.serial.requestPort();
-                await this.port.open({ baudRate: 921600 });
+                await this.port.open({ baudRate: this.initialBaudRate });
             } catch (error) {
                 reject(error);
                 return;
             }
+
 
             // Register for device lost
             navigator.serial.addEventListener('disconnect', (event) => {
@@ -289,10 +330,12 @@ class ESPFlasher {
                 while (true) {
                     const { value, done } = await this.reader.read();
                     if (done) {
+                        console.log('Reader has been canceled');
                         break;
                     }
                     if (value) {
                         this.logSerialData(value, 'RX');
+                        this.parseResetMessages(value);
                         const packets = this.slipLayer.decode(value);
                         for (let packet of packets) {
                             await this.processPacket(packet);
@@ -308,6 +351,93 @@ class ESPFlasher {
                 }
             }
         });
+    }
+
+    parseResetMessages(data) {
+        /*
+        ESP32
+            ets Jun  8 2016 00:22:57
+
+            rst:0x1 (POWERON_RESET),boot:0x1 (DOWNLOAD_BOOT(UART0/UART1/SDIO_FEI_REO_V2))
+            waiting for download
+           
+        ESP32-S3 (normal)     
+            ESP-ROM:esp32s3-20210327
+            Build:Mar 27 2021
+            rst:0x1 (POWERON),boot:0x0 (DOWNLOAD(USB/UART0))
+            waiting for download
+
+        ESP32-C3 (secure)
+            ESP-ROM:esp32c3-api1-20210207
+            Build:Feb  7 2021
+            rst:0x15 (USB_UART_CHIP_RESET),boot:0x5 (DOWNLOAD(USB/UART0/1))
+            Saved PC:0x4004d1f8
+            wait uart download(secure mode)
+
+        ESP32-C3 (normal)
+            ESP-ROM:esp32c3-api1-20210207
+            Build:Feb  7 2021
+            rst:0x15 (USB_UART_CHIP_RESET),boot:0x7 (DOWNLOAD(USB/UART0/1))
+            Saved PC:0x4004c0d4
+            waiting for download
+
+        */
+
+
+        /* Only care about pre-sync console chatter */
+        if (!data || !data.length) {
+            return;
+        }
+
+        /* Accumulate printable ASCII and newlines */
+        let chunk = '';
+        for (let i = 0; i < data.length; i++) {
+            const b = data[i];
+            if (b === 10 || b === 13) {
+                chunk += '\n';
+            } else if (b >= 32 && b <= 126) {
+                chunk += String.fromCharCode(b);
+            }
+        }
+
+        if (!chunk.length) {
+            return;
+        }
+
+        this.consoleBuffer = (this.consoleBuffer || '') + chunk;
+
+        let newlineIdx = this.consoleBuffer.indexOf('\n');
+        while (newlineIdx !== -1) {
+            const line = this.consoleBuffer.slice(0, newlineIdx).trim();
+            this.consoleBuffer = this.consoleBuffer.slice(newlineIdx + 1);
+            if (line.length) {
+                const lower = line.toLowerCase();
+                const rstBootMatch = line.match(/rst:0x([0-9a-f]+)/i);
+                const bootMatch = line.match(/boot:0x([0-9a-f]+)/i);
+
+                if (rstBootMatch && bootMatch) {
+                    const rst = parseInt(rstBootMatch[1], 16);
+                    const boot = parseInt(bootMatch[1], 16);
+                    const rstInfo = RESET_REASON_MAP[rst] || { name: 'UNKNOWN', desc: `Unknown reset reason 0x${rst.toString(16)}` };
+                    this.deviceStateCallback && this.deviceStateCallback('reboot', { rst, rstName: rstInfo.name, rstDesc: rstInfo.desc, boot });
+                    /* Enable mode detection after reboot line */
+                    this._preSyncState = 'seen_reboot';
+                }
+
+                /* State machine: after reboot line, accept one mode line */
+                if (this._preSyncState === 'seen_reboot') {
+                    if (lower.includes('(secure mode)')) {
+                        this.deviceStateCallback && this.deviceStateCallback('secure');
+                        this._preSyncState = 'idle';
+                    } else if (lower.includes('waiting for download') || lower.includes('wait uart download')) {
+                        this.deviceStateCallback && this.deviceStateCallback('download');
+                        this._preSyncState = 'idle';
+                    }
+                }
+
+            }
+            newlineIdx = this.consoleBuffer.indexOf('\n');
+        }
     }
 
     /**
@@ -366,13 +496,13 @@ class ESPFlasher {
     async executeCommand(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
         /* Create command promise first */
         const commandPromise = this._executeCommandUnlocked(packet, callback, default_callback, timeout, hasTimeoutCbr);
-        
+
         /* Chain it to the lock, ensuring lock always continues even on error */
         this._commandLock = this._commandLock.then(
             () => commandPromise,
             () => commandPromise  /* On previous error, still execute our command */
         );
-        
+
         /* Return our command directly to propagate result/error to caller */
         return commandPromise;
     }
@@ -478,6 +608,10 @@ class ESPFlasher {
             this.port = null;
         }
 
+        this.synced = false;
+        this.consoleBuffer = '';
+        this._preSyncState = 'idle';
+
         this.disconnected && this.disconnected();
     }
 
@@ -492,6 +626,10 @@ class ESPFlasher {
             this.logError("Port is not open. Cannot set signals.");
             return false;
         }
+
+        this.synced = false;
+        this.consoleBuffer = '';
+        this._preSyncState = 'idle';
 
         this.logDebug("Automatic bootloader reset sequence...");
 
@@ -612,6 +750,8 @@ class ESPFlasher {
             // but adding as a safeguard.
             throw new Error("Synchronization failed (unexpected state).");
         }
+
+        this.synced = true;
 
         // --- Chip Detection (Runs only after successful sync) ---
         this.logDebug("Reading chip magic value...");

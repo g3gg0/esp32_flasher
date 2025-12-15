@@ -804,6 +804,40 @@
         .legend-color.modified {
             background: #f44336;
         }
+
+        /* Device popup */
+        .device-popup {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(26, 31, 53, 0.95);
+            border: 1px solid #4a4f70;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+            padding: 12px 14px;
+            border-radius: 8px;
+            color: #f0f6fc;
+            font-size: 14px;
+            max-width: 440px;
+            z-index: 1000;
+            display: none;
+            line-height: 1.4;
+        }
+
+        .device-popup strong {
+            color: #7a8bdc;
+        }
+
+        @keyframes blink-red {
+            0%, 100% { box-shadow: 0 0 0 rgba(0,0,0,0); }
+            50% { box-shadow: 0 0 12px rgba(248, 81, 73, 0.8); }
+        }
+
+        .device-popup.secure-warning {
+            border-color: #f85149;
+            background: rgba(62, 12, 12, 0.95);
+            color: #fff;
+            animation: blink-red 1s linear infinite;
+        }
     </style>
 </head>
 
@@ -820,6 +854,7 @@
             <div class="write-overlay-text" id="writeOverlayText">Please wait</div>
         </div>
     </div>
+    <div id="devicePopup" class="device-popup"></div>
     <div class="container">
         <div class="header">
             <h1>[g3gg0.de] ESP32 Firmware Editor</h1>
@@ -950,6 +985,8 @@
         let deviceFlasher = null;
         let deviceMode = false;
         let deviceSparse = null;
+        let devicePopupTimer = null;
+        let devicePopupContent = '';
         let deviceFlashSizeBytes = 0x00800000; /* Default 8 MiB */
         let deviceReadProgressTotal = 0;
         let deviceReadProgressDone = 0;
@@ -1187,6 +1224,11 @@
                     handleUnexpectedDeviceDisconnect();
                 };
 
+                deviceFlasher.deviceStateCallback = (state, data) => {
+                    const msg = formatDeviceStateMessage(state, data);
+                    showDevicePopup(msg, state);
+                };
+
                 await deviceFlasher.openPort();
                 setDeviceButtons({ connected: true });
 
@@ -1305,6 +1347,17 @@
             /* Show file drop/browse when disconnected */
             const dropZone = document.getElementById('dropZone');
             if (dropZone) dropZone.style.display = 'block';
+
+            const popup = document.getElementById('devicePopup');
+            if (popup) {
+                popup.style.display = 'none';
+                popup.classList.remove('secure-warning');
+            }
+            devicePopupContent = '';
+            if (devicePopupTimer) {
+                clearTimeout(devicePopupTimer);
+                devicePopupTimer = null;
+            }
         }
 
         /**
@@ -1468,6 +1521,51 @@
             }
         }
 
+        function showDevicePopup(message, state = null) {
+            const popup = document.getElementById('devicePopup');
+            if (!popup) {
+                return;
+            }
+
+            if (popup.style.display !== 'none' && devicePopupContent) {
+                devicePopupContent += '\n' + message;
+            } else {
+                devicePopupContent = message;
+            }
+
+            popup.innerHTML = '<strong>Device Info</strong><br>' + devicePopupContent.replace(/\n/g, '<br>');
+            if (state === 'secure') {
+                popup.classList.add('secure-warning');
+            } else {
+                popup.classList.remove('secure-warning');
+            }
+            popup.style.display = 'block';
+
+            if (devicePopupTimer) {
+                clearTimeout(devicePopupTimer);
+            }
+            devicePopupTimer = setTimeout(() => {
+                popup.style.display = 'none';
+                devicePopupContent = '';
+            }, 5000);
+        }
+
+        function formatDeviceStateMessage(state, data) {
+            if (state === 'secure') {
+                return '⚠️ Warning: Device is secured, this tool won\'t work with it';
+            }
+            if (state === 'download') {
+                return 'Device waiting for download (ROM bootloader)';
+            }
+            if (state === 'reboot' && data) {
+                const rstHex = '0x' + (data.rst ?? 0).toString(16);
+                const rstName = data.rstName || 'UNKNOWN';
+                const bootHex = '0x' + (data.boot ?? 0).toString(16);
+                return `Reboot: ${rstName} (${rstHex}), boot=${bootHex}`;
+            }
+            return `Device state: ${state}`;
+        }
+
         function showFetchOverlay(text) {
             const overlay = document.getElementById('fetchOverlay');
             const label = document.getElementById('fetchOverlayText');
@@ -1532,8 +1630,6 @@
                     addWarning = true;
                 }
             }
-
-
             if (addWarning) {
                 text += `<br><br>⚠️ SLOW: due to hardware/stub bug, ESP32-S3 and C3 are very slow with onchip USB-JTAG`;
             }
@@ -1588,6 +1684,7 @@
             const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesWritten / totalBytes) * 100)) : 0;
 
             let text = `Writing 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbWritten} / ${kbTotal} KB)`;
+            let addWarning = false;
 
             /* Calculate speed if operation has been running > 1 second */
             if (writeStartTime) {
@@ -1595,11 +1692,11 @@
                 if (elapsedMs > SPEED_CHECK_DELAY && bytesWritten > 0) {
                     const speedBytesPerSec = (bytesWritten / elapsedMs) * 1000;
                     const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
-                    text += ` – ${speedKiBPerSec} KiB/s`;
+                    text += ` - ${speedKiBPerSec} KiB/s`;
 
                     /* Show warning if speed is too slow */
                     if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
-                        text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
+                        addWarning = true;
                         if (!writeSlowWarningShown) {
                             writeSlowWarningShown = true;
                             writeWarningShownTime = Date.now();
@@ -1610,8 +1707,11 @@
                 /* Keep showing warning if still within minimum display time */
                 const warningElapsedMs = Date.now() - writeWarningShownTime;
                 if (warningElapsedMs < WARNING_MIN_DISPLAY_TIME) {
-                    text += ` ⚠️ SLOW: due to some hardware / stub bug, ESP32-S3 and C3 are very slow when downloading from flash`;
+                    addWarning = true;
                 }
+            }
+            if (addWarning) {
+                text += `<br><br>⚠️ SLOW: due to hardware/stub bug, ESP32-S3 and C3 are very slow with onchip USB-JTAG`;
             }
 
             label.innerHTML = text;
