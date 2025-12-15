@@ -1300,7 +1300,6 @@ class ESP32Parser {
             for (const item of page.items) {
                 if (item.nsIndex !== undefined && item.nsIndex !== 0) {
                     item.namespace = namespaces.get(item.nsIndex) || `ns_${item.nsIndex}`;
-                    console.log(`[NVS Parse] Resolved nsIndex ${item.nsIndex} -> "${item.namespace}" for key "${item.key}"`);
                 }
             }
         }
@@ -2645,6 +2644,361 @@ class ESP32Parser {
     async exportPartitionData(partition) {
         const data = await this.buffer.slice_async(partition.offset, partition.offset + partition.length);
         return new Blob([data], { type: 'application/octet-stream' });
+    }
+
+    /**
+     * Parse SPIFFS partition
+     * SPIFFS (SPI Flash File System) is a file system for embedded devices
+     */
+    async parseSPIFFS(partition) {
+        const offset = partition.offset;
+        const size = partition.length;
+
+        console.log(`[SPIFFS] Parsing partition at offset 0x${offset.toString(16)}, size ${size} bytes`);
+
+        // Read first block to get SPIFFS metadata
+        const blockSize = 4096; // Default, will read from header
+        const headerData = await this.buffer.slice_async(offset, offset + Math.min(blockSize, size));
+        const view = new DataView(headerData.buffer, headerData.byteOffset);
+
+        // SPIFFS uses magic number 0x20160902 at different locations depending on version
+        let magic = 0;
+        let pageSize = 256;
+        let blockSizeActual = 4096;
+        let validHeader = false;
+
+        console.log(`[SPIFFS] Scanning for magic number...`);
+        
+        // Try to find SPIFFS header
+        // SPIFFS v0.3.7+ uses a different header structure
+        for (let i = 0; i < Math.min(512, headerData.length - 4); i += 4) {
+            try {
+                const testMagic = view.getUint32(i, true);
+                if (testMagic === 0x20160902) {
+                    magic = testMagic;
+                    validHeader = true;
+                    console.log(`[SPIFFS] Found magic at offset 0x${i.toString(16)}`);
+                    // Try to read configuration
+                    if (i + 16 <= headerData.length) {
+                        const cfgPhysSize = view.getUint32(i + 4, true);
+                        const cfgLogBlockSize = view.getUint32(i + 8, true);
+                        const cfgLogPageSize = view.getUint32(i + 12, true);
+                        
+                        console.log(`[SPIFFS] Config: phys=${cfgPhysSize}, blockSize=${cfgLogBlockSize}, pageSize=${cfgLogPageSize}`);
+                        
+                        if (cfgLogBlockSize > 0 && cfgLogBlockSize <= 65536 && 
+                            cfgLogPageSize > 0 && cfgLogPageSize <= 2048) {
+                            blockSizeActual = cfgLogBlockSize;
+                            pageSize = cfgLogPageSize;
+                        }
+                    }
+                    break;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+
+        if (!validHeader) {
+            console.log(`[SPIFFS] No magic found, trying pattern detection...`);
+            // Fallback: try to detect SPIFFS by looking for object index headers
+            // SPIFFS object index entries have specific patterns
+            validHeader = await this._detectSPIFFSByPattern(headerData);
+            console.log(`[SPIFFS] Pattern detection result: ${validHeader}`);
+        }
+
+        const files = [];
+        const pagesPerBlock = Math.floor(blockSizeActual / pageSize);
+        
+        console.log(`[SPIFFS] Config: blockSize=${blockSizeActual}, pageSize=${pageSize}, pagesPerBlock=${pagesPerBlock}`);
+        console.log(`[SPIFFS] Scanning ${Math.floor(size / blockSizeActual)} blocks...`);
+        
+        // Scan blocks and pages
+        // SPIFFS layout: Each page (0x100 bytes) contains either:
+        //   - Object index header (span_ix==0): metadata + filename at offset 13+
+        //   - Object data page (span_ix>0): file content follows the header
+        // File content starts at next 0x100 boundary after header
+        // Next entry starts at next 0x100 boundary after file content ends
+        for (let blockIdx = 0; blockIdx < Math.floor(size / blockSizeActual); blockIdx++) {
+            const blockOffset = offset + blockIdx * blockSizeActual;
+            
+            console.log(`[SPIFFS] ===== Block ${blockIdx}: offset 0x${blockOffset.toString(16)} =====`);
+            
+            // Read entire block for analysis
+            const blockData = await this.buffer.slice_async(blockOffset, blockOffset + Math.min(blockSizeActual, size - blockIdx * blockSizeActual));
+            
+            // Scan each page (0x100 = 256 bytes boundary)
+            // Each page starts with a header, then content follows
+            for (let pageIdx = 0; pageIdx < pagesPerBlock; pageIdx++) {
+                const pageStart = pageIdx * pageSize;
+                if (pageStart + pageSize > blockData.length) break;
+                
+                /* Parse SPIFFS page header per spiffs_nucleus.h */
+                /* typedef struct SPIFFS_PACKED { */
+                /*   spiffs_obj_id obj_id;     // Offset 0-1: 2 bytes */
+                /*   spiffs_span_ix span_ix;   // Offset 2-3: 2 bytes */
+                /*   u8_t flags;               // Offset 4: 1 byte */
+                /* } spiffs_page_header; */
+                
+                const objId = blockData[pageStart] | (blockData[pageStart + 1] << 8);
+                const span = blockData[pageStart + 2] | (blockData[pageStart + 3] << 8);
+                const flags = blockData[pageStart + 4];
+                
+                // Skip completely erased pages
+                if (objId === 0xFFFF || objId === 0x0000) {
+                    continue;
+                }
+                
+                // For object index header pages (span_ix == 0):
+                /* spiffs_page_object_ix_header layout: */
+                /* Offset 0-4: page_header */
+                /* Offset 5-7: alignment padding */
+                /* Offset 8-11: size (u32_t) */
+                /* Offset 12: type (spiffs_obj_type, u8_t) */
+                /* Offset 13+: name[SPIFFS_OBJ_NAME_LEN] */
+                
+                let fileSize = 0;
+                let type = 0;
+                let nameStr = '[NO NAME]';
+                
+                // Only parse object index header if span_ix == 0
+                const isIndexHeader = (span === 0);
+                
+                if (isIndexHeader) {
+                    // Extract size (offset 8-11, unsigned)
+                    if (pageStart + 12 <= blockData.length) {
+                        fileSize = (blockData[pageStart + 8] |
+                                  (blockData[pageStart + 9] << 8) |
+                                  (blockData[pageStart + 10] << 16) |
+                                  (blockData[pageStart + 11] << 24)) >>> 0;
+                    }
+                    // Extract type (offset 12)
+                    type = blockData[pageStart + 12];
+                    
+                    // Extract name (offset 13+)
+                    const nameStartIdx = pageStart + 13;
+                    if (nameStartIdx < blockData.length) {
+                        let nameBytes = [];
+                        for (let i = nameStartIdx; i < Math.min(nameStartIdx + 256, pageStart + pageSize); i++) {
+                            if (blockData[i] === 0 || blockData[i] === 0xFF) break;
+                            if (blockData[i] >= 32 && blockData[i] < 127) {
+                                nameBytes.push(blockData[i]);
+                            } else {
+                                break;
+                            }
+                        }
+                        if (nameBytes.length > 0) {
+                            nameStr = String.fromCharCode(...nameBytes);
+                        }
+                    }
+                }
+                
+                // Check deletion/invalidation based on flags
+                // SPIFFS_PH_FLAG_DELET (1<<7) = 0x80 - if 0, page is deleted
+                const isDeleted = (flags & 0x80) === 0;
+                
+                // Dump all header fields
+                console.log(`[SPIFFS] ===== Page at Block ${blockIdx}, Page ${pageIdx} (offset 0x${pageStart.toString(16)}) =====`);
+                console.log(`[SPIFFS]   Offset 0-1: obj_id = 0x${objId.toString(16).padStart(4, '0')}`);
+                console.log(`[SPIFFS]   Offset 2-3: span_ix = ${span} (0x${span.toString(16).padStart(4, '0')})`);
+                console.log(`[SPIFFS]   Offset 4:   flags = 0x${flags.toString(16).padStart(2, '0')} ${isDeleted ? '[DELETED]' : '[VALID]'}`);
+                
+                if (isIndexHeader) {
+                    const sizeIsUndefined = fileSize === 0xFFFFFFFF;
+                    const sizeLog = sizeIsUndefined ? 'undefined (0xFFFFFFFF)' : `${fileSize} bytes (0x${fileSize.toString(16)})`;
+                    console.log(`[SPIFFS]   Offset 8-11: size = ${sizeLog}`);
+                    console.log(`[SPIFFS]   Offset 12:   type = ${type} (${type === 0x01 ? 'FILE' : type === 0x02 ? 'DIR' : 'UNKNOWN'})`);
+                    console.log(`[SPIFFS]   Offset 13+:  name = "${nameStr}"`);
+                    
+                    // Add all files including duplicates and deleted files
+                    if ((type === 0x01 || type === 0x02) && nameStr !== '[NO NAME]' && nameStr.startsWith('/')) {
+                        const displayName = isDeleted ? `${nameStr} (deleted)` : nameStr;
+                        files.push({
+                            name: displayName,
+                            objId: objId,
+                            size: fileSize > 0 && fileSize < 0xFFFFFFFF ? fileSize : 0,
+                            blockIdx: blockIdx,
+                            pageIdx: pageIdx,
+                            type: type,
+                            span: span,
+                            flags: flags,
+                            deleted: isDeleted
+                        });
+                        console.log(`[SPIFFS] ✓ Added to file list: "${displayName}" (deleted=${isDeleted})`);
+                    } else {
+                        console.log(`[SPIFFS] ⊘ Skipped: not a valid file (type=${type}, name="${nameStr}")`);
+                    }
+                } else {
+                    console.log(`[SPIFFS]   (Data page, span_ix=${span})`);
+                }
+            }
+        }
+
+        console.log(`[SPIFFS] Parsing complete. Found ${files.length} files.`);
+
+        return {
+            valid: validHeader || files.length > 0,
+            magic: magic,
+            blockSize: blockSizeActual,
+            pageSize: pageSize,
+            totalSize: size,
+            files: files,
+            filesCount: files.length
+        };
+    }
+
+    async _detectSPIFFSByPattern(data) {
+        // Look for patterns typical of SPIFFS:
+        // - Object headers with printable filenames
+        // - Non-erased object IDs with valid flags
+        let foundPattern = false;
+        
+        for (let i = 0; i < Math.min(2048, data.length - 64); i += 256) {
+            // Check for object index pattern at page boundaries
+            const b0 = data[i];
+            const b1 = data[i + 1];
+            const flags = data[i + 2];
+            
+            // Valid object IDs (not erased, not zero)
+            const objId = b0 | (b1 << 8);
+            if (objId !== 0xFFFF && objId !== 0x0000 && flags !== 0xFF) {
+                // Look for filename pattern nearby
+                for (let j = i + 12; j < i + 64 && j < data.length; j++) {
+                    if (data[j] === 0x2F) { // '/' character
+                        console.log(`[SPIFFS] Pattern detected at offset 0x${i.toString(16)}: objId=0x${objId.toString(16)}, flags=0x${flags.toString(16)}`);
+                        foundPattern = true;
+                        break;
+                    }
+                }
+                if (foundPattern) break;
+            }
+        }
+        
+        return foundPattern;
+    }
+
+    /**
+     * Read file data from SPIFFS partition
+     */
+    async readSPIFFSFile(partition, file, spiffsInfo) {
+        const offset = partition.offset;
+        const blockSize = spiffsInfo.blockSize;
+        const pageSize = spiffsInfo.pageSize; /* Typically 0x100 = 256 bytes */
+        const pagesPerBlock = Math.floor(blockSize / pageSize);
+        const fileSize = file.size >>> 0;
+
+        console.log(`[SPIFFS] ========== Reading file "${file.name}" ==========`);
+        console.log(`[SPIFFS] objId(header)=0x${file.objId.toString(16)}, size=${fileSize} bytes`);
+        console.log(`[SPIFFS] Header page: block=${file.blockIdx}, page=${file.pageIdx}`);
+
+        if (!fileSize) {
+            console.log(`[SPIFFS] File size is 0, returning empty array`);
+            return new Uint8Array(0);
+        }
+
+        /* SPIFFS data pages have obj_id without the index flag. Clear it. */
+        const IX_FLAG_MASK = 0x8000;
+        const dataObjId = (file.objId & ~IX_FLAG_MASK) & 0xFFFF;
+
+        const totalBlocks = Math.floor(spiffsInfo.totalSize / blockSize) || Math.floor(partition.length / blockSize);
+        const dataHeaderLen = 5; /* sizeof(spiffs_page_header): obj_id(2) + span_ix(2) + flags(1) */
+        const dataPerPage = pageSize - dataHeaderLen;
+
+        /* First pass: collect all data pages for this object across the partition, keyed by span_ix */
+        const spixToPix = new Map();
+        const spixToAddr = new Map();
+        let pagesFound = 0;
+
+        console.log(`[SPIFFS] Scanning for data pages: target obj_id=0x${dataObjId.toString(16)}`);
+
+        for (let blk = 0; blk < totalBlocks; blk++) {
+            const blockBase = offset + blk * blockSize;
+            const blockData = await this.buffer.slice_async(blockBase, blockBase + blockSize);
+
+            for (let pg = 0; pg < pagesPerBlock; pg++) {
+                const pageOffInBlock = pg * pageSize;
+                if (pageOffInBlock + dataHeaderLen > blockData.length) break;
+
+                const objId = blockData[pageOffInBlock] | (blockData[pageOffInBlock + 1] << 8);
+                const span = blockData[pageOffInBlock + 2] | (blockData[pageOffInBlock + 3] << 8);
+                const flags = blockData[pageOffInBlock + 4];
+
+                /* Skip erased/empty */
+                if (objId === 0xFFFF || objId === 0x0000) continue;
+
+                /* Skip deleted pages (SPIFFS_PH_FLAG_DELET cleared) */
+                const isDeleted = (flags & 0x80) === 0;
+                if (isDeleted) continue;
+
+                /* Match data pages for this file: obj_id without IX flag */
+                if (objId === dataObjId) {
+                    const pix = blk * pagesPerBlock + pg;
+                    const paddr = blockBase + pageOffInBlock;
+                    if (!spixToPix.has(span)) {
+                        spixToPix.set(span, pix);
+                        spixToAddr.set(span, paddr);
+                        pagesFound++;
+                        /* Trace a few */
+                        if (pagesFound <= 8) {
+                            console.log(`[SPIFFS]   Data page: blk=${blk}, pg=${pg}, span_ix=${span}, pix=${pix}, paddr=0x${paddr.toString(16)}`);
+                        }
+                    }
+                }
+            }
+        }
+
+        console.log(`[SPIFFS] Found ${pagesFound} data pages for obj_id=0x${dataObjId.toString(16)} (data_per_page=${dataPerPage})`);
+
+        /* If no data pages were found, fall back to naive read-after-header (for non-standard dumps) */
+        if (pagesFound === 0) {
+            const headerOffset = offset + file.blockIdx * blockSize + file.pageIdx * pageSize;
+            const naiveContent = headerOffset + pageSize;
+            console.warn(`[SPIFFS] WARNING: No data pages found via scan. Falling back to next-page heuristic at 0x${naiveContent.toString(16)}`);
+            const fileData = await this.buffer.slice_async(naiveContent, naiveContent + fileSize);
+            console.log(`[SPIFFS] Fallback read first 32 bytes: ${Array.from(fileData.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+            return fileData;
+        }
+
+        /* Assemble file content using span_ix ordering */
+        const out = new Uint8Array(fileSize);
+        let curOff = 0;
+        let logPreview = [];
+
+        while (curOff < fileSize) {
+            const spix = Math.floor(curOff / dataPerPage);
+            const pageOff = curOff % dataPerPage;
+            const lenToRead = Math.min(fileSize - curOff, dataPerPage - pageOff);
+
+            if (!spixToAddr.has(spix)) {
+                console.warn(`[SPIFFS] Missing data page for span_ix=${spix}, filling with 0xFF for ${lenToRead} bytes`);
+                out.fill(0xFF, curOff, curOff + lenToRead);
+                curOff += lenToRead;
+                continue;
+            }
+
+            const paddr = spixToAddr.get(spix);
+            const dataStart = paddr + dataHeaderLen + pageOff;
+            const dataEnd = dataStart + lenToRead;
+
+            const chunk = await this.buffer.slice_async(dataStart, dataEnd);
+            out.set(chunk, curOff);
+
+            if (logPreview.length < 4) {
+                logPreview.push({ spix, paddr: dataStart, len: lenToRead });
+            }
+
+            curOff += lenToRead;
+        }
+
+        console.log(`[SPIFFS] Read complete: ${out.length} bytes`);
+        if (logPreview.length) {
+            for (const e of logPreview) {
+                console.log(`[SPIFFS]   Read spix=${e.spix} at 0x${e.paddr.toString(16)} len=${e.len}`);
+            }
+        }
+        console.log(`[SPIFFS] First 32 bytes (hex): ${Array.from(out.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+
+        return out;
     }
 }
 

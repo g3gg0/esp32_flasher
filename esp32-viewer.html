@@ -994,6 +994,7 @@
         let fetchOverlayActiveReads = 0;
         let intentionalDisconnect = false; /* Track intentional disconnects */
         let bootloaderInfo = null;
+        let partitionTableOffset = null;
 
         /* Performance tracking for read/write operations */
         let readStartTime = null;
@@ -2057,13 +2058,17 @@
 
         async function parseAndDisplay(focusBootloader = false) {
             // Parse bootloader first to detect partition table offset
-            bootloaderInfo = await parseBootloader();
+            bootloaderInfo = await parseBootloader(0x0000);
+            if(!bootloaderInfo || bootloaderInfo.error) {
+                bootloaderInfo = await parseBootloader(0x1000);
+            }
             console.log("Bootloader parsed:", bootloaderInfo);
 
             // Auto-detect partition table offset based on bootloader end/FF padding
             const detectedOffset = await parser.detectPartitionTableOffset(bootloaderInfo);
             console.log("Detected partition table offset: ", detectedOffset ? `0x${detectedOffset.toString(16)}` : 'not found');
 
+            partitionTableOffset = detectedOffset;
             detectedOffset && await parser.parsePartitions(detectedOffset);
 
             // Compute SHA-1 only in file mode to avoid heavy device reads
@@ -2083,11 +2088,11 @@
             }
         }
 
-        async function parseBootloader() {
+        async function parseBootloader(offset = 0x0000) {
             const contentDiv = document.getElementById('bootloaderContent');
             // We don't know the partition table offset yet, so use a reasonable max search size
             const maxBootloaderLength = 0x10000; // 64KB should be more than enough for any bootloader
-            const partition = { offset: 0, length: maxBootloaderLength, label: 'bootloader' };
+            const partition = { offset: offset, length: maxBootloaderLength, label: 'bootloader' };
 
             contentDiv.innerHTML = '<div class="loading">⏳ Parsing bootloader...</div>';
 
@@ -2129,6 +2134,7 @@
 
                     html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
                     html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>Bootloader Offset:</label><span class="mono">0x${offset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
                     html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
                     html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
                     html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
@@ -2275,7 +2281,13 @@
                 return;
             }
 
-            let html = '<table><thead><tr>';
+            let html = '';
+            if (partitionTableOffset !== null) {
+                html += '<div class="info-grid" style="margin-bottom: 20px;">';
+                html += `<div class="info-item"><label>Partition Table Offset:</label><span class="mono">0x${partitionTableOffset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
+                html += '</div>';
+            }
+            html += '<table><thead><tr>';
             html += '<th>#</th><th>Label</th><th>Type</th><th>Offset</th><th>Size</th><th>Actions</th>';
             html += '</tr></thead><tbody>';
 
@@ -2325,6 +2337,8 @@
                     html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseImagePartitionInline(${idx})">Parse Image</button></div>`;
                 } else if (part.subType === 0x81) { // FAT
                     html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseFATPartition(${idx})">Parse FAT</button></div>`;
+                } else if (part.subType === 0x82) { // SPIFFS
+                    html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseSPIFFSPartition(${idx})">Parse SPIFFS</button></div>`;
                 }
                 //html += `<div class="detail-item" style="grid-column: 1 / -1;"><strong>SHA-1:</strong> <span class="mono">${part.sha1 || 'n/a'}</span></div>`;
 
@@ -2765,6 +2779,167 @@
 
         let currentFATInfo = null;
         let currentFATPartition = null;
+        let currentSPIFFSInfo = null;
+        let currentSPIFFSPartition = null;
+
+        function parseSPIFFSPartition(idx) {
+            const partition = parser.partitions[idx];
+            const contentDiv = document.getElementById(`parsed-content-${idx}`);
+
+            // Show loading indicator
+            contentDiv.innerHTML = '<div class="loading">⏳ Parsing SPIFFS filesystem...</div>';
+
+            // Use setTimeout to allow UI to update
+            setTimeout(async () => {
+                try {
+                    const spiffsInfo = await parser.parseSPIFFS(partition);
+
+                    // Store for file downloads
+                    currentSPIFFSInfo = spiffsInfo;
+                    currentSPIFFSPartition = partition;
+
+                    let html = '';
+                    
+                    if (!spiffsInfo.valid) {
+                        html += '<div class="error" style="margin-bottom: 10px;">⚠️ SPIFFS header not found. The partition may be empty, corrupted, or using a different filesystem.</div>';
+                    } else {
+                        html += '<div class="success" style="margin-bottom: 10px;">SPIFFS filesystem detected</div>';
+                    }
+
+                    // Filesystem info
+                    html += '<h4 style="margin-top: 15px;">SPIFFS Information</h4>';
+                    html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>Valid Header:</label><span>${spiffsInfo.valid ? 'Yes' : 'No (estimated)'}</span></div>`;
+                    if (spiffsInfo.magic) {
+                        html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${spiffsInfo.magic.toString(16).toUpperCase()}</span></div>`;
+                    }
+                    html += `<div class="info-item"><label>Block Size:</label><span>${spiffsInfo.blockSize} bytes (0x${spiffsInfo.blockSize.toString(16).toUpperCase()})</span></div>`;
+                    html += `<div class="info-item"><label>Page Size:</label><span>${spiffsInfo.pageSize} bytes</span></div>`;
+                    html += `<div class="info-item"><label>Total Size:</label><span>${formatBytes(spiffsInfo.totalSize)}</span></div>`;
+                    html += `<div class="info-item"><label>Files Found:</label><span>${spiffsInfo.filesCount}</span></div>`;
+                    html += '</div>';
+
+                    // Files list with grouping: active vs deleted/old versions
+                    if (spiffsInfo.files.length > 0) {
+                        const activeFiles = spiffsInfo.files.filter(f => !f.deleted);
+                        const deletedFiles = spiffsInfo.files.filter(f => f.deleted);
+
+                        // Active files
+                        html += `<h4 style="margin-top: 15px;">Files (${activeFiles.length} active${deletedFiles.length ? `, ${deletedFiles.length} deleted` : ''})</h4>`;
+                        if (activeFiles.length > 0) {
+                            html += '<table style="margin-top: 10px;"><thead><tr>';
+                            html += '<th>Name</th><th>Object ID</th><th>Size</th><th>Block</th>';
+                            html += '</tr></thead><tbody>';
+
+                            activeFiles.forEach((file, fileIdx) => {
+                                const fileId = `spiffsFile_${idx}_act_${fileIdx}`;
+                                window[fileId] = file;
+                                const clickable = file.size > 0;
+                                const cursorStyle = clickable ? 'cursor: pointer;' : '';
+                                const hoverClass = clickable ? 'class="fat-file-row"' : '';
+
+                                html += `<tr ${hoverClass} style="${cursorStyle}" ${clickable ? `onclick="downloadSPIFFSFile('${fileId}')"` : ''}>`;
+                                html += `<td><strong>${escapeHtml(file.name)}</strong></td>`;
+                                html += `<td class="mono">0x${file.objId.toString(16).toUpperCase().padStart(4, '0')}</td>`;
+                                html += `<td>${file.size > 0 ? formatBytes(file.size) : 'Unknown'}</td>`;
+                                html += `<td>${file.blockIdx}</td>`;
+                                html += '</tr>';
+                            });
+
+                            html += '</tbody></table>';
+                        } else {
+                            html += '<div style="margin-top: 10px; color: #888;">No active files found</div>';
+                        }
+
+                        // Deleted / old versions (collapsed group)
+                        html += `<div style="margin-top: 18px;">
+                                    <div class="expandable" style="padding:10px; border:1px solid #444; border-radius:6px; background:#2a2a2a;" onclick="(function(){
+                                        const el=document.getElementById('spiffsDeletedGroup-${idx}');
+                                        const ic=document.getElementById('spiffsDeletedToggle-${idx}');
+                                        if(!el||!ic) return; 
+                                        const vis=el.style.display!=='none';
+                                        el.style.display= vis ? 'none' : 'block';
+                                        ic.textContent = vis ? '▶' : '▼';
+                                    })()">
+                                        <span id="spiffsDeletedToggle-${idx}">▶</span>
+                                        <strong style="margin-left:6px;">Deleted / old versions</strong>
+                                        <span style="color:#aaa; margin-left:8px;">(${deletedFiles.length})</span>
+                                    </div>
+                                    <div id="spiffsDeletedGroup-${idx}" style="display:none; margin-top:8px;">
+                                `;
+                        if (deletedFiles.length > 0) {
+                            html += '<table style="margin-top: 6px;"><thead><tr>';
+                            html += '<th>Name</th><th>Object ID</th><th>Size</th><th>Block</th>';
+                            html += '</tr></thead><tbody>';
+
+                            deletedFiles.forEach((file, fileIdx) => {
+                                const fileId = `spiffsFile_${idx}_del_${fileIdx}`;
+                                window[fileId] = file;
+                                const clickable = file.size > 0;
+                                const cursorStyle = clickable ? 'cursor: pointer;' : '';
+                                const hoverClass = clickable ? 'class="fat-file-row"' : '';
+
+                                html += `<tr ${hoverClass} style="${cursorStyle}" ${clickable ? `onclick="downloadSPIFFSFile('${fileId}')"` : ''}>`;
+                                html += `<td><strong>${escapeHtml(file.name)}</strong></td>`;
+                                html += `<td class="mono">0x${file.objId.toString(16).toUpperCase().padStart(4, '0')}</td>`;
+                                html += `<td>${file.size > 0 ? formatBytes(file.size) : (file.size === 0 ? '0' : 'Unknown')}</td>`;
+                                html += `<td>${file.blockIdx}</td>`;
+                                html += '</tr>';
+                            });
+
+                            html += '</tbody></table>';
+                        } else {
+                            html += '<div style="margin-top: 8px; color: #888;">No deleted entries</div>';
+                        }
+                        html += '</div></div>';
+                    } else {
+                        html += '<div style="margin-top: 15px; color: #888;">No files found. The filesystem may be empty or the partition is not SPIFFS.</div>';
+                    }
+
+                    contentDiv.innerHTML = html;
+                } catch (error) {
+                    console.error('SPIFFS parsing error:', error);
+                    contentDiv.innerHTML = `<div class="error">Error parsing SPIFFS: ${error.message}</div>`;
+                }
+            }, 100);
+        }
+
+        async function downloadSPIFFSFile(fileId) {
+            const file = window[fileId];
+            if (!file || !currentSPIFFSInfo || !currentSPIFFSPartition) {
+                alert('File data not available');
+                return;
+            }
+
+            // Show loading indicator
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'spiffs-loading-indicator';
+            loadingDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: white; padding: 20px 40px; border-radius: 8px; z-index: 10000; font-size: 16px;';
+            loadingDiv.textContent = `Loading ${file.name}...`;
+            document.body.appendChild(loadingDiv);
+
+            try {
+                const fileData = await parser.readSPIFFSFile(currentSPIFFSPartition, file, currentSPIFFSInfo);
+                const blob = new Blob([fileData], { type: 'application/octet-stream' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = file.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('Download error:', error);
+                alert('Error downloading file: ' + error.message);
+            } finally {
+                // Remove loading indicator
+                const indicator = document.getElementById('spiffs-loading-indicator');
+                if (indicator) {
+                    document.body.removeChild(indicator);
+                }
+            }
+        }
 
         function parseFATPartition(idx) {
             const partition = parser.partitions[idx];
@@ -3244,6 +3419,17 @@
             const sizes = ['Bytes', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return String(text).replace(/[&<>"']/g, m => map[m]);
         }
 
         function showError(message) {
