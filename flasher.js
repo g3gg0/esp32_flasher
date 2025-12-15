@@ -237,6 +237,8 @@ class ESPFlasher {
             - Use a higher baud (e.g., 921600) for speed but you will not see reset messages.
 
             This does not apply to native USB/JTAG interfaces of course.
+
+            Normal ESP32 needs 115200 or 250000 for any operation.
         */
         this.initialBaudRate = 921600;
     }
@@ -615,6 +617,23 @@ class ESPFlasher {
         this.disconnected && this.disconnected();
     }
 
+    async setDtrRts(dtr, rts) {
+        if (!this.port) {
+            this.logError("Port is not open. Cannot set signals.");
+            return false;
+        }
+
+        try {
+            await this.port.setSignals({
+                dataTerminalReady: dtr,
+                requestToSend: rts,
+            });
+            return true;
+        } catch (error) {
+            this.logError(`Could not set signals: ${error}.`);
+            return false;
+        }
+    }
 
     /**
      * Attempts to put the ESP device into bootloader mode using RTS/DTR signals.
@@ -634,19 +653,15 @@ class ESPFlasher {
         this.logDebug("Automatic bootloader reset sequence...");
 
         try {
-            await this.port.setSignals({
-                dataTerminalReady: false,
-                requestToSend: false,
-            });
-            await this.port.setSignals({
-                dataTerminalReady: bootloader,
-                requestToSend: true,
-            });
-            await this.port.setSignals({
-                dataTerminalReady: false,
-                requestToSend: bootloader,
-            });
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            await this.setDtrRts(false, false);
+            await this.setDtrRts(true, true);
+            await this.setDtrRts(false, bootloader);
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            await this.setDtrRts(true, !bootloader);
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            await this.setDtrRts(false, false);
+
+            this.slipLayer.buffer = [];
 
             return true;
         } catch (error) {
