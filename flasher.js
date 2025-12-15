@@ -60,7 +60,7 @@ class SlipLayer {
         this.buffer = [];
         this.escaping = false;
         this.verbose = true;
-        this.logPackets = true;
+        this.logPackets = false;
     }
 
     /**
@@ -224,7 +224,7 @@ class ESPFlasher {
 
         /* Command execution lock to prevent concurrent command execution */
         this._commandLock = Promise.resolve();
-        this.logPackets = true;
+        this.logPackets = false;
 
         /*
         Technical Limitation:
