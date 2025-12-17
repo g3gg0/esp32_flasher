@@ -355,6 +355,76 @@ class ESPFlasher {
         });
     }
 
+    /**
+     * Reopen the existing serial port with a new baud rate
+     * Closes the current reader and port, then opens the same port at `baudRate`
+     * and restarts the RX loop without re-requesting the device.
+     * @async
+     * @param {number} baudRate - New baud rate to use
+     * @returns {Promise<void>}
+     * @throws {Error} If port is not selected/openable
+     */
+    async reopenPort(baudRate) {
+        if (!this.port) {
+            throw new Error('No port selected. Call openPort() first to choose a device.');
+        }
+
+        /* Stop existing reader if any */
+        if (this.reader) {
+            try {
+                await this.reader.cancel();
+            } catch (error) {
+                /* Ignore cancellation errors */
+            }
+            try {
+                this.reader.releaseLock();
+            } catch (e) {
+                /* Ignore release errors */
+            }
+            this.reader = null;
+        }
+
+        /* Close and reopen the same port with new baud */
+        try {
+            await this.port.close();
+        } catch (error) {
+            /* Ignore close errors, we will try to open regardless */
+        }
+
+        const newBaud = baudRate || this.initialBaudRate;
+        this.initialBaudRate = newBaud;
+        await this.port.open({ baudRate: newBaud });
+
+        /* Restart RX loop (do not re-register global listeners to avoid duplicates) */
+        this.reader = this.port.readable.getReader();
+
+        (async () => {
+            try {
+                while (true) {
+                    const { value, done } = await this.reader.read();
+                    if (done) {
+                        break;
+                    }
+                    if (value) {
+                        this.logSerialData(value, 'RX');
+                        this.parseResetMessages(value);
+                        const packets = this.slipLayer.decode(value);
+                        for (let packet of packets) {
+                            await this.processPacket(packet);
+                        }
+                    }
+                }
+            } catch (err) {
+                /* Reader loop terminated */
+            } finally {
+                if (this.reader) {
+                    try { this.reader.releaseLock(); } catch (e) { }
+                    this.reader = null;
+                }
+            }
+        })();
+    }
+
     parseResetMessages(data) {
         /*
         ESP32
