@@ -1010,7 +1010,7 @@ class ESP32Parser {
     async detectPartitionTableOffset(bootImage) {
         const sector = 0x1000;
         const start = bootImage?.endOffset ?? 0;
-        const searchLimit = Math.min(0x00020000, this.buffer.length);
+        const searchLimit = Math.min(0x00010000, this.buffer.length);
         const len = this.buffer.length;
         let ptr = start;
         let bestCandidate = null;
@@ -1171,349 +1171,21 @@ class ESP32Parser {
         return result;
     }
 
-    // Parse NVS (Non-Volatile Storage)
+    // Parse NVS (Non-Volatile Storage) — delegated to NVSParser class
     async parseNVS(partition) {
-        const NVS_SECTOR_SIZE = 4096;
-        const MAX_ENTRY_COUNT = 126;
-        const NVS_PAGE_STATE = {
-            UNINIT: 0xFFFFFFFF,
-            ACTIVE: 0xFFFFFFFE,
-            FULL: 0xFFFFFFFC,
-            FREEING: 0xFFFFFFF8,
-            CORRUPT: 0xFFFFFFF0
-        };
-
-        const pages = [];
-        const namespaces = new Map();  // Map from nsIndex to namespace name
-        namespaces.set(0, '');  // Index 0 is reserved
-
-        console.log(`[NVS Parse] Starting NVS parse for partition at offset 0x${partition.offset.toString(16)}, length 0x${partition.length.toString(16)}`);
-
-        // Prefetch entire partition
-        //await this.sparseImage.prefetch(partition.offset, Math.min(partition.length, this.buffer.length - partition.offset));
-
-        // Two-pass parsing:
-        // Pass 1: Collect all entries with namespace IDs (not resolved)
-        // Pass 2: Resolve namespace IDs to names after all namespace definitions are found
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
-
-            if (blockOffset + 64 > this.buffer.length) break;
-
-            const state = await this.view.getUint32(blockOffset, true);
-            const seq = await this.view.getUint32(blockOffset + 4, true);
-            const version = await this.view.getUint8(blockOffset + 8);
-            const crc32 = await this.view.getUint32(blockOffset + 28, true);
-
-            // Read state bitmap (32 bytes) starting at offset 32
-            const stateBitmap = new Uint8Array(32);
-            for (let i = 0; i < 32; i++) {
-                stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
-            }
-
-            let stateName = 'UNKNOWN';
-            if (state === NVS_PAGE_STATE.UNINIT) {
-                stateName = 'UNINIT';
-                console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: UNINIT, skipping`);
-                continue;
-            } else if (state === NVS_PAGE_STATE.ACTIVE) {
-                stateName = 'ACTIVE';
-            } else if (state === NVS_PAGE_STATE.FULL) {
-                stateName = 'FULL';
-            } else if (state === NVS_PAGE_STATE.FREEING) {
-                stateName = 'FREEING';
-            } else if (state === NVS_PAGE_STATE.CORRUPT) {
-                stateName = 'CORRUPT';
-                console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: CORRUPT, skipping`);
-                continue;
-            }
-
-            console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: state=${stateName}, seq=${seq}, version=${version}`);
-
-            const page = {
-                offset: blockOffset,
-                state: stateName,
-                seq: seq,
-                version: version,
-                crc32: crc32,
-                items: []
-            };
-
-            // Parse entries: collect namespace definitions first, then items
-            for (let entry = 0; entry < MAX_ENTRY_COUNT; entry++) {
-                const itemState = this.getNVSItemState(stateBitmap, entry);
-
-                console.log(`[NVS Parse]   Entry ${entry}: state=${itemState} (0=ERASED, 2=WRITTEN, 3=EMPTY)`);
-
-                if (itemState !== 2) { // Not WRITTEN
-                    continue;
-                }
-
-                const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
-
-                const nsIndex = await this.view.getUint8(entryOffset);
-                const datatype = await this.view.getUint8(entryOffset + 1);
-                const span = await this.view.getUint8(entryOffset + 2);
-
-                console.log(`[NVS Parse]     nsIndex=${nsIndex}, datatype=0x${datatype.toString(16)}, span=${span}`);
-
-                // Validate span early
-                if (span === 0 || span > 126) {
-                    console.warn(`[NVS Parse]     Invalid span ${span} at offset ${entryOffset}, skipping`);
-                    continue;
-                }
-
-                // Namespace definition - collect for later resolution
-                if (nsIndex === 0 && datatype !== 0xFF && datatype !== 0x00) {
-                    const key = await this.readString(entryOffset + 8, 16);
-                    const namespaceIndex = await this.view.getUint8(entryOffset + 24);
-                    console.log(`[NVS Parse]     Namespace definition: "${key}" -> index ${namespaceIndex}`);
-                    if (key && namespaceIndex < 255) {
-                        namespaces.set(namespaceIndex, key);
-                    }
-                    // Don't skip - still parse as an item so it appears in page.items
-                }
-
-                const item = await this.parseNVSItem(entryOffset, namespaces, partition);
-                if (item) {
-                    console.log(`[NVS Parse]     Parsed item: nsIndex=${item.nsIndex}, key="${item.key}", type=${item.typeName}, value=${JSON.stringify(item.value)}`);
-                    page.items.push(item);
-                    if (item.span > 1) {
-                        entry += item.span - 1;
-                    }
-                } else {
-                    console.log(`[NVS Parse]     Item parsing returned null, skipping`);
-                }
-            }
-
-            if (page.items.length > 0) {
-                console.log(`[NVS Parse] Page added with ${page.items.length} items`);
-                pages.push(page);
-            } else {
-                console.log(`[NVS Parse] Page has no items, not added`);
-            }
+        if (!this.sparseImage) {
+            throw new Error('ESP32Parser has no SparseImage for NVS parsing');
         }
-
-        // Pass 2: Resolve namespace IDs to names for all items
-        for (const page of pages) {
-            for (const item of page.items) {
-                if (item.nsIndex !== undefined && item.nsIndex !== 0) {
-                    item.namespace = namespaces.get(item.nsIndex) || `ns_${item.nsIndex}`;
-                }
-            }
+        if (!window.NVSParser) {
+            throw new Error('NVSParser not loaded. Include nvs-parser.js before esp32-parser.js');
         }
-
-        console.log(`[NVS Parse] Parse complete: ${pages.length} pages, ${pages.reduce((sum, p) => sum + p.items.length, 0)} total items`);
-        return pages;
+        if (!this._nvsParser) {
+            this._nvsParser = new NVSParser(this.sparseImage);
+        }
+        return await this._nvsParser.parse(partition);
     }
 
-    getNVSItemState(stateBitmap, index) {
-        const bmpIdx = Math.floor(index / 4);
-        const bmpBit = (index % 4) * 2;
-        return (stateBitmap[bmpIdx] >> bmpBit) & 3;
-    }
-
-    async parseNVSItem(offset, namespaces, partition) {
-        // Bounds check
-        if (offset + 32 > this.buffer.length) {
-            return null;
-        }
-
-        const nsIndex = await this.view.getUint8(offset);
-        const datatype = await this.view.getUint8(offset + 1);
-        const span = await this.view.getUint8(offset + 2);
-        const chunkIndex = await this.view.getUint8(offset + 3);
-        const crc32 = await this.view.getUint32(offset + 4, true);
-        const key = await this.readString(offset + 8, 16);
-
-        // Validate span
-        if (span === 0 || span > 126) {
-            console.warn(`Invalid span ${span} at offset ${offset}`);
-            return null;
-        }
-
-        // Skip entries with empty or invalid keys (unless it's a namespace definition)
-        if (nsIndex !== 0 && (!key || key.length === 0)) {
-            return null;
-        }
-
-        // Validate key has only printable characters for non-namespace entries
-        if (nsIndex !== 0) {
-            for (let i = 0; i < key.length; i++) {
-                const code = key.charCodeAt(i);
-                if (code < 32 || code > 126) {
-                    // Invalid character in key
-                    return null;
-                }
-            }
-        }
-
-        // Skip entries with datatype 0xFF (erased/invalid)
-        if (datatype === 0xFF || datatype === 0x00) {
-            return null;
-        }
-
-        // Check if this is an erased entry (nsIndex 0xFF)
-        if (nsIndex === 0xFF) {
-            return null;
-        }
-
-        const headerCrcCalc = ESP32Parser.crc32Header(this.buffer, offset);
-
-        const item = {
-            nsIndex: nsIndex,
-            datatype: datatype,
-            span: span,
-            chunkIndex: chunkIndex,
-            crc32: crc32 >>> 0,  /* Ensure unsigned */
-            headerCrcCalc: headerCrcCalc >>> 0,  /* Ensure unsigned */
-            headerCrcValid: (crc32 >>> 0) === (headerCrcCalc >>> 0),
-            key: key,
-            value: null,
-            typeName: this.getNVSTypeName(datatype),
-            isBlobChunk: false,  // Flag to identify blob chunks
-            offset: partition ? offset - partition.offset : offset,  // Offset within partition
-            entrySize: 32  // Base entry size, will be updated for variable-length types
-        };
-
-        // If it's a namespace definition
-        if (nsIndex === 0) {
-            const namespaceIndex = await this.view.getUint8(offset + 24);
-            item.value = namespaceIndex;
-            item.namespace = key;
-        } else {
-            // Regular item - store nsIndex for later resolution
-            // (namespace will be resolved in second pass)
-            
-            // Parse value based on type
-            switch (datatype) {
-                case 0x01: // U8
-                    item.value = await this.view.getUint8(offset + 24);
-                    break;
-                case 0x02: // U16
-                    item.value = await this.view.getUint16(offset + 24, true);
-                    break;
-                case 0x04: // U32
-                    item.value = await this.view.getUint32(offset + 24, true);
-                    break;
-                case 0x08: // U64
-                    item.value = (await this.view.getBigUint64(offset + 24, true)).toString();
-                    break;
-                case 0x11: // I8
-                    item.value = await this.view.getInt8(offset + 24);
-                    break;
-                case 0x12: // I16
-                    item.value = await this.view.getInt16(offset + 24, true);
-                    break;
-                case 0x14: // I32
-                    item.value = await this.view.getInt32(offset + 24, true);
-                    break;
-                case 0x18: // I64
-                    item.value = (await this.view.getBigInt64(offset + 24, true)).toString();
-                    break;
-                case 0x21: // String
-                    const strSize = await this.view.getUint16(offset + 24, true);
-                    const strCrc = (await this.view.getUint32(offset + 28, true)) >>> 0;  /* Ensure unsigned */
-                    // Bounds check for string size
-                    if (strSize > 0 && strSize < 4096 && offset + 32 + strSize <= this.buffer.length) {
-                        // Read actual string data bytes
-                        const strData = new Uint8Array(strSize);
-                        for (let i = 0; i < strSize; i++) {
-                            strData[i] = await this.view.getUint8(offset + 32 + i);
-                        }
-
-                        // Check if data is all 0xFF (erased)
-                        const allErased = strData.every(b => b === 0xFF);
-
-                        // Convert to string
-                        let strValue = '';
-                        for (let i = 0; i < strData.length; i++) {
-                            if (strData[i] === 0) break; // Null terminator
-                            if (strData[i] >= 32 && strData[i] <= 126) {
-                                strValue += String.fromCharCode(strData[i]);
-                            }
-                        }
-
-                        item.value = allErased ? '<erased>' : strValue;
-                        item.rawValue = strData;
-                        const dataCrcCalc = ESP32Parser.crc32(strData, 0, strSize);
-                        item.dataCrcStored = strCrc >>> 0;
-                        item.dataCrcCalc = dataCrcCalc >>> 0;
-                        item.dataCrcValid = (dataCrcCalc >>> 0) === (strCrc >>> 0);
-                        item.size = strSize;
-                        item.entrySize = 32 + strSize;
-                    } else {
-                        item.value = '<invalid string>';
-                        item.size = 0;
-                    }
-                    break;
-                case 0x42: // Blob
-                    const blobSize = await this.view.getUint16(offset + 24, true);
-                    const blobCrc = (await this.view.getUint32(offset + 28, true)) >>> 0;  /* Ensure unsigned */
-
-                    // Blob chunks (chunkIndex != 0xFF) are parts of multi-chunk blobs
-                    // They should be displayed individually to show the actual data
-                    // Mark them so we can show chunk info
-                    if (chunkIndex !== 0xFF) {
-                        item.chunkIndex = chunkIndex;
-                    }
-
-                    // Bounds check for blob size
-                    if (blobSize > 0 && blobSize < 4096 && offset + 32 + blobSize <= this.buffer.length) {
-                        const blobData = new Uint8Array(blobSize);
-                        for (let i = 0; i < blobSize; i++) {
-                            blobData[i] = await this.view.getUint8(offset + 32 + i);
-                        }
-
-                        // Check if data is all 0xFF (erased)
-                        const allErased = blobData.every(b => b === 0xFF);
-
-                        item.value = allErased ? '<erased>' : ESP32Parser.bytesToHex(blobData, ' ');
-                        item.rawValue = blobData;
-                        const dataCrcCalc = ESP32Parser.crc32(blobData, 0, blobSize);
-                        item.dataCrcStored = blobCrc >>> 0;
-                        item.dataCrcCalc = dataCrcCalc >>> 0;
-                        item.dataCrcValid = (dataCrcCalc >>> 0) === (blobCrc >>> 0);
-                        item.size = blobSize;
-                        item.entrySize = 32 + blobSize;
-                    } else {
-                        item.value = '<invalid blob>';
-                        item.size = 0;
-                    }
-                    break;
-                case 0x48: // Blob index
-                    item.totalSize = await this.view.getUint32(offset + 24, true);
-                    item.chunkCount = await this.view.getUint8(offset + 28);
-                    item.chunkStart = await this.view.getUint8(offset + 29);
-
-                    // Mark this as a blob index so we can hide it from display
-                    // The actual data is shown in the blob chunk entries (type 0x42)
-                    item.isBlobIndex = true;
-                    item.value = `${item.chunkCount} chunks, ${item.totalSize} bytes total`;
-                    break;
-            }
-        }
-
-        return item;
-    }
-
-    getNVSTypeName(datatype) {
-        const types = {
-            0x01: 'U8',
-            0x02: 'U16',
-            0x04: 'U32',
-            0x08: 'U64',
-            0x11: 'I8',
-            0x12: 'I16',
-            0x14: 'I32',
-            0x18: 'I64',
-            0x21: 'String',
-            0x42: 'Blob',
-            0x48: 'Blob Index'
-        };
-        return types[datatype] || `Unknown (0x${datatype.toString(16)})`;
-    }
+    // NVS helpers are now encapsulated in NVSParser
 
     // Get chip name from chip ID
     getChipName(chipId) {
@@ -1578,9 +1250,6 @@ class ESP32Parser {
         if (offset + 24 > this.buffer.length) {
             return { error: 'Offset out of bounds' };
         }
-
-        // Prefetch the data we'll need
-        //await this.sparseImage.prefetch(offset, Math.min(length, this.buffer.length - offset));
 
         const magic = await this.view.getUint8(offset);
         if (magic !== 0xE9) {
@@ -1898,9 +1567,6 @@ class ESP32Parser {
             return { error: 'Cannot read FAT boot sector' };
         }
 
-        // Prefetch the boot sector
-        //await this.sparseImage.prefetch(bootSectorOffset, 512);
-
         // Verify boot sector signature (0x55AA at offset 510-511)
         const bootSig = await this.view.getUint16(bootSectorOffset + 510, true);
         if (bootSig !== 0xAA55) {
@@ -2167,468 +1833,46 @@ class ESP32Parser {
      * Delete an NVS item by namespace and key
      */
     async deleteNVSItem(partition, namespace, key) {
-        const NVS_SECTOR_SIZE = 4096;
-        const MAX_ENTRY_COUNT = 126;
-
-        let nsIndex = -1;
-
-        // Scan to find namespace index and the item to delete
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
-
-            if (blockOffset + 64 > this.buffer.length) break;
-
-            const state = await this.view.getUint32(blockOffset, true);
-
-            // Skip uninitialized and corrupt pages
-            if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
-
-            // Read state bitmap
-            const stateBitmap = new Uint8Array(32);
-            for (let i = 0; i < 32; i++) {
-                stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
-            }
-
-            for (let entry = 0; entry < MAX_ENTRY_COUNT; entry++) {
-                const itemState = this.getNVSItemState(stateBitmap, entry);
-                if (itemState !== 2) continue; // Not WRITTEN
-
-                const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
-
-                const itemNsIndex = await this.view.getUint8(entryOffset);
-                const datatype = await this.view.getUint8(entryOffset + 1);
-                const span = await this.view.getUint8(entryOffset + 2);
-                const itemKey = await this.readString(entryOffset + 8, 16);
-
-                // Find namespace definition
-                if (itemNsIndex === 0 && datatype !== 0xFF && datatype !== 0x00) {
-                    const namespaceIndex = await this.view.getUint8(entryOffset + 24);
-                    if (itemKey === namespace) {
-                        nsIndex = namespaceIndex;
-                    }
-                    entry += span - 1;
-                    continue;
-                }
-
-                // Found the item to delete
-                if (nsIndex === itemNsIndex && itemKey === key) {
-                    // Erase the item entries (fill with 0xFF)
-                    for (let slice = 0; slice < span; slice++) {
-                        const sliceOffset = entryOffset + slice * 32;
-                        const erasedEntry = new Uint8Array(32);
-                        erasedEntry.fill(0xFF);
-                        this.sparseImage.write(sliceOffset, erasedEntry);
-
-                        // Update state bitmap to EMPTY (0x03)
-                        this.setNVSItemState(stateBitmap, entry + slice, 3);
-                    }
-
-                    // Write updated state bitmap
-                    this.sparseImage.write(blockOffset + 32, stateBitmap);
-                    return;
-                }
-
-                entry += span - 1;
-            }
+        if (!this._nvsParser) {
+            if (!window.NVSParser) throw new Error('NVSParser not loaded');
+            this._nvsParser = new NVSParser(this.sparseImage);
         }
-
-        throw new Error(`NVS item ${namespace}.${key} not found`);
+        return await this._nvsParser.deleteItem(partition, namespace, key);
     }
 
     /**
      * Set NVS item state in bitmap
      */
-    setNVSItemState(stateBitmap, index, state) {
-        const bmpIdx = Math.floor(index / 4);
-        const bmpBit = (index % 4) * 2;
-        stateBitmap[bmpIdx] &= ~(3 << bmpBit);
-        stateBitmap[bmpIdx] |= (state << bmpBit);
-    }
+    
 
     /**
      * Add a new NVS item
      */
     async addNVSNamespace(partition, namespaceName) {
-        const NVS_SECTOR_SIZE = 4096;
-        const MAX_ENTRY_COUNT = 126;
-
-        // Find the next available namespace index
-        let maxNsIndex = 0;
-        const usedIndices = new Set();
-
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
-
-            if (blockOffset + 64 > this.buffer.length) break;
-
-            const state = await this.view.getUint32(blockOffset, true);
-
-            // Skip uninitialized and corrupt pages
-            if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
-
-            // Read state bitmap
-            const stateBitmap = new Uint8Array(32);
-            for (let i = 0; i < 32; i++) {
-                stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
-            }
-
-            // Find all existing namespace definitions and their indices
-            for (let entry = 0; entry < MAX_ENTRY_COUNT; entry++) {
-                const itemState = this.getNVSItemState(stateBitmap, entry);
-                if (itemState !== 2) continue;
-
-                const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
-
-                const itemNsIndex = await this.view.getUint8(entryOffset);
-                const datatype = await this.view.getUint8(entryOffset + 1);
-                const span = await this.view.getUint8(entryOffset + 2);
-                const itemKey = await this.readString(entryOffset + 8, 16);
-
-                if (itemNsIndex === 0 && datatype !== 0xFF && datatype !== 0x00) {
-                    const existingIndex = await this.view.getUint8(entryOffset + 24);
-                    usedIndices.add(existingIndex);
-                    if (existingIndex > maxNsIndex) {
-                        maxNsIndex = existingIndex;
-                    }
-
-                    // Check if namespace already exists
-                    if (itemKey === namespaceName) {
-                        throw new Error(`Namespace "${namespaceName}" already exists with index ${existingIndex}`);
-                    }
-                }
-
-                entry += span - 1;
-            }
+        if (!this._nvsParser) {
+            if (!window.NVSParser) throw new Error('NVSParser not loaded');
+            this._nvsParser = new NVSParser(this.sparseImage);
         }
-
-        // Find next available index (prefer next sequential, but handle gaps)
-        let newNsIndex = 1;
-        while (usedIndices.has(newNsIndex) && newNsIndex < 255) {
-            newNsIndex++;
-        }
-
-        if (newNsIndex >= 255) {
-            throw new Error('No available namespace indices (max 254 namespaces)');
-        }
-
-        console.log(`[NVS AddNamespace] Creating namespace "${namespaceName}" with index ${newNsIndex}`);
-
-        // Create namespace definition entry (nsIndex=0, datatype=0x01, key=namespace name, value=index)
-        const entry = new Uint8Array(32);
-        entry[0] = 0; // nsIndex = 0 for namespace definitions
-        entry[1] = 0x01; // datatype = 0x01 for namespace
-        entry[2] = 1; // span = 1
-        entry[3] = 0xFF; // chunkIndex = 0xFF (not a chunk)
-        
-        // Write namespace name as key (max 15 chars + null terminator)
-        const keyBytes = new TextEncoder().encode(namespaceName);
-        for (let i = 0; i < Math.min(keyBytes.length, 15); i++) {
-            entry[8 + i] = keyBytes[i];
-        }
-        entry[8 + Math.min(keyBytes.length, 15)] = 0; // Null terminator
-
-        // Write namespace index at offset 24
-        entry[24] = newNsIndex;
-
-        // Calculate and write header CRC
-        const headerCrc = ESP32Parser.crc32Header(entry);
-        new DataView(entry.buffer).setUint32(4, headerCrc, true);
-
-        // Find an empty slot to write the namespace definition
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
-
-            if (blockOffset + 64 > this.buffer.length) break;
-
-            const state = await this.view.getUint32(blockOffset, true);
-
-            // Skip uninitialized and corrupt pages
-            if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
-
-            // Only write to ACTIVE or FULL pages
-            if (state !== 0xFFFFFFFE && state !== 0xFFFFFFFC) continue;
-
-            // Read state bitmap
-            const stateBitmap = new Uint8Array(32);
-            for (let i = 0; i < 32; i++) {
-                stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
-            }
-
-            // Find empty slot
-            for (let entryIdx = 0; entryIdx < MAX_ENTRY_COUNT; entryIdx++) {
-                const itemState = this.getNVSItemState(stateBitmap, entryIdx);
-                if (itemState === 3 || itemState === 0) { // EMPTY or ERASED
-                    const entryOffset = blockOffset + 64 + entryIdx * 32;
-
-                    console.log(`[NVS AddNamespace] Writing namespace definition at entry ${entryIdx}, offset 0x${entryOffset.toString(16)}`);
-
-                    // Write the namespace entry
-                    this.sparseImage.write(entryOffset, entry);
-
-                    // Update state bitmap to WRITTEN (0x02)
-                    this.setNVSItemState(stateBitmap, entryIdx, 2);
-
-                    // Write updated state bitmap
-                    this.sparseImage.write(blockOffset + 32, stateBitmap);
-
-                    console.log(`[NVS AddNamespace] Successfully added namespace "${namespaceName}" with index ${newNsIndex}`);
-                    return;
-                }
-            }
-        }
-
-        throw new Error('No space available in NVS partition for namespace definition');
+        return await this._nvsParser.addNamespace(partition, namespaceName);
     }
 
     async addNVSItem(partition, namespace, key, type, value) {
-        const NVS_SECTOR_SIZE = 4096;
-        const MAX_ENTRY_COUNT = 126;
-
-        // Create NVS item based on type
-        const item = this.createNVSItem(key, type, value);
-        let nsIndex = -1;
-
-        // Find namespace index and an empty slot
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
-
-            if (blockOffset + 64 > this.buffer.length) break;
-
-            const state = await this.view.getUint32(blockOffset, true);
-
-            // Skip uninitialized and corrupt pages
-            if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
-
-            // Read state bitmap
-            const stateBitmap = new Uint8Array(32);
-            for (let i = 0; i < 32; i++) {
-                stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
-            }
-
-            // First pass: find namespace index
-            for (let entry = 0; entry < MAX_ENTRY_COUNT; entry++) {
-                const itemState = this.getNVSItemState(stateBitmap, entry);
-                if (itemState !== 2) continue;
-
-                const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
-
-                const itemNsIndex = await this.view.getUint8(entryOffset);
-                const datatype = await this.view.getUint8(entryOffset + 1);
-                const span = await this.view.getUint8(entryOffset + 2);
-                const itemKey = await this.readString(entryOffset + 8, 16);
-
-                if (itemNsIndex === 0 && datatype !== 0xFF && datatype !== 0x00 && itemKey === namespace) {
-                    nsIndex = await this.view.getUint8(entryOffset + 24);
-                }
-
-                entry += span - 1;
-            }
-
-            // Second pass: find empty slot
-            if (nsIndex !== -1) {
-                for (let entry = 0; entry < MAX_ENTRY_COUNT && (entry + item.span - 1 < MAX_ENTRY_COUNT); entry++) {
-                    // Check if we have enough consecutive empty slots
-                    let hasSpace = true;
-                    for (let slice = 0; slice < item.span; slice++) {
-                        const sliceState = this.getNVSItemState(stateBitmap, entry + slice);
-                        if (sliceState === 2) { // WRITTEN
-                            hasSpace = false;
-                            break;
-                        }
-                    }
-
-                    if (hasSpace) {
-                        const entryOffset = blockOffset + 64 + entry * 32;
-
-                        // Set the namespace index in the first entry
-                        item.entries[0][0] = nsIndex;
-                        
-                        // Recalculate header CRC with correct nsIndex
-                        const headerCrc = ESP32Parser.crc32Header(item.entries[0]);
-                        new DataView(item.entries[0].buffer).setUint32(4, headerCrc, true);
-
-                        console.log(`[NVS Add] Writing item at entry ${entry}, nsIndex=${nsIndex}, key="${item.entries[0].slice(8, 24)}", span=${item.span}`);
-
-                        // Write item entries
-                        for (let slice = 0; slice < item.entries.length; slice++) {
-                            const sliceOffset = entryOffset + slice * 32;
-                            this.sparseImage.write(sliceOffset, item.entries[slice]);
-
-                            // Update state bitmap to WRITTEN (0x02)
-                            this.setNVSItemState(stateBitmap, entry + slice, 2);
-                        }
-
-                        // Write updated state bitmap
-                        this.sparseImage.write(blockOffset + 32, stateBitmap);
-                        
-                        console.log(`[NVS Add] Successfully added item to partition`);
-                        return;
-                    }
-
-                    // Skip entries that are written
-                    const itemState = this.getNVSItemState(stateBitmap, entry);
-                    if (itemState === 2) {
-                        const entryOffset = blockOffset + 64 + entry * 32;
-                        const entrySpan = await this.view.getUint8(entryOffset + 2);
-                        entry += entrySpan - 1;
-                    }
-                }
-            }
+        if (!this._nvsParser) {
+            if (!window.NVSParser) throw new Error('NVSParser not loaded');
+            this._nvsParser = new NVSParser(this.sparseImage);
         }
-
-        throw new Error(`No space available in NVS partition or namespace ${namespace} not found`);
+        return await this._nvsParser.addItem(partition, namespace, key, type, value);
     }
-
+    
     /**
-     * Create NVS item entries based on type and value
+     * Update an existing NVS item by namespace/key
      */
-    createNVSItem(key, type, value) {
-        const typeMap = {
-            'U8': 0x01, 'U16': 0x02, 'U32': 0x04, 'U64': 0x08,
-            'I8': 0x11, 'I16': 0x12, 'I32': 0x14, 'I64': 0x18,
-            'String': 0x21, 'Blob': 0x42
-        };
-
-        const datatype = typeMap[type];
-        if (!datatype) {
-            throw new Error(`Unknown type: ${type}`);
+    async updateNVSItem(partition, namespace, key, type, value) {
+        if (!this._nvsParser) {
+            if (!window.NVSParser) throw new Error('NVSParser not loaded');
+            this._nvsParser = new NVSParser(this.sparseImage);
         }
-
-        const entry = new Uint8Array(32);
-        entry.fill(0xFF);
-
-        // Header (common for all types)
-        entry[0] = 0; // nsIndex (will be set later)
-        entry[1] = datatype;
-        entry[3] = 0xFF; // chunkIndex
-
-        // Key (max 15 chars + null terminator)
-        const keyBytes = new TextEncoder().encode(key.substring(0, 15));
-        entry.set(keyBytes, 8);
-        entry[8 + keyBytes.length] = 0;
-
-        const entries = [];
-
-        // Value based on type
-        switch (type) {
-            case 'U8': {
-                const val = parseInt(value);
-                if (isNaN(val) || val < 0 || val > 255) throw new Error('Invalid U8 value');
-                entry[24] = val;
-                entry[2] = 1; // span
-                entries.push(entry);
-                break;
-            }
-            case 'U16': {
-                const val = parseInt(value);
-                if (isNaN(val) || val < 0 || val > 65535) throw new Error('Invalid U16 value');
-                new DataView(entry.buffer).setUint16(24, val, true);
-                entry[2] = 1;
-                entries.push(entry);
-                break;
-            }
-            case 'U32': {
-                const val = parseInt(value);
-                if (isNaN(val) || val < 0 || val > 4294967295) throw new Error('Invalid U32 value');
-                new DataView(entry.buffer).setUint32(24, val, true);
-                entry[2] = 1;
-                entries.push(entry);
-                break;
-            }
-            case 'U64': {
-                const val = BigInt(value);
-                if (val < 0n || val > 18446744073709551615n) throw new Error('Invalid U64 value');
-                new DataView(entry.buffer).setBigUint64(24, val, true);
-                entry[2] = 1;
-                entries.push(entry);
-                break;
-            }
-            case 'I8': {
-                const val = parseInt(value);
-                if (isNaN(val) || val < -128 || val > 127) throw new Error('Invalid I8 value');
-                new DataView(entry.buffer).setInt8(24, val);
-                entry[2] = 1;
-                entries.push(entry);
-                break;
-            }
-            case 'I16': {
-                const val = parseInt(value);
-                if (isNaN(val) || val < -32768 || val > 32767) throw new Error('Invalid I16 value');
-                new DataView(entry.buffer).setInt16(24, val, true);
-                entry[2] = 1;
-                entries.push(entry);
-                break;
-            }
-            case 'I32': {
-                const val = parseInt(value);
-                if (isNaN(val) || val < -2147483648 || val > 2147483647) throw new Error('Invalid I32 value');
-                new DataView(entry.buffer).setInt32(24, val, true);
-                entry[2] = 1;
-                entries.push(entry);
-                break;
-            }
-            case 'I64': {
-                const val = BigInt(value);
-                if (val < -9223372036854775808n || val > 9223372036854775807n) throw new Error('Invalid I64 value');
-                new DataView(entry.buffer).setBigInt64(24, val, true);
-                entry[2] = 1;
-                entries.push(entry);
-                break;
-            }
-            case 'String': {
-                const strBytes = new TextEncoder().encode(value);
-                if (strBytes.length > 64) throw new Error('String too long (max 64 bytes)');
-                
-                new DataView(entry.buffer).setUint16(24, strBytes.length, true);
-                const dataCrc = ESP32Parser.crc32(strBytes);
-                new DataView(entry.buffer).setUint32(28, dataCrc, true);
-                
-                const span = 1 + Math.ceil(strBytes.length / 32);
-                entry[2] = span;
-                entries.push(entry);
-                
-                // Add data entries
-                const dataEntry = new Uint8Array(32 * (span - 1));
-                dataEntry.fill(0xFF);
-                dataEntry.set(strBytes, 0);
-                
-                for (let i = 0; i < span - 1; i++) {
-                    entries.push(dataEntry.slice(i * 32, (i + 1) * 32));
-                }
-                break;
-            }
-            case 'Blob': {
-                // Parse hex string
-                const hexBytes = value.split(/\s+/).filter(b => b).map(b => parseInt(b, 16));
-                if (hexBytes.some(b => isNaN(b) || b < 0 || b > 255)) {
-                    throw new Error('Invalid hex bytes');
-                }
-                if (hexBytes.length > 64) throw new Error('Blob too long (max 64 bytes)');
-                
-                const blobData = new Uint8Array(hexBytes);
-                new DataView(entry.buffer).setUint16(24, blobData.length, true);
-                const dataCrc = ESP32Parser.crc32(blobData);
-                new DataView(entry.buffer).setUint32(28, dataCrc, true);
-                
-                const span = 1 + Math.ceil(blobData.length / 32);
-                entry[2] = span;
-                entry[3] = 0; // chunkIndex for first chunk
-                entries.push(entry);
-                
-                // Add data entries
-                const dataEntry = new Uint8Array(32 * (span - 1));
-                dataEntry.fill(0xFF);
-                dataEntry.set(blobData, 0);
-                
-                for (let i = 0; i < span - 1; i++) {
-                    entries.push(dataEntry.slice(i * 32, (i + 1) * 32));
-                }
-                break;
-            }
-        }
+        return await this._nvsParser.updateItem(partition, namespace, key, type, value);
 
         // Calculate and set header CRC for first entry
         const headerCrc = ESP32Parser.crc32Header(entries[0]);
@@ -2668,7 +1912,7 @@ class ESP32Parser {
         let validHeader = false;
 
         console.log(`[SPIFFS] Scanning for magic number...`);
-        
+
         // Try to find SPIFFS header
         // SPIFFS v0.3.7+ uses a different header structure
         for (let i = 0; i < Math.min(512, headerData.length - 4); i += 4) {
@@ -2683,10 +1927,10 @@ class ESP32Parser {
                         const cfgPhysSize = view.getUint32(i + 4, true);
                         const cfgLogBlockSize = view.getUint32(i + 8, true);
                         const cfgLogPageSize = view.getUint32(i + 12, true);
-                        
+
                         console.log(`[SPIFFS] Config: phys=${cfgPhysSize}, blockSize=${cfgLogBlockSize}, pageSize=${cfgLogPageSize}`);
-                        
-                        if (cfgLogBlockSize > 0 && cfgLogBlockSize <= 65536 && 
+
+                        if (cfgLogBlockSize > 0 && cfgLogBlockSize <= 65536 &&
                             cfgLogPageSize > 0 && cfgLogPageSize <= 2048) {
                             blockSizeActual = cfgLogBlockSize;
                             pageSize = cfgLogPageSize;
@@ -2709,10 +1953,10 @@ class ESP32Parser {
 
         const files = [];
         const pagesPerBlock = Math.floor(blockSizeActual / pageSize);
-        
+
         console.log(`[SPIFFS] Config: blockSize=${blockSizeActual}, pageSize=${pageSize}, pagesPerBlock=${pagesPerBlock}`);
         console.log(`[SPIFFS] Scanning ${Math.floor(size / blockSizeActual)} blocks...`);
-        
+
         // Scan blocks and pages
         // SPIFFS layout: Each page (0x100 bytes) contains either:
         //   - Object index header (span_ix==0): metadata + filename at offset 13+
@@ -2721,34 +1965,34 @@ class ESP32Parser {
         // Next entry starts at next 0x100 boundary after file content ends
         for (let blockIdx = 0; blockIdx < Math.floor(size / blockSizeActual); blockIdx++) {
             const blockOffset = offset + blockIdx * blockSizeActual;
-            
+
             console.log(`[SPIFFS] ===== Block ${blockIdx}: offset 0x${blockOffset.toString(16)} =====`);
-            
+
             // Read entire block for analysis
             const blockData = await this.buffer.slice_async(blockOffset, blockOffset + Math.min(blockSizeActual, size - blockIdx * blockSizeActual));
-            
+
             // Scan each page (0x100 = 256 bytes boundary)
             // Each page starts with a header, then content follows
             for (let pageIdx = 0; pageIdx < pagesPerBlock; pageIdx++) {
                 const pageStart = pageIdx * pageSize;
                 if (pageStart + pageSize > blockData.length) break;
-                
+
                 /* Parse SPIFFS page header per spiffs_nucleus.h */
                 /* typedef struct SPIFFS_PACKED { */
                 /*   spiffs_obj_id obj_id;     // Offset 0-1: 2 bytes */
                 /*   spiffs_span_ix span_ix;   // Offset 2-3: 2 bytes */
                 /*   u8_t flags;               // Offset 4: 1 byte */
                 /* } spiffs_page_header; */
-                
+
                 const objId = blockData[pageStart] | (blockData[pageStart + 1] << 8);
                 const span = blockData[pageStart + 2] | (blockData[pageStart + 3] << 8);
                 const flags = blockData[pageStart + 4];
-                
+
                 // Skip completely erased pages
                 if (objId === 0xFFFF || objId === 0x0000) {
                     continue;
                 }
-                
+
                 // For object index header pages (span_ix == 0):
                 /* spiffs_page_object_ix_header layout: */
                 /* Offset 0-4: page_header */
@@ -2756,25 +2000,25 @@ class ESP32Parser {
                 /* Offset 8-11: size (u32_t) */
                 /* Offset 12: type (spiffs_obj_type, u8_t) */
                 /* Offset 13+: name[SPIFFS_OBJ_NAME_LEN] */
-                
+
                 let fileSize = 0;
                 let type = 0;
                 let nameStr = '[NO NAME]';
-                
+
                 // Only parse object index header if span_ix == 0
                 const isIndexHeader = (span === 0);
-                
+
                 if (isIndexHeader) {
                     // Extract size (offset 8-11, unsigned)
                     if (pageStart + 12 <= blockData.length) {
                         fileSize = (blockData[pageStart + 8] |
-                                  (blockData[pageStart + 9] << 8) |
-                                  (blockData[pageStart + 10] << 16) |
-                                  (blockData[pageStart + 11] << 24)) >>> 0;
+                            (blockData[pageStart + 9] << 8) |
+                            (blockData[pageStart + 10] << 16) |
+                            (blockData[pageStart + 11] << 24)) >>> 0;
                     }
                     // Extract type (offset 12)
                     type = blockData[pageStart + 12];
-                    
+
                     // Extract name (offset 13+)
                     const nameStartIdx = pageStart + 13;
                     if (nameStartIdx < blockData.length) {
@@ -2792,24 +2036,24 @@ class ESP32Parser {
                         }
                     }
                 }
-                
+
                 // Check deletion/invalidation based on flags
                 // SPIFFS_PH_FLAG_DELET (1<<7) = 0x80 - if 0, page is deleted
                 const isDeleted = (flags & 0x80) === 0;
-                
+
                 // Dump all header fields
                 console.log(`[SPIFFS] ===== Page at Block ${blockIdx}, Page ${pageIdx} (offset 0x${pageStart.toString(16)}) =====`);
                 console.log(`[SPIFFS]   Offset 0-1: obj_id = 0x${objId.toString(16).padStart(4, '0')}`);
                 console.log(`[SPIFFS]   Offset 2-3: span_ix = ${span} (0x${span.toString(16).padStart(4, '0')})`);
                 console.log(`[SPIFFS]   Offset 4:   flags = 0x${flags.toString(16).padStart(2, '0')} ${isDeleted ? '[DELETED]' : '[VALID]'}`);
-                
+
                 if (isIndexHeader) {
                     const sizeIsUndefined = fileSize === 0xFFFFFFFF;
                     const sizeLog = sizeIsUndefined ? 'undefined (0xFFFFFFFF)' : `${fileSize} bytes (0x${fileSize.toString(16)})`;
                     console.log(`[SPIFFS]   Offset 8-11: size = ${sizeLog}`);
                     console.log(`[SPIFFS]   Offset 12:   type = ${type} (${type === 0x01 ? 'FILE' : type === 0x02 ? 'DIR' : 'UNKNOWN'})`);
                     console.log(`[SPIFFS]   Offset 13+:  name = "${nameStr}"`);
-                    
+
                     // Add all files including duplicates and deleted files
                     if ((type === 0x01 || type === 0x02) && nameStr !== '[NO NAME]' && nameStr.startsWith('/')) {
                         const displayName = isDeleted ? `${nameStr} (deleted)` : nameStr;
@@ -2852,13 +2096,13 @@ class ESP32Parser {
         // - Object headers with printable filenames
         // - Non-erased object IDs with valid flags
         let foundPattern = false;
-        
+
         for (let i = 0; i < Math.min(2048, data.length - 64); i += 256) {
             // Check for object index pattern at page boundaries
             const b0 = data[i];
             const b1 = data[i + 1];
             const flags = data[i + 2];
-            
+
             // Valid object IDs (not erased, not zero)
             const objId = b0 | (b1 << 8);
             if (objId !== 0xFFFF && objId !== 0x0000 && flags !== 0xFF) {
@@ -2873,7 +2117,7 @@ class ESP32Parser {
                 if (foundPattern) break;
             }
         }
-        
+
         return foundPattern;
     }
 
