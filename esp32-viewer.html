@@ -976,8 +976,9 @@
 
     <script src="chips.js"></script>
     <script src="flasher.js"></script>
-    <!-- Load NVS parser before ESP32 parser to enable delegation -->
+    <!-- Load parser helpers before ESP32 parser to enable delegation -->
     <script src="nvs-parser.js"></script>
+    <script src="fat-parser.js"></script>
     <script src="esp32-parser.js"></script>
     <script>
         let parser = null;

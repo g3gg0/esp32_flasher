@@ -1471,279 +1471,35 @@ class ESP32Parser {
         };
     }
 
-    // Parse FAT filesystem (Wear Leveling)
+    // FAT: delegate to FATParser
     async parseWearLeveling(partition) {
-        const WL_SECTOR_SIZE = 0x1000;
-        const WL_STATE_RECORD_SIZE = 16;
-        const WL_STATE_COPY_COUNT = 2;
-        const offset = partition.offset;
-        const length = partition.length;
-
-        const totalSectors = Math.floor(length / WL_SECTOR_SIZE);
-        const wlStateSize = 64 + WL_STATE_RECORD_SIZE * totalSectors;
-        const wlStateSectors = Math.ceil(wlStateSize / WL_SECTOR_SIZE);
-        const wlSectorsSize = (wlStateSectors * WL_SECTOR_SIZE * WL_STATE_COPY_COUNT) + WL_SECTOR_SIZE;
-        const fatSectors = totalSectors - 1 - (WL_STATE_COPY_COUNT * wlStateSectors);
-
-        // Read WL state from end of partition
-        const stateOffset = offset + length - wlSectorsSize;
-
-        if (stateOffset + 64 > this.buffer.length) {
-            return { error: 'Cannot read wear leveling state' };
+        if (!this._fatParser) {
+            if (!window.FATParser) throw new Error('FATParser not loaded');
+            this._fatParser = new FATParser(this.sparseImage);
         }
-
-        // Prefetch the WL state region
-        //await this.sparseImage.prefetch(stateOffset, Math.min(wlStateSize, this.buffer.length - stateOffset));
-
-        const wlState = {
-            pos: await this.view.getUint32(stateOffset, true),
-            maxPos: await this.view.getUint32(stateOffset + 4, true),
-            moveCount: await this.view.getUint32(stateOffset + 8, true),
-            accessCount: await this.view.getUint32(stateOffset + 12, true),
-            maxCount: await this.view.getUint32(stateOffset + 16, true),
-            blockSize: await this.view.getUint32(stateOffset + 20, true),
-            version: await this.view.getUint32(stateOffset + 24, true),
-            deviceId: await this.view.getUint32(stateOffset + 28, true)
-        };
-
-        // Count non-empty state records after WL state header
-        let totalRecords = 0;
-        let recordOffset = stateOffset + 64; // After WL_STATE_HEADER_SIZE
-
-        for (let i = 0; i < wlStateSize && recordOffset + WL_STATE_RECORD_SIZE <= this.buffer.length; i++) {
-            // Check if record is empty (all 0xFF)
-            let isEmpty = true;
-            for (let j = 0; j < WL_STATE_RECORD_SIZE; j++) {
-                if ((await this.view.getUint8(recordOffset + j)) !== 0xFF) {
-                    isEmpty = false;
-                    break;
-                }
-            }
-            if (isEmpty) {
-                break;
-            }
-            totalRecords++;
-            recordOffset += WL_STATE_RECORD_SIZE;
-        }
-
-        return {
-            wlState: wlState,
-            totalSectors: totalSectors,
-            wlSectorsSize: wlSectorsSize,
-            fatSectors: fatSectors,
-            totalRecords: totalRecords,
-            dataOffset: offset,
-            dataSize: length - wlSectorsSize
-        };
+        return await this._fatParser.parseWearLeveling(partition);
     }
 
     // Translate sector through wear leveling
     wlTranslateSector(wlInfo, sector) {
-        // Apply wear leveling translation
-        let translated = (sector + wlInfo.wlState.moveCount) % wlInfo.fatSectors;
-
-        // Skip dummy sector if beyond total_records
-        if (translated >= wlInfo.totalRecords) {
-            translated += 1;
+        if (!this._fatParser) {
+            if (!window.FATParser) throw new Error('FATParser not loaded');
+            this._fatParser = new FATParser(this.sparseImage);
         }
-        return translated;
+        return this._fatParser.wlTranslateSector(wlInfo, sector);
     }
 
     // Parse FAT filesystem with wear leveling
     async parseFATFilesystem(partition) {
-        const WL_SECTOR_SIZE = 0x1000;
-
-        // Parse wear leveling first
-        const wlInfo = await this.parseWearLeveling(partition);
-        if (wlInfo.error) {
-            return { error: wlInfo.error };
+        if (!this._fatParser) {
+            if (!window.FATParser) throw new Error('FATParser not loaded');
+            this._fatParser = new FATParser(this.sparseImage);
         }
-
-        // Read FAT boot sector (translated through WL)
-        const sector0Physical = this.wlTranslateSector(wlInfo, 0);
-        const bootSectorOffset = partition.offset + sector0Physical * WL_SECTOR_SIZE;
-
-        if (bootSectorOffset + 512 > this.buffer.length) {
-            return { error: 'Cannot read FAT boot sector' };
-        }
-
-        // Verify boot sector signature (0x55AA at offset 510-511)
-        const bootSig = await this.view.getUint16(bootSectorOffset + 510, true);
-        if (bootSig !== 0xAA55) {
-            return { error: `Invalid boot sector signature: 0x${bootSig.toString(16).toUpperCase()} (expected 0xAA55)` };
-        }
-
-        // Parse FAT16/FAT12 boot sector
-        const bytesPerSector = await this.view.getUint16(bootSectorOffset + 11, true);
-        const sectorsPerCluster = await this.view.getUint8(bootSectorOffset + 13);
-        const reservedSectors = await this.view.getUint16(bootSectorOffset + 14, true);
-        const numFATs = await this.view.getUint8(bootSectorOffset + 16);
-        const rootEntryCount = await this.view.getUint16(bootSectorOffset + 17, true);
-        const totalSectors16 = await this.view.getUint16(bootSectorOffset + 19, true);
-        const sectorsPerFAT = await this.view.getUint16(bootSectorOffset + 22, true);
-        const totalSectors32 = await this.view.getUint32(bootSectorOffset + 32, true);
-
-        // Basic validation
-        if (bytesPerSector === 0 || sectorsPerCluster === 0 || numFATs === 0) {
-            return { error: 'Invalid FAT boot sector parameters' };
-        }
-
-        const totalSectors = totalSectors16 || totalSectors32;
-        const rootDirSectors = Math.ceil((rootEntryCount * 32) / bytesPerSector);
-        const firstDataSector = reservedSectors + (numFATs * sectorsPerFAT) + rootDirSectors;
-        const dataSectors = totalSectors - firstDataSector;
-        const totalClusters = Math.floor(dataSectors / sectorsPerCluster);
-
-        // Determine FAT type
-        let fatType;
-        if (totalClusters < 4085) {
-            fatType = 'FAT12';
-        } else if (totalClusters < 65525) {
-            fatType = 'FAT16';
-        } else {
-            fatType = 'FAT32';
-        }
-
-        // Read volume label
-        let volumeLabel = '';
-        for (let i = 0; i < 11; i++) {
-            const c = await this.view.getUint8(bootSectorOffset + 43 + i);
-            if (c === 0 || c === 0x20) break;
-            volumeLabel += String.fromCharCode(c);
-        }
-
-        // Parse root directory
-        const rootDirOffset = partition.offset +
-            this.wlTranslateSector(wlInfo, reservedSectors + numFATs * sectorsPerFAT) * WL_SECTOR_SIZE;
-
-        const files = await this.parseFATDirectory(partition, wlInfo, rootDirOffset, rootEntryCount,
-            bytesPerSector, sectorsPerCluster, reservedSectors, numFATs, sectorsPerFAT, '', true);
-
-        return {
-            fatType: fatType,
-            volumeLabel: volumeLabel || '(no label)',
-            bytesPerSector: bytesPerSector,
-            sectorsPerCluster: sectorsPerCluster,
-            reservedSectors: reservedSectors,
-            numFATs: numFATs,
-            sectorsPerFAT: sectorsPerFAT,
-            totalSectors: totalSectors,
-            totalClusters: totalClusters,
-            files: files,
-            wearLeveling: wlInfo
-        };
+        return await this._fatParser.parse(partition);
     }
 
     // Parse a FAT directory (root or subdirectory)
-    async parseFATDirectory(partition, wlInfo, dirOffset, maxEntries, bytesPerSector, sectorsPerCluster,
-        reservedSectors, numFATs, sectorsPerFAT, parentPath, isRoot = false) {
-        const WL_SECTOR_SIZE = 0x1000;
-        const files = [];
-        const firstDataSector = reservedSectors + numFATs * sectorsPerFAT +
-            Math.ceil((maxEntries || 512) * 32 / bytesPerSector);
-
-        const maxIter = isRoot ? maxEntries : 512; // Limit iterations for subdirs
-
-        // Prefetch the directory region
-        //await this.sparseImage.prefetch(dirOffset, Math.min(maxIter * 32, this.buffer.length - dirOffset));
-
-        for (let i = 0; i < maxIter; i++) {
-            const entryOffset = dirOffset + i * 32;
-
-            if (entryOffset + 32 > this.buffer.length) break;
-
-            const firstByte = await this.view.getUint8(entryOffset);
-
-            // End of directory
-            if (firstByte === 0x00) break;
-
-            // Deleted or special entry
-            if (firstByte === 0xE5 || firstByte === 0x05) continue;
-
-            // Long file name entry
-            const attr = await this.view.getUint8(entryOffset + 11);
-            if (attr === 0x0F) continue;
-
-            // Skip volume label entries in directory listing
-            if (attr & 0x08) continue;
-
-            // Read short filename
-            let name = '';
-            for (let j = 0; j < 8; j++) {
-                const c = await this.view.getUint8(entryOffset + j);
-                if (c !== 0x20 && c >= 0x20 && c <= 0x7E) name += String.fromCharCode(c);
-            }
-
-            let ext = '';
-            for (let j = 0; j < 3; j++) {
-                const c = await this.view.getUint8(entryOffset + 8 + j);
-                if (c !== 0x20 && c >= 0x20 && c <= 0x7E) ext += String.fromCharCode(c);
-            }
-
-            // Skip if name is invalid or special directories
-            if (name.length === 0 || name === '.' || name === '..') continue;
-
-            if (ext) name += '.' + ext;
-
-            const size = await this.view.getUint32(entryOffset + 28, true);
-            const cluster = await this.view.getUint16(entryOffset + 26, true);
-
-            // Parse attributes
-            const attributes = [];
-            if (attr & 0x01) attributes.push('Read-only');
-            if (attr & 0x02) attributes.push('Hidden');
-            if (attr & 0x04) attributes.push('System');
-            if (attr & 0x08) attributes.push('Volume');
-            if (attr & 0x10) attributes.push('Directory');
-            if (attr & 0x20) attributes.push('Archive');
-
-            // Parse date/time
-            const date = await this.view.getUint16(entryOffset + 24, true);
-            const time = await this.view.getUint16(entryOffset + 22, true);
-
-            const year = ((date >> 9) & 0x7F) + 1980;
-            const month = (date >> 5) & 0x0F;
-            const day = date & 0x1F;
-            const hour = (time >> 11) & 0x1F;
-            const minute = (time >> 5) & 0x3F;
-            const second = (time & 0x1F) * 2;
-
-            const isDirectory = !!(attr & 0x10);
-            const fullPath = parentPath ? `${parentPath}/${name}` : name;
-
-            const fileEntry = {
-                name: name,
-                path: fullPath,
-                size: size,
-                cluster: cluster,
-                attributes: attributes,
-                isDirectory: isDirectory,
-                date: `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`,
-                time: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`
-            };
-
-            files.push(fileEntry);
-
-            // Recursively parse subdirectory if it's a directory with valid cluster
-            if (isDirectory && cluster >= 2 && cluster < 0xFFF0) {
-                // Calculate cluster offset
-                const clusterSector = firstDataSector + (cluster - 2) * sectorsPerCluster;
-                const clusterOffset = partition.offset +
-                    this.wlTranslateSector(wlInfo, clusterSector) * WL_SECTOR_SIZE;
-
-                if (clusterOffset + sectorsPerCluster * WL_SECTOR_SIZE <= this.buffer.length) {
-                    // Parse subdirectory entries
-                    const subFiles = await this.parseFATDirectory(partition, wlInfo, clusterOffset, null,
-                        bytesPerSector, sectorsPerCluster, reservedSectors, numFATs, sectorsPerFAT, fullPath, false);
-
-                    // Add children to the directory entry
-                    fileEntry.children = subFiles;
-                }
-            }
-        }
-
-        return files;
-    }
+    // Internal FAT directory parsing moved to FATParser
 
     // Get partition by label
     getPartition(label) {
@@ -1752,81 +1508,20 @@ class ESP32Parser {
 
     // Read FAT table entry
     async readFATEntry(partition, wlInfo, fatOffset, cluster, fatType) {
-        const WL_SECTOR_SIZE = 0x1000;
-
-        if (fatType === 'FAT12') {
-            const entryOffset = fatOffset + Math.floor(cluster * 1.5);
-            const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
-            const sectorOffset = partition.offset + this.wlTranslateSector(wlInfo, sector) * WL_SECTOR_SIZE;
-            const byteOffset = entryOffset % WL_SECTOR_SIZE;
-
-            //await this.sparseImage.prefetch(sectorOffset + byteOffset, 2);
-            const val = await this.view.getUint16(sectorOffset + byteOffset, true);
-            if (cluster & 1) {
-                return val >> 4;
-            } else {
-                return val & 0x0FFF;
-            }
-        } else if (fatType === 'FAT16') {
-            const entryOffset = fatOffset + cluster * 2;
-            const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
-            const sectorOffset = partition.offset + this.wlTranslateSector(wlInfo, sector) * WL_SECTOR_SIZE;
-            const byteOffset = entryOffset % WL_SECTOR_SIZE;
-
-            //await this.sparseImage.prefetch(sectorOffset + byteOffset, 2);
-            return await this.view.getUint16(sectorOffset + byteOffset, true);
-        } else { // FAT32
-            const entryOffset = fatOffset + cluster * 4;
-            const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
-            const sectorOffset = partition.offset + this.wlTranslateSector(wlInfo, sector) * WL_SECTOR_SIZE;
-            const byteOffset = entryOffset % WL_SECTOR_SIZE;
-
-            //await this.sparseImage.prefetch(sectorOffset + byteOffset, 4);
-            return (await this.view.getUint32(sectorOffset + byteOffset, true)) & 0x0FFFFFFF;
+        if (!this._fatParser) {
+            if (!window.FATParser) throw new Error('FATParser not loaded');
+            this._fatParser = new FATParser(this.sparseImage);
         }
+        return await this._fatParser.readFATEntry(partition, wlInfo, fatOffset, cluster, fatType);
     }
 
     // Extract FAT file data
     async extractFATFile(partition, fatInfo, fileEntry) {
-        const WL_SECTOR_SIZE = 0x1000;
-        const wlInfo = fatInfo.wearLeveling;
-        const bytesPerCluster = fatInfo.bytesPerSector * fatInfo.sectorsPerCluster;
-
-        // Calculate FAT offset
-        const fatOffset = fatInfo.reservedSectors * WL_SECTOR_SIZE;
-        const firstDataSector = fatInfo.reservedSectors + fatInfo.numFATs * fatInfo.sectorsPerFAT +
-            Math.ceil(512 * 32 / fatInfo.bytesPerSector);
-
-        // Build cluster chain
-        const clusters = [];
-        let currentCluster = fileEntry.cluster;
-        const maxClusters = Math.ceil(fileEntry.size / bytesPerCluster) + 10; // safety limit
-
-        while (currentCluster >= 2 && currentCluster < 0xFFF0 && clusters.length < maxClusters) {
-            clusters.push(currentCluster);
-            currentCluster = await this.readFATEntry(partition, wlInfo, fatOffset, currentCluster, fatInfo.fatType);
+        if (!this._fatParser) {
+            if (!window.FATParser) throw new Error('FATParser not loaded');
+            this._fatParser = new FATParser(this.sparseImage);
         }
-
-        // Read file data
-        const fileData = new Uint8Array(fileEntry.size);
-        let bytesRead = 0;
-
-        for (const cluster of clusters) {
-            const clusterSector = firstDataSector + (cluster - 2) * fatInfo.sectorsPerCluster;
-            const clusterOffset = partition.offset +
-                this.wlTranslateSector(wlInfo, clusterSector) * WL_SECTOR_SIZE;
-
-            const bytesToRead = Math.min(bytesPerCluster, fileEntry.size - bytesRead);
-
-            if (clusterOffset + bytesToRead <= this.buffer.length) {
-                fileData.set(await this.buffer.slice_async(clusterOffset, clusterOffset + bytesToRead), bytesRead);
-                bytesRead += bytesToRead;
-            }
-
-            if (bytesRead >= fileEntry.size) break;
-        }
-
-        return new Blob([fileData], { type: 'application/octet-stream' });
+        return await this._fatParser.extractFile(partition, fatInfo, fileEntry);
     }
 
     /**
