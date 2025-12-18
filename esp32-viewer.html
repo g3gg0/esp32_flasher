@@ -911,7 +911,7 @@
 
             <div id="memoryMapContainer">
                 <h4>📊 Memory Map</h4>
-                <div id="memoryMap" style="cursor: pointer;" title="Click to show segments in console"></div>
+                <div id="memoryMap" style="cursor: pointer;"></div>
                 <div id="memoryMapLegend">
                     <div class="legend-item">
                         <div class="legend-color unread"></div>
@@ -1330,6 +1330,11 @@
             if (!intentionalDisconnect) {
                 setDeviceStatus('Device unexpectedly disconnected. Please reconnect.', 'error');
             }
+            
+            /* Hide any active overlays */
+            hideFetchOverlay();
+            hideWriteOverlay();
+            
             clearDeviceState();
         }
 
@@ -1476,6 +1481,184 @@
                 div.title = `0x${seg.start.toString(16).toUpperCase()} - 0x${seg.end.toString(16).toUpperCase()} (${seg.type})`;
                 map.appendChild(div);
             }
+
+            /* Collect all labeled areas: bootloader + partitions */
+            const areas = [];
+
+            /* Add bootloader */
+            if (bootloaderInfo && bootloaderInfo.bootloaderStart !== undefined && bootloaderInfo.bootloaderEnd !== undefined) {
+                areas.push({
+                    label: 'bootloader',
+                    start: bootloaderInfo.bootloaderStart,
+                    end: bootloaderInfo.bootloaderEnd,
+                    color: '#8B4513'
+                });
+            }
+
+            /* Add partitions */
+            if (parser.partitions && parser.partitions.length > 0) {
+                parser.partitions.forEach(part => {
+                    areas.push({
+                        label: part.label,
+                        start: part.offset,
+                        end: part.offset + part.length,
+                        color: part.type === 0 ? '#60FFFF' : '#7F30FF'
+                    });
+                });
+            }
+
+            /* Sort by start offset */
+            areas.sort((a, b) => a.start - b.start);
+
+            /* Set up container for absolute positioning of popups */
+            map.parentNode.style.position = 'relative';
+
+            const MIN_WIDTH_FOR_INLINE = 100; /* pixels for inline label */
+
+            /* Create inline labels for large partitions */
+            areas.forEach(area => {
+                const leftPercent = (area.start / totalSize) * 100;
+                const widthPercent = ((area.end - area.start) / totalSize) * 100;
+                const mapWidth = map.offsetWidth || 800; /* fallback */
+                const areaPixelWidth = (widthPercent / 100) * mapWidth;
+                const isInline = areaPixelWidth >= MIN_WIDTH_FOR_INLINE;
+
+                if (isInline) {
+                    /* Inline label with vertical borders - always visible */
+                    const labelDiv = document.createElement('div');
+                    labelDiv.style.position = 'absolute';
+                    labelDiv.style.left = leftPercent + '%';
+                    labelDiv.style.width = widthPercent + '%';
+                    labelDiv.style.top = '0';
+                    labelDiv.style.bottom = '0';
+                    labelDiv.style.display = 'flex';
+                    labelDiv.style.alignItems = 'center';
+                    labelDiv.style.justifyContent = 'center';
+                    labelDiv.style.borderLeft = `2px solid ${area.color}`;
+                    labelDiv.style.borderRight = `2px solid ${area.color}`;
+                    labelDiv.style.color = area.color;
+                    labelDiv.style.textShadow = '0 0 9px rgba(128,128,128,0.9)';
+                    labelDiv.style.fontSize = '12px';
+                    labelDiv.style.fontWeight = 'bold';
+                    labelDiv.style.pointerEvents = 'none';
+                    labelDiv.style.zIndex = '20';
+                    labelDiv.textContent = area.label;
+                    map.appendChild(labelDiv);
+
+                    /* Create highlight overlay for hover effect */
+                    const highlightDiv = document.createElement('div');
+                    highlightDiv.style.position = 'absolute';
+                    highlightDiv.style.left = leftPercent + '%';
+                    highlightDiv.style.width = widthPercent + '%';
+                    highlightDiv.style.top = '0';
+                    highlightDiv.style.bottom = '0';
+                    highlightDiv.style.backgroundColor = area.color;
+                    highlightDiv.style.opacity = '0.3';
+                    highlightDiv.style.display = 'none';
+                    highlightDiv.style.pointerEvents = 'none';
+                    highlightDiv.style.zIndex = '15';
+                    map.appendChild(highlightDiv);
+
+                    /* Create hover area that covers full height */
+                    const hoverDiv = document.createElement('div');
+                    hoverDiv.style.position = 'absolute';
+                    hoverDiv.style.left = leftPercent + '%';
+                    hoverDiv.style.width = widthPercent + '%';
+                    hoverDiv.style.top = '0';
+                    hoverDiv.style.bottom = '0';
+                    hoverDiv.style.cursor = 'pointer';
+                    hoverDiv.style.zIndex = '21';
+
+                    hoverDiv.addEventListener('mouseenter', () => {
+                        highlightDiv.style.display = 'block';
+                    });
+                    hoverDiv.addEventListener('mouseleave', () => {
+                        highlightDiv.style.display = 'none';
+                    });
+
+                    map.appendChild(hoverDiv);
+                }
+            });
+
+            /* Create single global popup for all partitions */
+            const globalPopup = document.createElement('div');
+            globalPopup.style.position = 'absolute';
+            globalPopup.style.display = 'none';
+            globalPopup.style.background = '#303030';
+            globalPopup.style.border = '1px solid #333';
+            globalPopup.style.padding = '4px 8px';
+            globalPopup.style.borderRadius = '3px';
+            globalPopup.style.whiteSpace = 'nowrap';
+            globalPopup.style.color = '#333';
+            globalPopup.style.fontSize = '12px';
+            globalPopup.style.fontWeight = 'bold';
+            globalPopup.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+            globalPopup.style.pointerEvents = 'none';
+            globalPopup.style.zIndex = '30';
+            map.parentNode.appendChild(globalPopup);
+
+            /* Create global connecting line */
+            const globalLine = document.createElement('div');
+            globalLine.style.position = 'absolute';
+            globalLine.style.width = '1px';
+            globalLine.style.height = '8px';
+            globalLine.style.backgroundColor = '#333';
+            globalLine.style.display = 'none';
+            globalLine.style.pointerEvents = 'none';
+            globalLine.style.zIndex = '25';
+            map.parentNode.appendChild(globalLine);
+
+            /* Add mousemove handler to show single popup with current address and partition */
+            /* Remove old listeners first to prevent duplicates */
+            map.removeEventListener('mousemove', map._memoryMapMoveListener);
+            map.removeEventListener('mouseleave', map._memoryMapLeaveListener);
+
+            /* Create new listener function and store reference to remove later */
+            map._memoryMapMoveListener = function(e) {
+                const mapRect = map.getBoundingClientRect();
+                const containerRect = map.parentNode.getBoundingClientRect();
+                const cursorX = e.clientX - mapRect.left;
+                const cursorPercent = cursorX / mapRect.width;
+                const addressAtCursor = Math.floor(cursorPercent * totalSize);
+
+                /* Find which partition contains this address */
+                const currentArea = areas.find(area => addressAtCursor >= area.start && addressAtCursor < area.end);
+
+                console.log(`Address: 0x${addressAtCursor.toString(16).toUpperCase()}, Partition: ${currentArea ? currentArea.label : 'NONE'}`);
+
+                if (currentArea) {
+                    /* Show popup for the current partition */
+                    globalPopup.style.display = 'block';
+                    globalLine.style.display = 'block';
+                    globalPopup.textContent = `${currentArea.label} @ 0x${addressAtCursor.toString(16).toUpperCase()}`;
+                    globalPopup.style.borderColor = currentArea.color;
+                    globalPopup.style.color = currentArea.color;
+                    globalLine.style.backgroundColor = currentArea.color;
+
+                    /* Position popup above cursor */
+                    const cursorXRelativeToContainer = e.clientX - containerRect.left;
+                    globalPopup.style.left = cursorXRelativeToContainer + 'px';
+                    globalPopup.style.transform = 'translateX(-50%)';
+                    globalPopup.style.top = (mapRect.top - containerRect.top - 22) + 'px';
+
+                    /* Position line above bar at cursor */
+                    globalLine.style.left = cursorXRelativeToContainer + 'px';
+                    globalLine.style.transform = 'translateX(-50%)';
+                    globalLine.style.top = (mapRect.top - containerRect.top - 8) + 'px';
+                } else {
+                    /* No partition at cursor, hide popup */
+                    globalPopup.style.display = 'none';
+                    globalLine.style.display = 'none';
+                }
+            };
+
+            map._memoryMapLeaveListener = function() {
+                globalPopup.style.display = 'none';
+                globalLine.style.display = 'none';
+            };
+
+            map.addEventListener('mousemove', map._memoryMapMoveListener);
+            map.addEventListener('mouseleave', map._memoryMapLeaveListener);
 
             /* Add click handler to show segments in console */
             map.onclick = () => {
@@ -2320,7 +2503,7 @@
                 html += '</div>';
             }
             html += '<table><thead><tr>';
-            html += '<th>#</th><th>Label</th><th>Type</th><th>Offset</th><th>Size</th><th>Actions</th>';
+            html += '<th>#</th><th>Label</th><th>Type</th><th>Offset</th><th>End Offset</th><th>Size</th><th>Actions</th>';
             html += '</tr></thead><tbody>';
 
             for (let idx = 0; idx < partitions.length; idx++) {
@@ -2343,6 +2526,7 @@
                 html += `<td><strong>${part.label}${magicIndicator}</strong></td>`;
                 html += `<td><span class="badge ${badgeClass}">${part.typeName}</span></td>`;
                 html += `<td class="mono">0x${part.offset.toString(16).toUpperCase().padStart(6, '0')}</td>`;
+                html += `<td class="mono">0x${(part.offset + part.length).toString(16).toUpperCase().padStart(6, '0')}</td>`;
                 html += `<td>${formatBytes(part.length)}</td>`;
                 html += `<td>
                     <button class="hex-btn" onclick="event.stopPropagation(); viewPartitionHex(${idx})">Hex View</button>
