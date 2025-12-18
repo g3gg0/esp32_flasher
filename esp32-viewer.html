@@ -828,8 +828,15 @@
         }
 
         @keyframes blink-red {
-            0%, 100% { box-shadow: 0 0 0 rgba(0,0,0,0); }
-            50% { box-shadow: 0 0 12px rgba(248, 81, 73, 0.8); }
+
+            0%,
+            100% {
+                box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+            }
+
+            50% {
+                box-shadow: 0 0 12px rgba(248, 81, 73, 0.8);
+            }
         }
 
         .device-popup.secure-warning {
@@ -1236,11 +1243,29 @@
                 await deviceFlasher.openPort();
                 setDeviceButtons({ connected: true });
 
-                setDeviceStatus('Resetting ESP32...', 'loading');
-                await deviceFlasher.hardReset(true);
+                /* Try hard reset + sync across baud rates: default, 250000, 115200 */
+                let synced = false;
+                const baudCandidates = [deviceFlasher.initialBaudRate, 250000, 115200];
+                for (const baud of baudCandidates) {
+                    try {
+                        if (baud && baud !== deviceFlasher.initialBaudRate) {
+                            await deviceFlasher.reopenPort(baud);
+                        }
+                        setDeviceStatus('Resetting ESP32...', 'loading');
+                        await deviceFlasher.hardReset(true);
 
-                setDeviceStatus('Syncing...', 'loading');
-                await deviceFlasher.sync();
+                        setDeviceStatus('Syncing...', 'loading');
+                        await deviceFlasher.sync();
+                        synced = true;
+                        break;
+                    } catch (err) {
+                        setDeviceStatus('Sync failed' + (baud ? ` at ${baud} baud` : '') + ': ' + err.message, 'error');
+                    }
+                }
+                if (!synced) {
+                    deviceFlasher.disconnect();
+                    throw new Error('Failed to sync after trying default, 250000, 115200 baud.');
+                }
                 const isStub = await deviceFlasher.isStubLoader();
                 setDeviceButtons({ connected: true, synced: true, stub: isStub });
 
@@ -1275,6 +1300,7 @@
                 const dropZone = document.getElementById('dropZone');
                 if (dropZone) dropZone.style.display = 'none';
             } catch (e) {
+                deviceFlasher.disconnect();
                 setDeviceStatus('Connection failed: ' + e.message, 'error');
                 setDeviceButtons({ connected: false });
                 setToggleButtonState(false);
@@ -1519,7 +1545,7 @@
                     setTimeout(() => {
                         container.style.display = 'none';
                     }, 500);
-                }, 5000);
+                }, 10000);
             } else {
                 console.log(`[${cls}] ${text}`);
             }
@@ -2036,9 +2062,12 @@
 
             deviceFlashSizeBytes = sizeBytes;
             deviceMode = true;
+            deviceSparse.size = deviceFlashSizeBytes;
 
+            /*
             setFetchOverlayReason('Applying flash size');
             showFetchOverlay('Applying flash size...');
+
             try {
                 deviceSparse = buildDeviceSparse(deviceFlashSizeBytes, false);
                 parser = new ESP32Parser(deviceSparse);
@@ -2056,13 +2085,13 @@
             } finally {
                 hideFetchOverlay();
                 setFetchOverlayReason('');
-            }
+            }*/
         }
 
         async function parseAndDisplay(focusBootloader = false) {
             // Parse bootloader first to detect partition table offset
             bootloaderInfo = await parseBootloader(0x0000);
-            if(!bootloaderInfo || bootloaderInfo.error) {
+            if (!bootloaderInfo || bootloaderInfo.error) {
                 bootloaderInfo = await parseBootloader(0x1000);
             }
             console.log("Bootloader parsed:", bootloaderInfo);
@@ -2133,11 +2162,11 @@
                 if (image.error) {
                     html = `<div class="error">${image.error}</div>`;
                 } else {
-                    html = '<div class="success">Bootloader parsed successfully</div>';
+                    //html = '<div class="success">Bootloader parsed successfully</div>';
 
                     html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
                     html += '<div class="info-grid">';
-                    html += `<div class="info-item"><label>Bootloader Offset:</label><span class="mono">0x${offset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
+                    html += `<div class="info-item"><label>Flash Offset:</label><span class="mono">0x${offset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
                     html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
                     html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
                     html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
@@ -2287,7 +2316,7 @@
             let html = '';
             if (partitionTableOffset !== null) {
                 html += '<div class="info-grid" style="margin-bottom: 20px;">';
-                html += `<div class="info-item"><label>Partition Table Offset:</label><span class="mono">0x${partitionTableOffset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
+                html += `<div class="info-item"><label>Flash Offset:</label><span class="mono">0x${partitionTableOffset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
                 html += '</div>';
             }
             html += '<table><thead><tr>';
@@ -2619,55 +2648,55 @@
                 try {
                     const pages = await parser.parseNVS(partition);
 
+                    console.log('NVS pages:', pages);
+
                     let html = '<div class="success" style="margin-bottom: 10px;">Found ' + pages.length + ' NVS pages <button class="nvs-add-btn" onclick="event.stopPropagation(); showNVSAddNamespaceDialog(' + idx + ')">➕ Add Namespace</button></div>';
 
-                    const namespaceGroups = {};
-                    const allNamespaces = new Set();
+                    const allNamespaces = {};
                     let totalItems = 0;
 
                     pages.forEach(page => {
                         page.items.forEach(item => {
                             if (item.nsIndex === 0) {
-                                // Collect namespace definitions
+                                /* Collect namespace definitions */
                                 if (item.namespace) {
-                                    allNamespaces.add(item.namespace);
+                                    item.variables = [];
+                                    allNamespaces[item.value] = item;
+                                    totalItems++;
                                 }
-                                return;
                             }
-
-                            // Skip blob index entries (show only the actual blob chunks with data)
-                            if (item.isBlobIndex) {
-                                return;
-                            }
-
-                            const ns = item.namespace || 'Unknown';
-                            allNamespaces.add(ns);
-                            if (!namespaceGroups[ns]) {
-                                namespaceGroups[ns] = [];
-                            }
-                            namespaceGroups[ns].push(item);
-                            totalItems++;
                         });
                     });
+                    console.log('allNamespaces:', allNamespaces);
 
-                    // Ensure all namespaces appear in namespaceGroups (even if empty)
-                    allNamespaces.forEach(ns => {
-                        if (!namespaceGroups[ns]) {
-                            namespaceGroups[ns] = [];
-                        }
+                    pages.forEach(page => {
+                        page.items.forEach(item => {
+                            if (item.nsIndex != 0) {
+                                console.log('item:', item);
+                                if (!allNamespaces[item.nsIndex]) {
+                                    console.warn(`Namespace ${item.nsIndex} not found for item ${item.key}`);
+                                    return;
+                                }
+                                allNamespaces[item.nsIndex].variables.push(item);
+                            }
+                            totalItems++;
+                        });
                     });
 
                     if (allNamespaces.size === 0) {
                         html += '<div class="error">No namespaces found in this partition.</div>';
                     } else {
-                        Object.keys(namespaceGroups).sort().forEach(ns => {
-                            html += `<div class="nvs-namespace">Namespace: ${ns} (${namespaceGroups[ns].length} items)<button class="nvs-add-btn" onclick="event.stopPropagation(); showNVSAddDialog(${idx}, '${ns}')">➕ Add Item</button></div>`;
-                            namespaceGroups[ns].forEach(item => {
+                        Object.keys(allNamespaces).forEach(nsKey => {
+                            const nsObj = allNamespaces[nsKey];
+                            const nsName = nsObj.namespace || nsKey;
+                            console.log('Namespace:', nsName);
+                            html += `<div class="nvs-namespace">Namespace: [${nsObj.value}] ${nsName} (${nsObj.variables.length} items)<button class="nvs-add-btn" onclick="event.stopPropagation(); showNVSAddDialog(${idx}, '${nsName}')">➕ Add Item</button></div>`;
+                            nsObj.variables.forEach(item => {
                                 const tooltip = `Offset: 0x${item.offset.toString(16).toUpperCase()} (${item.offset}), Size: ${item.entrySize} bytes`;
                                 const crcBad = (item.headerCrcValid === false) || (item.dataCrcValid === false);
                                 html += `<div class="nvs-item ${crcBad ? 'crc-bad' : ''}" title="${tooltip}" style="padding-right: 80px;">`;
-                                html += `<button class="nvs-edit-btn" onclick="event.stopPropagation(); showNVSEditDialog(${idx}, '${ns}', '${item.key}', '${item.typeName}', ${JSON.stringify(item.value).replace(/"/g, '&quot;')})">✏️</button>`;
-                                html += `<button class="nvs-delete-btn" onclick="event.stopPropagation(); deleteNVSItem(${idx}, '${ns}', '${item.key}')">❌</button>`;
+                                html += `<button class="nvs-edit-btn" onclick="event.stopPropagation(); showNVSEditDialog(${idx}, '${nsName}', '${item.key}', '${item.typeName}', ${JSON.stringify(item.value).replace(/\"/g, '&quot;')})">✏️</button>`;
+                                html += `<button class="nvs-delete-btn" onclick="event.stopPropagation(); deleteNVSItem(${idx}, '${nsName}', '${item.key}')">❌</button>`;
                                 html += `<strong>${item.key}</strong> <span class="badge">${item.typeName}</span><br>`;
                                 html += `Value: <span class="mono">${formatNVSValue(item)}</span>`;
 
@@ -2802,7 +2831,7 @@
                     currentSPIFFSPartition = partition;
 
                     let html = '';
-                    
+
                     if (!spiffsInfo.valid) {
                         html += '<div class="error" style="margin-bottom: 10px;">⚠️ SPIFFS header not found. The partition may be empty, corrupted, or using a different filesystem.</div>';
                     } else {

@@ -1607,7 +1607,7 @@ class NVSParser {
         const namespaces = new Map();
         namespaces.set(0, '');
 
-        console.log(`[NVS Parse] Starting NVS parse for partition at offset 0x${partition.offset.toString(16)}, length 0x${partition.length.toString(16)}`);
+        //console.log(`[NVS Parse] Starting NVS parse for partition at offset 0x${partition.offset.toString(16)}, length 0x${partition.length.toString(16)}`);
 
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
@@ -1626,7 +1626,7 @@ class NVSParser {
             let stateName = 'UNKNOWN';
             if (state === NVS_PAGE_STATE.UNINIT) {
                 stateName = 'UNINIT';
-                console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: UNINIT, skipping`);
+                //console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: UNINIT, skipping`);
                 continue;
             } else if (state === NVS_PAGE_STATE.ACTIVE) {
                 stateName = 'ACTIVE';
@@ -1636,11 +1636,11 @@ class NVSParser {
                 stateName = 'FREEING';
             } else if (state === NVS_PAGE_STATE.CORRUPT) {
                 stateName = 'CORRUPT';
-                console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: CORRUPT, skipping`);
+                //console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: CORRUPT, skipping`);
                 continue;
             }
 
-            console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: state=${stateName}, seq=${seq}, version=${version}`);
+            //console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: state=${stateName}, seq=${seq}, version=${version}`);
 
             const page = {
                 offset: blockOffset,
@@ -1653,7 +1653,7 @@ class NVSParser {
 
             for (let entry = 0; entry < MAX_ENTRY_COUNT; entry++) {
                 const itemState = this.getNVSItemState(stateBitmap, entry);
-                console.log(`[NVS Parse]   Entry ${entry}: state=${itemState} (0=ERASED, 2=WRITTEN, 3=EMPTY)`);
+                //console.log(`[NVS Parse]   Entry ${entry}: state=${itemState} (0=ERASED, 2=WRITTEN, 3=EMPTY)`);
                 if (itemState !== 2) continue;
 
                 const entryOffset = blockOffset + 64 + entry * 32;
@@ -1663,7 +1663,7 @@ class NVSParser {
                 const datatype = await this.view.getUint8(entryOffset + 1);
                 const span = await this.view.getUint8(entryOffset + 2);
 
-                console.log(`[NVS Parse]     nsIndex=${nsIndex}, datatype=0x${datatype.toString(16)}, span=${span}`);
+                //console.log(`[NVS Parse]     nsIndex=${nsIndex}, datatype=0x${datatype.toString(16)}, span=${span}`);
 
                 if (span === 0 || span > 126) {
                     console.warn(`[NVS Parse]     Invalid span ${span} at offset ${entryOffset}, skipping`);
@@ -1681,7 +1681,7 @@ class NVSParser {
 
                 const item = await this.parseItem(entryOffset, namespaces, partition);
                 if (item) {
-                    console.log(`[NVS Parse]     Parsed item: nsIndex=${item.nsIndex}, key="${item.key}", type=${item.typeName}, value=${JSON.stringify(item.value)}`);
+                    //console.log(`[NVS Parse]     Parsed item: nsIndex=${item.nsIndex}, key="${item.key}", type=${item.typeName}, value=${JSON.stringify(item.value)}`);
                     page.items.push(item);
                     if (item.span > 1) {
                         entry += item.span - 1;
@@ -1707,8 +1707,52 @@ class NVSParser {
             }
         }
 
-        console.log(`[NVS Parse] Parse complete: ${pages.length} pages, ${pages.reduce((sum, p) => sum + p.items.length, 0)} total items`);
+        //console.log(`[NVS Parse] Parse complete: ${pages.length} pages, ${pages.reduce((sum, p) => sum + p.items.length, 0)} total items`);
         return pages;
+    }
+
+    /**
+     * Build a map of namespace names to their indices
+     * Returns: { name: index, ... }
+     */
+    async buildNamespaceMap(partition) {
+        const NVS_SECTOR_SIZE = 4096;
+        const MAX_ENTRY_COUNT = 126;
+        const namespaceMap = {};
+
+        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
+            const blockOffset = partition.offset + sectorOffset;
+            if (blockOffset + 64 > this.buffer.length) break;
+            const state = await this.view.getUint32(blockOffset, true);
+            if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
+
+            const stateBitmap = new Uint8Array(32);
+            for (let i = 0; i < 32; i++) stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
+
+            for (let entry = 0; entry < MAX_ENTRY_COUNT; entry++) {
+                const itemState = this.getNVSItemState(stateBitmap, entry);
+                if (itemState !== 2) continue;
+
+                const entryOffset = blockOffset + 64 + entry * 32;
+                if (entryOffset + 32 > this.buffer.length) break;
+
+                const itemNsIndex = await this.view.getUint8(entryOffset);
+                const datatype = await this.view.getUint8(entryOffset + 1);
+                const span = await this.view.getUint8(entryOffset + 2);
+
+                if (itemNsIndex === 0 && datatype !== 0xFF && datatype !== 0x00) {
+                    const itemKey = await this.readString(entryOffset + 8, 16);
+                    const namespaceIndex = await this.view.getUint8(entryOffset + 24);
+                    if (itemKey && namespaceIndex < 255) {
+                        namespaceMap[itemKey] = namespaceIndex;
+                    }
+                }
+
+                entry += span - 1;
+            }
+        }
+
+        return namespaceMap;
     }
 
     /**
@@ -1813,13 +1857,32 @@ class NVSParser {
         const NVS_SECTOR_SIZE = 4096;
         const MAX_ENTRY_COUNT = 126;
 
-        let nsIndex = -1;
+        console.log(`[NVS Delete] Starting delete for ${namespace}.${key}`);
+        
+        // Build namespace map first
+        const namespaceMap = await this.buildNamespaceMap(partition);
+        console.log(`[NVS Delete] Namespace map:`, namespaceMap);
+        
+        const nsIndex = namespaceMap[namespace];
+        if (nsIndex === undefined) {
+            console.log(`[NVS Delete] Namespace "${namespace}" not found in map`);
+            throw new Error(`NVS namespace ${namespace} not found`);
+        }
+        console.log(`[NVS Delete] Target namespace "${namespace}" has index ${nsIndex}`);
 
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
             if (blockOffset + 64 > this.buffer.length) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
+
+            const stateName =
+                state === 0xFFFFFFFF ? 'UNINIT' :
+                state === 0xFFFFFFFE ? 'ACTIVE' :
+                state === 0xFFFFFFFC ? 'FULL' :
+                state === 0xFFFFFFF8 ? 'FREEING' :
+                state === 0xFFFFFFF0 ? 'CORRUPT' : `UNKNOWN(0x${state.toString(16)})`;
+            console.log(`[NVS Delete] Scanning page at 0x${blockOffset.toString(16)} state=${stateName}`);
 
             const stateBitmap = new Uint8Array(32);
             for (let i = 0; i < 32; i++) stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
@@ -1836,14 +1899,16 @@ class NVSParser {
                 const span = await this.view.getUint8(entryOffset + 2);
                 const itemKey = await this.readString(entryOffset + 8, 16);
 
-                if (itemNsIndex === 0 && datatype !== 0xFF && datatype !== 0x00) {
-                    const namespaceIndex = await this.view.getUint8(entryOffset + 24);
-                    if (itemKey === namespace) nsIndex = namespaceIndex;
+                console.log(`[NVS Delete]   Entry ${entry}: ns=${itemNsIndex}, type=0x${datatype.toString(16)}, span=${span}, key="${itemKey}"`);
+
+                // Skip namespace definitions
+                if (itemNsIndex === 0) {
                     entry += span - 1;
                     continue;
                 }
 
-                if (nsIndex === itemNsIndex && itemKey === key) {
+                if (itemNsIndex === nsIndex && itemKey === key) {
+                    console.log(`[NVS Delete]   Found target item at entry ${entry}, offset 0x${entryOffset.toString(16)}, span=${span}. Erasing...`);
                     for (let slice = 0; slice < span; slice++) {
                         const sliceOffset = entryOffset + slice * 32;
                         const erasedEntry = new Uint8Array(32);
@@ -1852,6 +1917,7 @@ class NVSParser {
                         this.setNVSItemState(stateBitmap, entry + slice, 3);
                     }
                     this.sparseImage.write(blockOffset + 32, stateBitmap);
+                    console.log(`[NVS Delete]   Erase complete and state bitmap updated for page at 0x${blockOffset.toString(16)}`);
                     return;
                 }
 
@@ -1859,6 +1925,7 @@ class NVSParser {
             }
         }
 
+        console.log(`[NVS Delete] Item ${namespace}.${key} not found (nsIndex=${nsIndex})`);
         throw new Error(`NVS item ${namespace}.${key} not found`);
     }
 
