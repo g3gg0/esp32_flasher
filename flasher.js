@@ -787,9 +787,9 @@ class ESPFlasher {
      *              to detect connected chip type (ESP32, ESP32-S3, etc.)
      */
     async sync() {
-        const maxRetries = 10;
-        const retryDelayMs = 100; /* Delay between retries */
-        const syncTimeoutMs = 250; /* Timeout for each individual sync attempt */
+        const maxRetries = 4;
+        const retryDelayMs = 50; /* Delay between retries */
+        const syncTimeoutMs = 100; /* Timeout for each individual sync attempt */
         let synchronized = false;
 
         this.logDebug(`Attempting to synchronize (${maxRetries} attempts)...`);
