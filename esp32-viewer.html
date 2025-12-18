@@ -1285,7 +1285,7 @@
                 deviceSparse = buildDeviceSparse(totalSize, false);
 
                 parser = new ESP32Parser(deviceSparse);
-                displayFileInfo({
+                displaySourceInfo({
                     name: 'ESP32 Device',
                     size: totalSize,
                     type: `device/${deviceFlasher.current_chip || 'esp32'}`,
@@ -1330,11 +1330,11 @@
             if (!intentionalDisconnect) {
                 setDeviceStatus('Device unexpectedly disconnected. Please reconnect.', 'error');
             }
-            
+
             /* Hide any active overlays */
             hideFetchOverlay();
             hideWriteOverlay();
-            
+
             clearDeviceState();
         }
 
@@ -1614,7 +1614,7 @@
             map.removeEventListener('mouseleave', map._memoryMapLeaveListener);
 
             /* Create new listener function and store reference to remove later */
-            map._memoryMapMoveListener = function(e) {
+            map._memoryMapMoveListener = function (e) {
                 const mapRect = map.getBoundingClientRect();
                 const containerRect = map.parentNode.getBoundingClientRect();
                 const cursorX = e.clientX - mapRect.left;
@@ -1624,7 +1624,7 @@
                 /* Find which partition contains this address */
                 const currentArea = areas.find(area => addressAtCursor >= area.start && addressAtCursor < area.end);
 
-                console.log(`Address: 0x${addressAtCursor.toString(16).toUpperCase()}, Partition: ${currentArea ? currentArea.label : 'NONE'}`);
+                //console.log(`Address: 0x${addressAtCursor.toString(16).toUpperCase()}, Partition: ${currentArea ? currentArea.label : 'NONE'}`);
 
                 if (currentArea) {
                     /* Show popup for the current partition */
@@ -1652,7 +1652,7 @@
                 }
             };
 
-            map._memoryMapLeaveListener = function() {
+            map._memoryMapLeaveListener = function () {
                 globalPopup.style.display = 'none';
                 globalLine.style.display = 'none';
             };
@@ -2014,7 +2014,7 @@
                 parser = new ESP32Parser(deviceSparse);
 
                 /* Fake file info for UI */
-                displayFileInfo({
+                displaySourceInfo({
                     name: 'ESP32 Device',
                     size: totalSize,
                     type: `device/${deviceFlasher.current_chip || 'esp32'}`,
@@ -2156,7 +2156,7 @@
                     try {
                         const sparse = SparseImage.fromBuffer(e.target.result);
                         parser = new ESP32Parser(sparse);
-                        displayFileInfo(file);
+                        displaySourceInfo(file);
                         parseAndDisplay(true).then(() => {
                             updateMemoryMap();
                         }).catch(err => showError('Error parsing file: ' + err.message));
@@ -2168,7 +2168,7 @@
             }
         }
 
-        function displayFileInfo(file) {
+        function displaySourceInfo(file) {
             const fileInfo = document.getElementById('fileInfo');
             const grid = document.getElementById('fileInfoGrid');
 
@@ -2243,32 +2243,19 @@
                 return;
             }
 
-            deviceFlashSizeBytes = sizeBytes;
+            console.log('Applying device flash size: ', sizeBytes);
+
             deviceMode = true;
-            deviceSparse.size = deviceFlashSizeBytes;
 
-            /*
-            setFetchOverlayReason('Applying flash size');
-            showFetchOverlay('Applying flash size...');
+            deviceFlashSizeBytes = sizeBytes;
+            deviceSparse.size = sizeBytes;
 
-            try {
-                deviceSparse = buildDeviceSparse(deviceFlashSizeBytes, false);
-                parser = new ESP32Parser(deviceSparse);
-                displayFileInfo({
-                    name: 'ESP32 Device',
-                    size: deviceFlashSizeBytes,
-                    type: `device/${deviceFlasher.current_chip || 'esp32'}`,
-                    lastModified: Date.now()
-                });
-
-                await parseAndDisplay(true);
-                setDeviceStatus('Flash size set to ' + (deviceFlashSizeBytes / (1024 * 1024)) + ' MiB.', 'success');
-            } catch (e) {
-                alert('Error applying flash size: ' + e.message);
-            } finally {
-                hideFetchOverlay();
-                setFetchOverlayReason('');
-            }*/
+            displaySourceInfo({
+                name: 'ESP32 Device',
+                size: deviceFlashSizeBytes,
+                type: `device/${deviceFlasher.current_chip || 'esp32'}`,
+                lastModified: Date.now()
+            });
         }
 
         async function parseAndDisplay(focusBootloader = false) {
@@ -2538,7 +2525,7 @@
 
                 // Details row
                 html += `<tr class="details-row" id="details-${idx}">`;
-                html += `<td colspan="6"><div class="details-content">`;
+                html += `<td colspan="7"><div class="details-content">`;
                 html += `<div class="details-grid">`;
                 html += `<div class="detail-item"><strong>Type Code:</strong> 0x${part.type.toString(16).toUpperCase()}</div>`;
                 html += `<div class="detail-item"><strong>SubType Code:</strong> 0x${part.subType.toString(16).toUpperCase()}</div>`;
