@@ -769,6 +769,10 @@
             background: linear-gradient(180deg, #4CAF50 0%, #2e7d32 100%);
         }
 
+        .memory-segment.cached-erased {
+            background: linear-gradient(180deg, #2e7d32 0%, #1b4620 100%);
+        }
+
         .memory-segment.modified {
             background: linear-gradient(180deg, #f44336 0%, #b71c1c 100%);
         }
@@ -1447,7 +1451,36 @@
 
                 for (let seg of segments) {
                     if (seg.end <= readStart || seg.start >= readEnd) continue;
-                    seg.type = 'cached';
+                    
+                    /* Check if this segment is all 0xFF (erased) by examining 512-byte blocks */
+                    const segStart = Math.max(seg.start, readStart);
+                    const segEnd = Math.min(seg.end, readEnd);
+                    const blockSize = 512;
+                    let isAllFF = true;
+
+                    /* Check 512-byte blocks within this segment */
+                    for (let blockAddr = Math.floor(segStart / blockSize) * blockSize; blockAddr < segEnd; blockAddr += blockSize) {
+                        const blockEnd = Math.min(blockAddr + blockSize, segEnd);
+                        if (blockEnd <= blockAddr) continue;
+
+                        /* Get data for this block from readBuffer */
+                        const offsetInRead = Math.max(blockAddr - readStart, 0);
+                        const blockDataLen = blockEnd - Math.max(blockAddr, readStart);
+                        
+                        /* Check if block data is available and all 0xFF */
+                        if (offsetInRead < read.data.length) {
+                            const blockData = read.data.slice(offsetInRead, offsetInRead + blockDataLen);
+                            let blockIsFF = blockData.length > 0 && Array.from(blockData).every(byte => byte === 0xFF);
+                            
+                            if (!blockIsFF) {
+                                isAllFF = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    /* Mark segment as 'cached' (normal green) or 'cached-erased' (darker green) */
+                    seg.type = isAllFF ? 'cached-erased' : 'cached';
                 }
             }
 
