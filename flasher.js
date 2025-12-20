@@ -48,6 +48,23 @@ const RESET_REASON_MAP = {
     23: { name: 'POWER_GLITCH_RESET', desc: 'Power glitch reset digital core and rtc module' }
 };
 
+const CHIP_ID_MAP = {
+    0x0000: 'esp32',
+    0x0002: 'esp32s2',
+    0x0005: 'esp32c3',
+    0x0009: 'esp32s3',
+    0x000C: 'esp32c2',
+    0x000D: 'esp32c6',
+    0x0010: 'esp32h2',
+    0x0012: 'esp32p4',
+    0x0017: 'esp32c5',
+    0x0014: 'esp32c61',
+    0x0019: 'esp32h21',
+    0x001C: 'esp32h4',
+    0x0020: 'esp32s31',
+    0xFFFF: 'Invalid'
+};
+
 /**
  * SLIP Protocol Layer Handler
  * Implements Serial Line IP (RFC 1055) encoding/decoding for packet framing
@@ -838,6 +855,37 @@ class ESPFlasher {
 
         this.synced = true;
 
+        // Read security information
+        try {
+            this.logDebug("Reading security information...");
+            this.securityInfo = await this.getSecurityInfo();
+            this.current_chip = CHIP_ID_MAP[this.securityInfo.chip_id_hex >>> 0] || "unknown";
+            console.log(`Security Info: Flags=${this.securityInfo.flags_hex}, Flash Crypt=${this.securityInfo.flash_crypt_cnt}, Chip ID=${this.securityInfo.chip_id_hex} (${this.current_chip}), ECO=${this.securityInfo.eco_version_hex}`);
+
+            /* Log enabled security features */
+            const enabledFlags = Object.entries(this.securityInfo.flags_decoded)
+                .filter(([key, value]) => value)
+                .map(([key, _]) => key);
+            if (enabledFlags.length > 0) {
+                console.log(`  Enabled security features: ${enabledFlags.join(', ')}`);
+            } else {
+                console.log(`  No security features enabled`);
+            }
+
+            if (this.securityInfo.flags_decoded.SECURE_BOOT_EN) {
+                if (!this.securityInfo.flags_decoded.SECURE_DOWNLOAD_ENABLE) {
+                    this.deviceStateCallback && this.deviceStateCallback('secure_boot');
+                } else {
+                    this.deviceStateCallback && this.deviceStateCallback('secure_download');
+                }
+            }
+
+            /* if this command succeeded, we already have the chip type, so we can just return. only plain ESP32 doesn't have the security info command */
+            return;
+        } catch (error) {
+            console.log(`Failed to read security info: ${error.message}, maybe plain ESP32? Continuing to old chip detection...`);
+        }
+
         // --- Chip Detection (Runs only after successful sync) ---
         this.logDebug("Reading chip magic value...");
         let currentValue;
@@ -848,7 +896,6 @@ class ESPFlasher {
             this.logError(`Failed to read magic value after sync: ${readError}`);
             throw new Error(`Successfully synced, but failed to read chip magic value: ${readError.message}`);
         }
-
 
         /* Function to check if the value matches any of the magic values */
         const isMagicValue = (stub, value) => {
@@ -876,12 +923,7 @@ class ESPFlasher {
         if (!chipDetected) {
             this.logError(`Synced, but chip magic value 0x${currentValue.toString(16)} is unknown.`);
             this.current_chip = "unknown"; // Mark as unknown
-            // Depending on requirements, you might want to throw an error here
-            // throw new Error(`Synced, but failed to identify chip type (Magic: 0x${currentValue.toString(16)}).`);
         }
-
-        // If we reached here without throwing, sync and detection (or lack thereof) is complete.
-        // The function implicitly returns a resolved promise.
     }
 
     /**
@@ -892,6 +934,9 @@ class ESPFlasher {
      * @description Reads MAC address from chip-specific eFuse registers
      */
     async readMac() {
+        if(!chip.mac_efuse_reg) {
+            throw new Error(`MAC eFuse register not defined for chip ${this.current_chip}`);
+        }
         /* Read the MAC address registers */
         var chip = this.chip_descriptions[this.current_chip];
         const register1 = await this.readReg(chip.mac_efuse_reg);
@@ -922,6 +967,72 @@ class ESPFlasher {
             .join(':');
 
         return mac;
+    }
+
+    /**
+     * Read chip security information
+     * @async
+     * @returns {Promise<Object>} Security info object with flags, flash_crypt_cnt, key_purposes, chip_id, eco_version
+     * @throws {Error} If read fails
+     * @description Reads chip security configuration including encryption status and key purposes
+     */
+    async getSecurityInfo() {
+        return this.executeCommand(
+            this.buildCommandPacketU32(GET_SECURITY_INFO, 0),
+            async (resolve, reject, responsePacket) => {
+                if (responsePacket && responsePacket.data && responsePacket.data.length >= 20) {
+                    const data = responsePacket.data;
+
+                    /* Parse 32-bit flags (little-endian) */
+                    const flags = (data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24)) >>> 0;
+
+                    /* Decode security flags */
+                    const decodedFlags = {
+                        SECURE_BOOT_EN: !!(flags & (1 << 0)),
+                        SECURE_BOOT_AGGRESSIVE_REVOKE: !!(flags & (1 << 1)),
+                        SECURE_DOWNLOAD_ENABLE: !!(flags & (1 << 2)),
+                        SECURE_BOOT_KEY_REVOKE0: !!(flags & (1 << 3)),
+                        SECURE_BOOT_KEY_REVOKE1: !!(flags & (1 << 4)),
+                        SECURE_BOOT_KEY_REVOKE2: !!(flags & (1 << 5)),
+                        SOFT_DIS_JTAG: !!(flags & (1 << 6)),
+                        HARD_DIS_JTAG: !!(flags & (1 << 7)),
+                        DIS_USB: !!(flags & (1 << 8)),
+                        DIS_DOWNLOAD_DCACHE: !!(flags & (1 << 9)),
+                        DIS_DOWNLOAD_ICACHE: !!(flags & (1 << 10))
+                    };
+
+                    /* Parse 1 byte flash_crypt_cnt */
+                    const flash_crypt_cnt = data[4];
+
+                    /* Parse 7 bytes key_purposes */
+                    const key_purposes = Array.from(data.slice(5, 12));
+
+                    /* Parse 32-bit chip_id (little-endian) */
+                    const chip_id = (data[12] | (data[13] << 8) | (data[14] << 16) | (data[15] << 24)) >>> 0;
+
+                    /* Parse 32-bit eco_version (little-endian) */
+                    const eco_version = (data[16] | (data[17] << 8) | (data[18] << 16) | (data[19] << 24)) >>> 0;
+
+                    const securityInfo = {
+                        flags: flags,
+                        flags_hex: '0x' + flags.toString(16).toUpperCase().padStart(8, '0'),
+                        flags_decoded: decodedFlags,
+                        flash_crypt_cnt: flash_crypt_cnt,
+                        key_purposes: key_purposes,
+                        chip_id: chip_id,
+                        chip_id_hex: '0x' + chip_id.toString(16).toUpperCase().padStart(8, '0'),
+                        eco_version: eco_version,
+                        eco_version_hex: '0x' + eco_version.toString(16).toUpperCase().padStart(8, '0')
+                    };
+
+                    resolve(securityInfo);
+                } else {
+                    reject('Invalid security info response');
+                }
+            },
+            null,
+            100
+        );
     }
 
     /**

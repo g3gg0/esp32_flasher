@@ -987,9 +987,6 @@
 
     <script src="chips.js"></script>
     <script src="flasher.js"></script>
-    <!-- Load parser helpers before ESP32 parser to enable delegation -->
-    <script src="nvs-parser.js"></script>
-    <script src="fat-parser.js"></script>
     <script src="esp32-parser.js"></script>
     <script>
         let parser = null;
@@ -1241,7 +1238,11 @@
 
                 deviceFlasher.deviceStateCallback = (state, data) => {
                     if (state === 'secure') {
-                        showSecureModError();
+                        showSecureModError('Secure bootloader detected. Flash access is disabled.');
+                    } else if (state === 'secure_boot') {
+                        showSecureModError('Secure bootloader detected. Flash access is disabled.');
+                    } else if (state === 'secure_download') {
+                        showSecureModError('Secure download mode detected.<br>Flash readout is disabled. Write would brick the device.');
                     } else {
                         const msg = formatDeviceStateMessage(state, data);
                         showDevicePopup(msg, state);
@@ -1994,9 +1995,19 @@
             }
         }
 
-        function showSecureModError() {
-            /* Check if overlay already exists */
-            if (document.getElementById('secureModErrorOverlay')) {
+        function showSecureModError(msg) {
+            /* If overlay exists, update its message and keep it visible */
+            const existing = document.getElementById('secureModErrorOverlay');
+            if (existing) {
+                const msgEl = document.getElementById('secureModErrorMessage');
+                if (msgEl) {
+                    msgEl.innerHTML = `
+                        <p>This ESP32 device has been programmed with secure fuses.</p>
+                        <p><strong>${msg || 'Secure mode active'}</strong></p>
+                        <p>The device's security features prevent any useful access to its firmware.</p>
+                    `;
+                }
+                existing.style.display = 'flex';
                 return;
             }
 
@@ -2034,17 +2045,18 @@
             errorBox.appendChild(title);
 
             /* Error message */
-            const message = document.createElement('div');
-            message.style.fontSize = '16px';
-            message.style.color = '#ffcccc';
-            message.style.lineHeight = '1.6';
-            message.style.marginBottom = '20px';
-            message.innerHTML = `
+            const msgEl = document.createElement('div');
+            msgEl.id = 'secureModErrorMessage';
+            msgEl.style.fontSize = '16px';
+            msgEl.style.color = '#ffcccc';
+            msgEl.style.lineHeight = '1.6';
+            msgEl.style.marginBottom = '20px';
+            msgEl.innerHTML = `
                 <p>This ESP32 device has been programmed with secure fuses.</p>
-                <p><strong>Flashing is not possible.</strong></p>
-                <p>The device's security features prevent any access to its firmware.</p>
+                <p><strong>${msg || 'Secure mode active'}</strong></p>
+                <p>The device's security features prevent any useful access to its firmware.</p>
             `;
-            errorBox.appendChild(message);
+            errorBox.appendChild(msgEl);
 
             /* Close button */
             const closeBtn = document.createElement('button');
