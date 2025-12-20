@@ -1236,8 +1236,12 @@
                 };
 
                 deviceFlasher.deviceStateCallback = (state, data) => {
-                    const msg = formatDeviceStateMessage(state, data);
-                    showDevicePopup(msg, state);
+                    if (state === 'secure') {
+                        showSecureModError();
+                    } else {
+                        const msg = formatDeviceStateMessage(state, data);
+                        showDevicePopup(msg, state);
+                    }
                 };
 
                 await deviceFlasher.openPort();
@@ -1949,6 +1953,89 @@
                     writeWarningHideTimeout = null;
                 }, timeRemaining);
             }
+        }
+
+        function showSecureModError() {
+            /* Check if overlay already exists */
+            if (document.getElementById('secureModErrorOverlay')) {
+                return;
+            }
+
+            /* Create overlay */
+            const overlay = document.createElement('div');
+            overlay.id = 'secureModErrorOverlay';
+            overlay.style.position = 'fixed';
+            overlay.style.top = '0';
+            overlay.style.left = '0';
+            overlay.style.width = '100%';
+            overlay.style.height = '100%';
+            overlay.style.background = 'rgba(0, 0, 0, 0.8)';
+            overlay.style.display = 'flex';
+            overlay.style.alignItems = 'center';
+            overlay.style.justifyContent = 'center';
+            overlay.style.zIndex = '10002';
+
+            /* Create error box */
+            const errorBox = document.createElement('div');
+            errorBox.style.background = '#3d1f1f';
+            errorBox.style.border = '3px solid #ff4444';
+            errorBox.style.borderRadius = '12px';
+            errorBox.style.padding = '40px';
+            errorBox.style.maxWidth = '600px';
+            errorBox.style.textAlign = 'center';
+            errorBox.style.boxShadow = '0 0 40px rgba(255, 68, 68, 0.6)';
+
+            /* Error title */
+            const title = document.createElement('div');
+            title.style.fontSize = '32px';
+            title.style.fontWeight = 'bold';
+            title.style.color = '#ff6b6b';
+            title.style.marginBottom = '20px';
+            title.textContent = '🔒 Device is Secured';
+            errorBox.appendChild(title);
+
+            /* Error message */
+            const message = document.createElement('div');
+            message.style.fontSize = '16px';
+            message.style.color = '#ffcccc';
+            message.style.lineHeight = '1.6';
+            message.style.marginBottom = '20px';
+            message.innerHTML = `
+                <p>This ESP32 device has been programmed with secure fuses.</p>
+                <p><strong>Flashing is not possible.</strong></p>
+                <p>The device's security features prevent any access to its firmware.</p>
+            `;
+            errorBox.appendChild(message);
+
+            /* Close button */
+            const closeBtn = document.createElement('button');
+            closeBtn.textContent = 'Close';
+            closeBtn.style.background = '#ff4444';
+            closeBtn.style.color = '#fff';
+            closeBtn.style.border = 'none';
+            closeBtn.style.padding = '12px 30px';
+            closeBtn.style.fontSize = '16px';
+            closeBtn.style.borderRadius = '6px';
+            closeBtn.style.cursor = 'pointer';
+            closeBtn.style.marginTop = '20px';
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                document.body.removeChild(overlay);
+            });
+            errorBox.appendChild(closeBtn);
+
+            /* Stop propagation on errorBox to prevent closing when clicking inside */
+            errorBox.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+
+            /* Close when clicking on overlay background */
+            overlay.addEventListener('click', () => {
+                document.body.removeChild(overlay);
+            });
+
+            overlay.appendChild(errorBox);
+            document.body.appendChild(overlay);
         }
 
         async function deviceConnect() {
