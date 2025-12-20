@@ -1308,7 +1308,13 @@
                 const dropZone = document.getElementById('dropZone');
                 if (dropZone) dropZone.style.display = 'none';
             } catch (e) {
-                deviceFlasher.disconnect();
+                if (deviceFlasher) {
+                    try {
+                        deviceFlasher.disconnect();
+                    } catch (disconnectError) {
+                        console.warn('Error during disconnect:', disconnectError);
+                    }
+                }
                 setDeviceStatus('Connection failed: ' + e.message, 'error');
                 setDeviceButtons({ connected: false });
                 setToggleButtonState(false);
@@ -2603,6 +2609,29 @@
                 return;
             }
 
+            // Parse OTA data to determine boot partition
+            let bootPartitionSubType = null;
+            const otaDataPartition = partitions.find(p => p.type === 1 && p.subType === 0x00);
+            if (otaDataPartition) {
+                try {
+                    const otaResult = await parser.parseOTAData(otaDataPartition);
+                    if (otaResult.activeEntry !== null) {
+                        const active = otaResult.entries[otaResult.activeEntry];
+                        // Count OTA partitions
+                        const otaPartitions = partitions.filter(p => p.type === 0 && p.subType >= 0x10 && p.subType <= 0x1F);
+                        const otaCount = otaPartitions.length;
+                        if (otaCount > 0) {
+                            // Calculate boot slot: (ota_seq - 1) % ota_app_count
+                            const bootSlot = (active.sequence - 1) % otaCount;
+                            // OTA partition subType = 0x10 + slot number
+                            bootPartitionSubType = 0x10 + bootSlot;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error parsing OTA data for boot partition:', error);
+                }
+            }
+
             let html = '';
             if (partitionTableOffset !== null) {
                 html += '<div class="info-grid" style="margin-bottom: 20px;">';
@@ -2617,7 +2646,7 @@
                 const part = partitions[idx];
                 const badgeClass = part.type === 0 ? 'app' : 'data';
 
-                // Check if APP partition has valid magic
+                // Check if APP partition has valid magic and boot status
                 let magicIndicator = '';
                 if (part.type === 0) { // APP partition
                     const hasValidMagic = await parser.hasValidImageMagic(part);
@@ -2625,6 +2654,14 @@
                         magicIndicator = '<span style="color: #6ec589; font-size: 1.1em; margin-left: 5px;" title="Valid ESP32 image magic (0xE9)">✓</span>';
                     } else {
                         magicIndicator = '<span style="color: #e88888; font-size: 1.1em; margin-left: 5px;" title="Invalid or missing ESP32 image magic">✗</span>';
+                    }
+                    
+                    // Mark boot partition
+                    if (bootPartitionSubType !== null && part.subType === bootPartitionSubType) {
+                        magicIndicator += '<span style="color: #ffd700; font-weight: bold; margin-left: 5px; background: #3d3d1f; padding: 2px 6px; border-radius: 3px;" title="This partition will boot according to OTA data">[BOOT]</span>';
+                    } else if (part.subType === 0x00 && bootPartitionSubType === null) {
+                        // Factory partition with no OTA data
+                        magicIndicator += '<span style="color: #ffd700; font-weight: bold; margin-left: 5px; background: #3d3d1f; padding: 2px 6px; border-radius: 3px;" title="Factory partition (default boot)">[BOOT]</span>';
                     }
                 }
 
@@ -2656,6 +2693,8 @@
                 // Add parse buttons for specific partition types
                 if (part.subType === 0x02) { // NVS
                     html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseNVSPartition(${idx})">Parse NVS</button></div>`;
+                } else if (part.subType === 0x00 && part.type === 1) { // OTA data
+                    html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseOTADataPartition(${idx})">Parse OTA Data</button></div>`;
                 } else if (part.type === 0) { // APP
                     html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseImagePartitionInline(${idx})">Parse Image</button></div>`;
                 } else if (part.subType === 0x81) { // FAT
@@ -2920,6 +2959,102 @@
         function togglePartitionDetails(idx) {
             const row = document.getElementById(`details-${idx}`);
             row.classList.toggle('visible');
+        }
+
+        async function parseOTADataPartition(idx) {
+            const partition = parser.partitions[idx];
+            const contentDiv = document.getElementById(`parsed-content-${idx}`);
+
+            if (!contentDiv) {
+                console.error(`Content div parsed-content-${idx} not found`);
+                return;
+            }
+
+            // Show loading indicator
+            contentDiv.innerHTML = '<div class="loading">⏳ Parsing OTA data...</div>';
+
+            try {
+                const result = await parser.parseOTAData(partition);
+                console.log('OTA data result:', result);
+                const { entries, activeEntry } = result;
+
+                // Count OTA partitions
+                const otaPartitions = parser.partitions.filter(p => 
+                    p.type === 0 && p.subType >= 0x10 && p.subType <= 0x1F
+                );
+                const otaCount = otaPartitions.length;
+
+                // Build HTML display
+                let html = '<div style="margin-top: 15px;">';
+                
+                html += `<div class="info-section" style="margin-bottom: 20px;">`;
+                html += `<h4 style="margin: 0 0 10px 0; color: #7a8bdc;">OTA Boot Selection</h4>`;
+                html += `<div style="font-size: 0.9em; color: #aaa; margin-bottom: 15px;">`;
+                html += `Two redundant entries (sectors) store which OTA partition should boot. The valid entry with the highest sequence number is used.`;
+                html += `</div>`;
+                
+                if (activeEntry !== null) {
+                    const active = entries[activeEntry];
+                    // Calculate which OTA partition will boot: (ota_seq - 1) % ota_app_count
+                    const bootSlot = otaCount > 0 ? ((active.sequence - 1) % otaCount) : 0;
+                    const bootPartition = otaPartitions[bootSlot];
+                    
+                    html += `<div class="success" style="margin-bottom: 15px; padding: 15px;">`;
+                    html += `<strong style="font-size: 1.1em;">Boot Partition:</strong> <span style="color: #88d899; font-size: 1.1em;">${bootPartition ? bootPartition.label : 'ota_' + bootSlot}</span><br>`;
+                    html += `<div style="margin-top: 8px; font-size: 0.95em;">`;
+                    html += `<strong>Active Entry:</strong> otadata[${activeEntry}]<br>`;
+                    html += `<strong>Sequence:</strong> ${active.sequence}<br>`;
+                    html += `<strong>OTA State:</strong> ${active.otaStateName}<br>`;
+                    html += `<strong>OTA Slot:</strong> ${bootSlot} (calculated as (seq-1) % ${otaCount})`;
+                    html += `</div>`;
+                    html += `</div>`;
+                } else {
+                    html += '<div class="error" style="margin-bottom: 15px;">No valid OTA data entries - will boot factory partition or first OTA partition</div>';
+                }
+
+                html += `</div>`;
+
+                // Show both entries with detailed status
+                html += `<h4 style="margin: 20px 0 10px 0; color: #7a8bdc;">OTA Data Entries (Sectors)</h4>`;
+                entries.forEach(entry => {
+                    const isActive = entry.index === activeEntry;
+                    const bgColor = isActive ? '#1f3d24' : '#2a2a2a';
+                    const borderColor = isActive ? '#50a05e' : '#404040';
+                    
+                    html += `<div style="background: ${bgColor}; border: 1px solid ${borderColor}; border-radius: 5px; padding: 15px; margin-bottom: 10px;">`;
+                    html += `<strong style="color: ${isActive ? '#88d899' : '#aaa'};">otadata[${entry.index}]${isActive ? ' ✓ ACTIVE' : ''}</strong>`;
+                    
+                    if (entry.isEmpty) {
+                        html += '<div style="margin-top: 8px; color: #888;">Empty (uninitialized - all 0xFF)</div>';
+                    } else {
+                        html += `<div style="margin-top: 8px; font-size: 0.9em;">`;
+                        html += `<strong>Sequence:</strong> ${entry.sequence}<br>`;
+                        html += `<strong>OTA State:</strong> ${entry.otaStateName} (0x${entry.otaState.toString(16).toUpperCase()})<br>`;
+                        html += `<strong>CRC32:</strong> <span class="mono">0x${entry.crc.toString(16).toUpperCase().padStart(8, '0')}</span><br>`;
+                        html += `<strong>Calculated:</strong> <span class="mono">0x${entry.calculatedCRC.toString(16).toUpperCase().padStart(8, '0')}</span><br>`;
+                        
+                        const statusColor = entry.isValid ? '#81c784' : '#e57373';
+                        const statusIcon = entry.isValid ? '✓' : '✗';
+                        let statusText = entry.isValid ? 'Valid' : 'Invalid';
+                        if (!entry.crcValid) {
+                            statusText = 'CRC Mismatch';
+                        } else if (!entry.isValid) {
+                            statusText = 'Invalid State';
+                        }
+                        html += `<strong>Status:</strong> <span style="color: ${statusColor};">${statusIcon} ${statusText}</span>`;
+                        html += `</div>`;
+                    }
+                    
+                    html += '</div>';
+                });
+
+                html += '</div>';
+                contentDiv.innerHTML = html;
+
+            } catch (error) {
+                contentDiv.innerHTML = `<div class="error">Error parsing OTA data: ${error.message}</div>`;
+                console.error('OTA data parse error:', error);
+            }
         }
 
         function parseNVSPartition(idx) {
