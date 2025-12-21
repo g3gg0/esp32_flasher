@@ -3619,7 +3619,9 @@
                     if (image.error) {
                         html = `<div class="error">${image.error}</div>`;
                     } else {
-                        html = '<div class="success">Firmware image parsed successfully</div>';
+                        html = `<div class="success" style="display: flex; align-items: center; gap: 10px;">Firmware image parsed successfully
+                            <button class="download-btn" style="margin-left: 8px;" onclick="event.stopPropagation(); downloadOTAImage(${idx})">Save OTA Image</button>
+                        </div>`;
 
                         html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
                         html += '<div class="info-grid">';
@@ -3738,6 +3740,55 @@
             } catch (error) {
                 console.error('Partition download error:', error);
                 alert('Error downloading partition: ' + error.message);
+            } finally {
+                hideFetchOverlay();
+                setFetchOverlayReason('');
+            }
+        }
+
+        async function downloadOTAImage(idx) {
+            const partition = parser.partitions[idx];
+            if (!partition) {
+                alert('Partition not found.');
+                return;
+            }
+
+            setFetchOverlayReason(`Save OTA image (${partition.label})`);
+            showFetchOverlay(`Preparing OTA image from header...`);
+            try {
+                // Re-parse to get precise header-defined bounds
+                const image = await parser.parseImage(partition.offset, partition.length);
+
+                if (image && image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
+                    const start = partition.offset;
+                    // If appended SHA256 present, include it (32 bytes)
+                    const hasAppendedHash = !!image.sha256;
+                    const end = image.sha256DataEnd + (hasAppendedHash ? 32 : 0);
+
+                    let bytes;
+                    if (parser && parser.sparseImage && typeof parser.sparseImage.slice_async === 'function') {
+                        bytes = await parser.sparseImage.slice_async(start, end);
+                    } else if (parser && parser.buffer && typeof parser.buffer.slice === 'function') {
+                        bytes = parser.buffer.slice(start, end);
+                    } else {
+                        bytes = new Uint8Array(parser.view.buffer, start, end - start);
+                    }
+
+                    const blob = new Blob([bytes], { type: 'application/octet-stream' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${partition.label}_ota_0x${start.toString(16)}-0x${end.toString(16)}.bin`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } else {
+                    alert('Unable to determine OTA image bounds from header.');
+                }
+            } catch (error) {
+                console.error('OTA image download error:', error);
+                alert('Error saving OTA image: ' + error.message);
             } finally {
                 hideFetchOverlay();
                 setFetchOverlayReason('');
