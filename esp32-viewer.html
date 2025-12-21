@@ -999,6 +999,7 @@
         let deviceFlasher = null;
         let deviceMode = false;
         let deviceSparse = null;
+        let deviceMac = null;
         let devicePopupTimer = null;
         let devicePopupContent = '';
         let deviceFlashSizeBytes = 0x00800000; /* Default 8 MiB */
@@ -1278,6 +1279,15 @@
                     deviceFlasher.disconnect();
                     throw new Error('Failed to sync after trying default, 250000, 115200 baud.');
                 }
+                
+                // Read MAC address after successful sync
+                try {
+                    deviceMac = await deviceFlasher.readMac();
+                } catch (macErr) {
+                    console.warn('Could not read device MAC:', macErr);
+                    deviceMac = null;
+                }
+                
                 const isStub = await deviceFlasher.isStubLoader();
                 setDeviceButtons({ connected: true, synced: true, stub: isStub });
 
@@ -1406,8 +1416,8 @@
             deviceFlasher = null;
             deviceSparse = null;
             deviceMode = false;
+            deviceMac = null;
             parser = null;
-            currentFile = null;
 
             setDeviceButtons({ connected: false, synced: false, stub: false });
             setToggleButtonState(false);
@@ -2166,6 +2176,15 @@
             try {
                 setDeviceStatus('Syncing...', 'loading');
                 await deviceFlasher.sync();
+                
+                // Read MAC address
+                try {
+                    deviceMac = await deviceFlasher.readMac();
+                } catch (macErr) {
+                    console.warn('Could not read device MAC:', macErr);
+                    deviceMac = null;
+                }
+                
                 setDeviceStatus('Synced to ' + deviceFlasher.current_chip + '.', 'success');
                 setDeviceButtons({ connected: true, synced: true, stub: await deviceFlasher.isStubLoader() });
             } catch (e) {
@@ -2259,6 +2278,7 @@
 
         async function handleFile(file) {
             currentFile = file;
+            console.log('Loading file:', file.name, 'size:', file.size, 'type:', file.type);
             await disconnectDeviceSession();
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -2305,6 +2325,14 @@
                    </select>`
                 : `<span>${formatBytes(sizeValueBytes)}</span>`;
 
+            // Build MAC address row for device mode
+            const macRow = isDevice && deviceMac
+                ? `<div class="info-item">
+                    <label>MAC Address</label>
+                    <span class="mono">${deviceMac}</span>
+                </div>`
+                : '';
+
             grid.innerHTML = `
                 <div class="info-item">
                     <label>Filename</label>
@@ -2318,6 +2346,7 @@
                     <label>Type</label>
                     <span>${typeLabel}</span>
                 </div>
+                ${macRow}
                 <div class="info-item">
                     <label>Last Modified</label>
                     <span>${new Date(file.lastModified).toLocaleString()}</span>
@@ -2820,14 +2849,14 @@
             /* Handle bootloader (-1) and regular partitions */
             let part;
             if (idx === -1) {
-                // Use same size calculation as download
-                let bootloaderLength;
-                if (bootloaderInfo && bootloaderInfo.bootloaderEnd) {
-                    bootloaderLength = bootloaderInfo.bootloaderEnd;
-                } else {
-                    bootloaderLength = partitionTableOffset || 0x8000;
+                // Only allow if bootloader was successfully parsed
+                if (!bootloaderInfo || bootloaderInfo.bootloaderStart === undefined || bootloaderInfo.bootloaderEnd === undefined) {
+                    alert('Bootloader not parsed correctly. Cannot replace bootloader.');
+                    return;
                 }
-                part = { label: 'bootloader', offset: 0, length: bootloaderLength };
+                const bootloaderStart = bootloaderInfo.bootloaderStart;
+                const bootloaderLength = bootloaderInfo.bootloaderEnd - bootloaderInfo.bootloaderStart;
+                part = { label: 'bootloader', offset: bootloaderStart, length: bootloaderLength };
             } else {
                 part = parser.partitions[idx];
                 if (!part) {
@@ -2908,7 +2937,23 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'firmware_modified.bin';
+                
+                // Generate meaningful filename
+                let filename;
+                if (deviceMode && deviceFlasher) {
+                    // Device mode: use chip type and MAC
+                    const chipName = deviceFlasher.current_chip || 'esp32';
+                    const macPart = deviceMac ? '_' + deviceMac.replace(/:/g, '') : '';
+                    filename = `${chipName}${macPart}_dump.bin`;
+                } else if (currentFile && currentFile.name) {
+                    // File mode: use original filename as base
+                    const baseName = currentFile.name.replace(/\.bin$/i, '');
+                    filename = `${baseName}_modified.bin`;
+                } else {
+                    // Fallback
+                    filename = 'firmware_modified.bin';
+                }
+                a.download = filename;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
