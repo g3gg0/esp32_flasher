@@ -1020,7 +1020,7 @@
         let writeSlowWarningShown = false;
         let writeWarningShownTime = null;
         let writeWarningHideTimeout = null;
-        const SLOW_SPEED_THRESHOLD = 200 * 1024; /* 200 KiB/s in bytes/s */
+        const SLOW_SPEED_THRESHOLD = 50 * 1024; /* 200 KiB/s in bytes/s */
         const SPEED_CHECK_DELAY = 5000; /* 1 second before checking speed */
         const WARNING_MIN_DISPLAY_TIME = 10000; /* Keep warning visible for at least 10 seconds */
 
@@ -1065,6 +1065,9 @@
                         /* Update memory map after successful read */
                         setTimeout(() => updateMemoryMap(), 100);
                         return chunk;
+                    } catch (readError) {
+                        console.error('Device read error:', readError);
+                        throw readError;
                     } finally {
                         fetchOverlayActiveReads = Math.max(0, fetchOverlayActiveReads - 1);
                         if (!overlayWasVisible && fetchOverlayActiveReads === 0) {
@@ -1083,11 +1086,16 @@
                     if (writeData.length % 0x1000 !== 0) {
                         throw new Error(`Write data length ${writeData.length} is not aligned to 0x1000 bytes`);
                     }
-                    await deviceFlasher.writeFlash(writeAddr, writeData, (offset, total, status) => {
-                        updateWriteOverlayProgress(writeAddr + offset, offset, total);
-                    });
-                    if (logReads) {
-                        console.log('  Wrote', `0x${writeAddr.toString(16)}`, writeData.length, 'bytes');
+                    try {
+                        await deviceFlasher.writeFlash(writeAddr, writeData, (offset, total, status) => {
+                            updateWriteOverlayProgress(writeAddr + offset, offset, total);
+                        });
+                        if (logReads) {
+                            console.log('  Wrote', `0x${writeAddr.toString(16)}`, writeData.length, 'bytes');
+                        }
+                    } catch (writeError) {
+                        console.error('Device write error:', writeError);
+                        throw writeError;
                     }
                 },
                 async (sparseImage) => {
@@ -2293,8 +2301,12 @@
                         if (dropZone) dropZone.style.display = 'none';
                         const closeBtn = document.getElementById('closeFileBtn');
                         if (closeBtn) closeBtn.style.display = 'inline-block';
-                    }).catch(err => showError('Error parsing file: ' + err.message));
+                    }).catch(err => {
+                        console.error('Error parsing file:', err);
+                        showError('Error parsing file: ' + err.message);
+                    });
                 } catch (error) {
+                    console.error('Error parsing file:', error);
                     showError('Error parsing file: ' + error.message);
                 }
             };
@@ -2789,6 +2801,7 @@
 
                 updateMemoryMap();
             } catch (err) {
+                console.error('Error clearing bootloader:', err);
                 alert('Error clearing bootloader: ' + err.message);
             }
         }
@@ -2836,6 +2849,7 @@
 
                 updateMemoryMap();
             } catch (err) {
+                console.error('Error clearing partition:', err);
                 alert('Error clearing partition: ' + err.message);
             }
         }
@@ -2909,6 +2923,7 @@
 
                     updateMemoryMap();
                 } catch (err) {
+                    console.error('Error replacing partition:', err);
                     alert('Error replacing partition: ' + err.message);
                 } finally {
                     replaceTargetPartition = null;
@@ -3978,8 +3993,11 @@
         }
 
         function showError(message) {
+            console.error('showError:', message);
             const content = document.getElementById('partitionsContent');
-            content.innerHTML = `<div class="error">${message}</div>`;
+            if (content) {
+                content.innerHTML = `<div class="error">${message}</div>`;
+            }
         }
 
         async function deleteNVSItem(partitionIdx, namespace, key) {
