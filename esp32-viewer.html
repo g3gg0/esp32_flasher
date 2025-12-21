@@ -901,7 +901,8 @@
                     <button class="btn" id="deviceDisconnectBtn" onclick="toggleDeviceSession()"
                         style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Disconnect</button>
                     <button class="btn" id="closeFileBtn" onclick="closeFile()"
-                        style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Close File</button>
+                        style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Close
+                        File</button>
                     <button class="btn" id="writeToDeviceBtn" onclick="writeToDevice()"
                         style="display: none; background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%);">Write to
                         Device</button>
@@ -1505,7 +1506,7 @@
 
                 for (let seg of segments) {
                     if (seg.end <= readStart || seg.start >= readEnd) continue;
-                    
+
                     /* Check if this segment is all 0xFF (erased) by examining 512-byte blocks */
                     const segStart = Math.max(seg.start, readStart);
                     const segEnd = Math.min(seg.end, readEnd);
@@ -1520,12 +1521,12 @@
                         /* Get data for this block from readBuffer */
                         const offsetInRead = Math.max(blockAddr - readStart, 0);
                         const blockDataLen = blockEnd - Math.max(blockAddr, readStart);
-                        
+
                         /* Check if block data is available and all 0xFF */
                         if (offsetInRead < read.data.length) {
                             const blockData = read.data.slice(offsetInRead, offsetInRead + blockDataLen);
                             let blockIsFF = blockData.length > 0 && Array.from(blockData).every(byte => byte === 0xFF);
-                            
+
                             if (!blockIsFF) {
                                 isAllFF = false;
                                 break;
@@ -2258,108 +2259,26 @@
 
         async function handleFile(file) {
             currentFile = file;
-
-            /* If in device mode, compare and write changes to sparse image */
-            if (deviceMode && deviceSparse && parser) {
-                const reader = new FileReader();
-                reader.onload = async (e) => {
-                    try {
-                        showFetchOverlay('Comparing file with device memory...');
-                        const fileData = new Uint8Array(e.target.result);
-                        const fileSize = fileData.length;
-
-                        /* Compare file data with cached read segments */
-                        let modifiedRegions = [];
-
-                        if (deviceSparse.readBuffer.length === 0) {
-                            /* No cached data - write entire file at offset 0 */
-                            modifiedRegions.push({ start: 0, end: fileSize });
-                        } else {
-                            /* Compare with cached regions */
-                            for (const segment of deviceSparse.readBuffer) {
-                                const segStart = segment.address;
-                                const segEnd = Math.min(segStart + segment.data.length, fileSize);
-
-                                if (segStart >= fileSize) continue;
-
-                                /* Compare this segment with file data */
-                                let regionStart = null;
-                                let regionEnd = null;
-
-                                for (let i = segStart; i < segEnd; i++) {
-                                    const deviceByte = segment.data[i - segStart];
-                                    const fileByte = fileData[i];
-
-                                    if (deviceByte !== fileByte) {
-                                        if (regionStart === null) {
-                                            regionStart = i;
-                                        }
-                                        regionEnd = i + 1;
-                                    } else {
-                                        if (regionStart !== null) {
-                                            modifiedRegions.push({ start: regionStart, end: regionEnd });
-                                            regionStart = null;
-                                            regionEnd = null;
-                                        }
-                                    }
-                                }
-
-                                /* Close any open region */
-                                if (regionStart !== null) {
-                                    modifiedRegions.push({ start: regionStart, end: regionEnd });
-                                }
-                            }
-                        }
-
-                        /* Write modified regions to sparse image */
-                        let totalModified = 0;
-                        for (const region of modifiedRegions) {
-                            const length = region.end - region.start;
-                            const data = fileData.slice(region.start, region.end);
-                            deviceSparse.write(region.start, data);
-                            totalModified += length;
-                        }
-
-                        hideFetchOverlay();
-
-                        if (totalModified > 0) {
-                            setDeviceStatus(`File loaded. ${modifiedRegions.length} modified region(s) detected (${formatBytes(totalModified)} changed). Use "Write to Device" to commit.`, 'success');
-                        } else {
-                            setDeviceStatus('File loaded. No differences detected with cached device memory.', 'success');
-                        }
-
-                        /* Update memory map and re-parse */
+            await disconnectDeviceSession();
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const sparse = SparseImage.fromBuffer(e.target.result);
+                    parser = new ESP32Parser(sparse);
+                    displaySourceInfo(file);
+                    parseAndDisplay(true).then(() => {
                         updateMemoryMap();
-                        await parseAndDisplay(true);
-                    } catch (error) {
-                        hideFetchOverlay();
-                        showError('Error comparing file: ' + error.message);
-                    }
-                };
-                reader.readAsArrayBuffer(file);
-            } else {
-                /* Normal file mode - disconnect device and load file via SparseImage */
-                await disconnectDeviceSession();
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    try {
-                        const sparse = SparseImage.fromBuffer(e.target.result);
-                        parser = new ESP32Parser(sparse);
-                        displaySourceInfo(file);
-                        parseAndDisplay(true).then(() => {
-                            updateMemoryMap();
-                            // Hide drop zone and show close button when file is loaded
-                            const dropZone = document.getElementById('dropZone');
-                            if (dropZone) dropZone.style.display = 'none';
-                            const closeBtn = document.getElementById('closeFileBtn');
-                            if (closeBtn) closeBtn.style.display = 'inline-block';
-                        }).catch(err => showError('Error parsing file: ' + err.message));
-                    } catch (error) {
-                        showError('Error parsing file: ' + error.message);
-                    }
-                };
-                reader.readAsArrayBuffer(file);
-            }
+                        // Hide drop zone and show close button when file is loaded
+                        const dropZone = document.getElementById('dropZone');
+                        if (dropZone) dropZone.style.display = 'none';
+                        const closeBtn = document.getElementById('closeFileBtn');
+                        if (closeBtn) closeBtn.style.display = 'inline-block';
+                    }).catch(err => showError('Error parsing file: ' + err.message));
+                } catch (error) {
+                    showError('Error parsing file: ' + error.message);
+                }
+            };
+            reader.readAsArrayBuffer(file);
         }
 
         function displaySourceInfo(file) {
@@ -2726,7 +2645,7 @@
                     } else {
                         magicIndicator = '<span style="color: #e88888; font-size: 1.1em; margin-left: 5px;" title="Invalid or missing ESP32 image magic">✗</span>';
                     }
-                    
+
                     // Mark boot partition
                     if (bootPartitionSubType !== null && part.subType === bootPartitionSubType) {
                         magicIndicator += '<span style="color: #ffd700; font-weight: bold; margin-left: 5px; background: #3d3d1f; padding: 2px 6px; border-radius: 3px;" title="This partition will boot according to OTA data">[BOOT]</span>';
@@ -3061,26 +2980,26 @@
                 const { entries, activeEntry } = result;
 
                 // Count OTA partitions
-                const otaPartitions = parser.partitions.filter(p => 
+                const otaPartitions = parser.partitions.filter(p =>
                     p.type === 0 && p.subType >= 0x10 && p.subType <= 0x1F
                 );
                 const otaCount = otaPartitions.length;
 
                 // Build HTML display
                 let html = '<div style="margin-top: 15px;">';
-                
+
                 html += `<div class="info-section" style="margin-bottom: 20px;">`;
                 html += `<h4 style="margin: 0 0 10px 0; color: #7a8bdc;">OTA Boot Selection</h4>`;
                 html += `<div style="font-size: 0.9em; color: #aaa; margin-bottom: 15px;">`;
                 html += `Two redundant entries (sectors) store which OTA partition should boot. The valid entry with the highest sequence number is used.`;
                 html += `</div>`;
-                
+
                 if (activeEntry !== null) {
                     const active = entries[activeEntry];
                     // Calculate which OTA partition will boot: (ota_seq - 1) % ota_app_count
                     const bootSlot = otaCount > 0 ? ((active.sequence - 1) % otaCount) : 0;
                     const bootPartition = otaPartitions[bootSlot];
-                    
+
                     html += `<div class="success" style="margin-bottom: 15px; padding: 15px;">`;
                     html += `<strong style="font-size: 1.1em;">Boot Partition:</strong> <span style="color: #88d899; font-size: 1.1em;">${bootPartition ? bootPartition.label : 'ota_' + bootSlot}</span><br>`;
                     html += `<div style="margin-top: 8px; font-size: 0.95em;">`;
@@ -3102,10 +3021,10 @@
                     const isActive = entry.index === activeEntry;
                     const bgColor = isActive ? '#1f3d24' : '#2a2a2a';
                     const borderColor = isActive ? '#50a05e' : '#404040';
-                    
+
                     html += `<div style="background: ${bgColor}; border: 1px solid ${borderColor}; border-radius: 5px; padding: 15px; margin-bottom: 10px;">`;
                     html += `<strong style="color: ${isActive ? '#88d899' : '#aaa'};">otadata[${entry.index}]${isActive ? ' ✓ ACTIVE' : ''}</strong>`;
-                    
+
                     if (entry.isEmpty) {
                         html += '<div style="margin-top: 8px; color: #888;">Empty (uninitialized - all 0xFF)</div>';
                     } else {
@@ -3114,7 +3033,7 @@
                         html += `<strong>OTA State:</strong> ${entry.otaStateName} (0x${entry.otaState.toString(16).toUpperCase()})<br>`;
                         html += `<strong>CRC32:</strong> <span class="mono">0x${entry.crc.toString(16).toUpperCase().padStart(8, '0')}</span><br>`;
                         html += `<strong>Calculated:</strong> <span class="mono">0x${entry.calculatedCRC.toString(16).toUpperCase().padStart(8, '0')}</span><br>`;
-                        
+
                         const statusColor = entry.isValid ? '#81c784' : '#e57373';
                         const statusIcon = entry.isValid ? '✓' : '✗';
                         let statusText = entry.isValid ? 'Valid' : 'Invalid';
@@ -3126,7 +3045,7 @@
                         html += `<strong>Status:</strong> <span style="color: ${statusColor};">${statusIcon} ${statusText}</span>`;
                         html += `</div>`;
                     }
-                    
+
                     html += '</div>';
                 });
 
