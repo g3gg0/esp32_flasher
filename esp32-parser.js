@@ -814,7 +814,7 @@ class FATParser {
         const fatSectors = totalSectors - 1 - (WL_STATE_COPY_COUNT * wlStateSectors);
 
         const stateOffset = offset + length - wlSectorsSize;
-        if (stateOffset + 64 > this.buffer.length) {
+        if (stateOffset + 64 > this.sparseImage.size) {
             return { error: 'Cannot read wear leveling state' };
         }
 
@@ -831,7 +831,7 @@ class FATParser {
 
         let totalRecords = 0;
         let recordOffset = stateOffset + 64;
-        for (let i = 0; i < wlStateSize && recordOffset + WL_STATE_RECORD_SIZE <= this.buffer.length; i++) {
+        for (let i = 0; i < wlStateSize && recordOffset + WL_STATE_RECORD_SIZE <= this.sparseImage.size; i++) {
             let isEmpty = true;
             for (let j = 0; j < WL_STATE_RECORD_SIZE; j++) {
                 if ((await this.view.getUint8(recordOffset + j)) !== 0xFF) {
@@ -872,7 +872,7 @@ class FATParser {
 
         const sector0Physical = this.wlTranslateSector(wlInfo, 0);
         const bootSectorOffset = partition.offset + sector0Physical * WL_SECTOR_SIZE;
-        if (bootSectorOffset + 512 > this.buffer.length) {
+        if (bootSectorOffset + 512 > this.sparseImage.size) {
             return { error: 'Cannot read FAT boot sector' };
         }
 
@@ -944,7 +944,7 @@ class FATParser {
 
         for (let i = 0; i < maxIter; i++) {
             const entryOffset = dirOffset + i * 32;
-            if (entryOffset + 32 > this.buffer.length) break;
+            if (entryOffset + 32 > this.sparseImage.size) break;
             const firstByte = await this.view.getUint8(entryOffset);
             if (firstByte === 0x00) break;
             if (firstByte === 0xE5 || firstByte === 0x05) continue;
@@ -1006,7 +1006,7 @@ class FATParser {
                 const clusterOffset = partition.offset +
                     this.wlTranslateSector(wlInfo, clusterSector) * WL_SECTOR_SIZE;
 
-                if (clusterOffset + sectorsPerCluster * WL_SECTOR_SIZE <= this.buffer.length) {
+                if (clusterOffset + sectorsPerCluster * WL_SECTOR_SIZE <= this.sparseImage.size) {
                     const subFiles = await this.parseDirectory(partition, wlInfo, clusterOffset, null,
                         bytesPerSector, sectorsPerCluster, reservedSectors, numFATs, sectorsPerFAT, fullPath, false);
                     fileEntry.children = subFiles;
@@ -1071,7 +1071,7 @@ class FATParser {
                 this.wlTranslateSector(wlInfo, clusterSector) * WL_SECTOR_SIZE;
 
             const bytesToRead = Math.min(bytesPerCluster, fileEntry.size - bytesRead);
-            if (clusterOffset + bytesToRead <= this.buffer.length) {
+            if (clusterOffset + bytesToRead <= this.sparseImage.size) {
                 fileData.set(await this.buffer.slice_async(clusterOffset, clusterOffset + bytesToRead), bytesRead);
                 bytesRead += bytesToRead;
             }
@@ -1579,7 +1579,7 @@ class NVSParser {
     }
 
     async parseItem(offset, namespaces, partition) {
-        if (offset + 32 > this.buffer.length) {
+        if (offset + 32 > this.sparseImage.size) {
             return null;
         }
 
@@ -1667,7 +1667,7 @@ class NVSParser {
                 case 0x21: {
                     const strSize = await this.view.getUint16(offset + 24, true);
                     const strCrc = (await this.view.getUint32(offset + 28, true)) >>> 0;
-                    if (strSize > 0 && strSize < 4096 && offset + 32 + strSize <= this.buffer.length) {
+                    if (strSize > 0 && strSize < 4096 && offset + 32 + strSize <= this.sparseImage.size) {
                         const strData = new Uint8Array(strSize);
                         for (let i = 0; i < strSize; i++) {
                             strData[i] = await this.view.getUint8(offset + 32 + i);
@@ -1700,7 +1700,7 @@ class NVSParser {
                     if (chunkIndex !== 0xFF) {
                         item.chunkIndex = chunkIndex;
                     }
-                    if (blobSize > 0 && blobSize < 4096 && offset + 32 + blobSize <= this.buffer.length) {
+                    if (blobSize > 0 && blobSize < 4096 && offset + 32 + blobSize <= this.sparseImage.size) {
                         const blobData = new Uint8Array(blobSize);
                         for (let i = 0; i < blobSize; i++) {
                             blobData[i] = await this.view.getUint8(offset + 32 + i);
@@ -1752,7 +1752,7 @@ class NVSParser {
 
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
-            if (blockOffset + 64 > this.buffer.length) break;
+            if (blockOffset + 64 > this.sparseImage.size) break;
 
             const state = await this.view.getUint32(blockOffset, true);
             const seq = await this.view.getUint32(blockOffset + 4, true);
@@ -1798,7 +1798,7 @@ class NVSParser {
                 if (itemState !== 2) continue;
 
                 const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
+                if (entryOffset + 32 > this.sparseImage.size) break;
 
                 const nsIndex = await this.view.getUint8(entryOffset);
                 const datatype = await this.view.getUint8(entryOffset + 1);
@@ -1863,7 +1863,7 @@ class NVSParser {
 
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
-            if (blockOffset + 64 > this.buffer.length) break;
+            if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
 
@@ -1875,7 +1875,7 @@ class NVSParser {
                 if (itemState !== 2) continue;
 
                 const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
+                if (entryOffset + 32 > this.sparseImage.size) break;
 
                 const itemNsIndex = await this.view.getUint8(entryOffset);
                 const datatype = await this.view.getUint8(entryOffset + 1);
@@ -1908,7 +1908,7 @@ class NVSParser {
 
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
-            if (blockOffset + 64 > this.buffer.length) break;
+            if (blockOffset + 64 > this.sparseImage.size) break;
 
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
@@ -1923,7 +1923,7 @@ class NVSParser {
                 if (itemState !== 2) continue;
 
                 const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
+                if (entryOffset + 32 > this.sparseImage.size) break;
 
                 const itemNsIndex = await this.view.getUint8(entryOffset);
                 const datatype = await this.view.getUint8(entryOffset + 1);
@@ -1966,7 +1966,7 @@ class NVSParser {
 
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
-            if (blockOffset + 64 > this.buffer.length) break;
+            if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
             if (state !== 0xFFFFFFFE && state !== 0xFFFFFFFC) continue;
@@ -2013,7 +2013,7 @@ class NVSParser {
 
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
-            if (blockOffset + 64 > this.buffer.length) break;
+            if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
 
@@ -2033,7 +2033,7 @@ class NVSParser {
                 if (itemState !== 2) continue;
 
                 const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
+                if (entryOffset + 32 > this.sparseImage.size) break;
 
                 const itemNsIndex = await this.view.getUint8(entryOffset);
                 const datatype = await this.view.getUint8(entryOffset + 1);
@@ -2082,7 +2082,7 @@ class NVSParser {
 
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
-            if (blockOffset + 64 > this.buffer.length) break;
+            if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
 
@@ -2094,7 +2094,7 @@ class NVSParser {
                 if (itemState !== 2) continue;
 
                 const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
+                if (entryOffset + 32 > this.sparseImage.size) break;
 
                 const itemNsIndex = await this.view.getUint8(entryOffset);
                 const datatype = await this.view.getUint8(entryOffset + 1);
@@ -2296,7 +2296,7 @@ class NVSParser {
         let nsIndex = -1;
         for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = partition.offset + sectorOffset;
-            if (blockOffset + 64 > this.buffer.length) break;
+            if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
             const stateBitmap = new Uint8Array(32);
@@ -2305,7 +2305,7 @@ class NVSParser {
                 const itemState = this.getNVSItemState(stateBitmap, entry);
                 if (itemState !== 2) continue;
                 const entryOffset = blockOffset + 64 + entry * 32;
-                if (entryOffset + 32 > this.buffer.length) break;
+                if (entryOffset + 32 > this.sparseImage.size) break;
                 const itemNsIndex = await this.view.getUint8(entryOffset);
                 const datatype = await this.view.getUint8(entryOffset + 1);
                 const span = await this.view.getUint8(entryOffset + 2);
@@ -2483,7 +2483,7 @@ class ESP32Parser {
 
     // Quick check if partition has valid ESP32 image magic
     async hasValidImageMagic(partition) {
-        if (partition.offset >= this.buffer.length) {
+        if (partition.offset >= this.sparseImage.size) {
             return false;
         }
 
@@ -2499,10 +2499,7 @@ class ESP32Parser {
 
         this.partitionTableOffset = offset;
 
-        // Prefetch initial partition table data (up to 32 partitions = 1KB)
-        //await this.sparseImage.prefetch(offset, Math.min(32 * 32, this.buffer.length - offset));
-
-        while (currentOffset + 32 <= this.buffer.length) {
+        while (currentOffset + 32 <= this.sparseImage.size) {
             const magic = await this.view.getUint16(currentOffset, true);
 
             if (magic !== 0x50AA) {
@@ -2534,8 +2531,8 @@ class ESP32Parser {
     // Compute SHA-1 of a partition
     async computePartitionSHA1(partition) {
         const start = partition.offset;
-        const end = Math.min(this.buffer.length, partition.offset + partition.length);
-        if (start >= this.buffer.length || start >= end) {
+        const end = Math.min(this.sparseImage.size, partition.offset + partition.length);
+        if (start >= this.sparseImage.size || start >= end) {
             return null;
         }
         const view = await this.sparseImage.subarray_async(start, end);
@@ -2548,8 +2545,8 @@ class ESP32Parser {
     async detectPartitionTableOffset(bootImage) {
         const sector = 0x1000;
         const start = bootImage?.endOffset ?? 0;
-        const searchLimit = Math.min(0x00010000, this.buffer.length);
-        const len = this.buffer.length;
+        const searchLimit = Math.min(0x00010000, this.sparseImage.size);
+        const len = this.sparseImage.size;
         let ptr = start;
         let bestCandidate = null;
         let bestPartitionCount = 0;
@@ -2593,7 +2590,7 @@ class ESP32Parser {
         const maxPartitions = 32; // Reasonable limit
 
         for (let i = 0; i < maxPartitions; i++) {
-            if (currentOffset + 32 > this.buffer.length) {
+            if (currentOffset + 32 > this.sparseImage.size) {
                 break;
             }
 
@@ -2793,7 +2790,7 @@ class ESP32Parser {
 
     // Parse firmware image
     async parseImage(offset, length) {
-        if (offset + 24 > this.buffer.length) {
+        if (offset + 24 > this.sparseImage.size) {
             return { error: 'Offset out of bounds' };
         }
 
@@ -2861,7 +2858,7 @@ class ESP32Parser {
 
         // Parse segments
         for (let i = 0; i < segmentCount; i++) {
-            if (currentOffset + 8 > this.buffer.length) break;
+            if (currentOffset + 8 > this.sparseImage.size) break;
 
             const loadAddress = await this.view.getUint32(currentOffset, true);
             const segLength = await this.view.getUint32(currentOffset + 4, true);
@@ -2881,7 +2878,7 @@ class ESP32Parser {
         }
 
         const checksumOffset = currentOffset;
-        if (currentOffset < this.buffer.length) {
+        if (currentOffset < this.sparseImage.size) {
             image.checksum = await this.view.getUint8(currentOffset);
             currentOffset++;
 
@@ -2889,7 +2886,7 @@ class ESP32Parser {
             image.sha256DataStart = offset;
             image.sha256DataEnd = checksumOffset + 1;
 
-            if (image.hasHash && currentOffset + 32 <= this.buffer.length) {
+            if (image.hasHash && currentOffset + 32 <= this.sparseImage.size) {
                 const hash = new Uint8Array(32);
                 for (let i = 0; i < 32; i++) {
                     hash[i] = await this.view.getUint8(currentOffset + i);
@@ -2931,7 +2928,7 @@ class ESP32Parser {
                 appElfSha256: null
             };
 
-            if (offset + 144 + 32 <= this.buffer.length) {
+            if (offset + 144 + 32 <= this.sparseImage.size) {
                 const sha256 = new Uint8Array(32);
                 for (let i = 0; i < 32; i++) {
                     sha256[i] = await this.view.getUint8(offset + 144 + i);
@@ -2944,9 +2941,9 @@ class ESP32Parser {
 
         /* Fixed offset: header (24) + first segment header (8) */
         const descOffset = (image.offset ?? 0) + 24 + 8;
-        if (descOffset + 256 > this.buffer.length || descOffset < 0) {
+        if (descOffset + 256 > this.sparseImage.size || descOffset < 0) {
             console.warn(
-                `AppDesc: fixed offset 0x${descOffset.toString(16)} out of bounds (buffer length 0x${this.buffer.length.toString(16)})`
+                `AppDesc: fixed offset 0x${descOffset.toString(16)} out of bounds (buffer length 0x${this.sparseImage.size.toString(16)})`
             );
             return null;
         }
@@ -2955,7 +2952,7 @@ class ESP32Parser {
         if (magic !== ESP_APP_DESC_MAGIC_WORD) {
             let peek = null;
             try {
-                const end = Math.min(descOffset + 16, this.buffer.length);
+                const end = Math.min(descOffset + 16, this.sparseImage.size);
                 peek = await this.buffer.slice_async(descOffset, end);
             } catch (err) {
                 console.warn(`AppDesc: error reading peek bytes at 0x${descOffset.toString(16)}: ${err.message}`);

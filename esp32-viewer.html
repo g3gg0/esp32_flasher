@@ -900,6 +900,8 @@
                 <div class="button-group" style="display: flex; flex-wrap:wrap; gap:8px;">
                     <button class="btn" id="deviceDisconnectBtn" onclick="toggleDeviceSession()"
                         style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Disconnect</button>
+                    <button class="btn" id="closeFileBtn" onclick="closeFile()"
+                        style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Close File</button>
                     <button class="btn" id="writeToDeviceBtn" onclick="writeToDevice()"
                         style="display: none; background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%);">Write to
                         Device</button>
@@ -1351,6 +1353,51 @@
             hideWriteOverlay();
 
             clearDeviceState();
+        }
+
+        function closeFile() {
+            /* Close the currently loaded file and reset UI to initial state */
+            parser = null;
+            currentFile = null;
+            deviceMode = false;
+
+            /* Hide file info section */
+            const fileInfo = document.getElementById('fileInfo');
+            if (fileInfo) {
+                fileInfo.classList.remove('visible');
+            }
+
+            /* Hide tab container */
+            const tabContainer = document.getElementById('tabContainer');
+            if (tabContainer) {
+                tabContainer.style.display = 'none';
+            }
+
+            /* Hide memory map */
+            const memoryMapContainer = document.getElementById('memoryMapContainer');
+            if (memoryMapContainer) {
+                memoryMapContainer.style.display = 'none';
+            }
+
+            /* Clear content divs */
+            const contentDivs = [
+                document.getElementById('bootloaderContent'),
+                document.getElementById('partitionsContent'),
+                document.getElementById('rawContent')
+            ];
+            contentDivs.forEach(div => {
+                if (div) div.innerHTML = '';
+            });
+
+            /* Hide Save Image and Close File buttons */
+            const saveBtn = document.getElementById('saveImageBtn');
+            if (saveBtn) saveBtn.style.display = 'none';
+            const closeBtn = document.getElementById('closeFileBtn');
+            if (closeBtn) closeBtn.style.display = 'none';
+
+            /* Show file drop/browse zone */
+            const dropZone = document.getElementById('dropZone');
+            if (dropZone) dropZone.style.display = 'block';
         }
 
         function clearDeviceState() {
@@ -2195,6 +2242,8 @@
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
                 handleFile(e.target.files[0]);
+                // Reset input value to allow selecting the same file again
+                e.target.value = '';
             }
         });
 
@@ -2202,6 +2251,8 @@
         partitionFileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0 && replaceTargetPartition !== null) {
                 handlePartitionReplaceFile(e.target.files[0], replaceTargetPartition);
+                // Reset input value to allow selecting the same file again
+                e.target.value = '';
             }
         });
 
@@ -2297,6 +2348,11 @@
                         displaySourceInfo(file);
                         parseAndDisplay(true).then(() => {
                             updateMemoryMap();
+                            // Hide drop zone and show close button when file is loaded
+                            const dropZone = document.getElementById('dropZone');
+                            if (dropZone) dropZone.style.display = 'none';
+                            const closeBtn = document.getElementById('closeFileBtn');
+                            if (closeBtn) closeBtn.style.display = 'inline-block';
                         }).catch(err => showError('Error parsing file: ' + err.message));
                     } catch (error) {
                         showError('Error parsing file: ' + error.message);
@@ -2444,16 +2500,16 @@
                 let sha256Calculated = null;
                 let sha256RegionCalc = null;
 
-                const calcSliceEnd = Math.min(partition.offset + partition.length, parser.buffer.length);
+                const calcSliceEnd = Math.min(partition.offset + partition.length, parser.sparseImage.size);
                 if (calcSliceEnd > partition.offset) {
-                    const calcData = parser.buffer.slice(partition.offset, calcSliceEnd);
+                    const calcData = await parser.sparseImage.slice_async(partition.offset, calcSliceEnd);
                     const calcHash = await ESP32Parser.calculateSHA256(calcData);
                     sha256Calculated = ESP32Parser.bytesToHex(calcHash);
                 }
 
                 if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined && image.sha256DataEnd > image.sha256DataStart) {
                     console.log(`Bootloader SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
-                    const regionData = parser.buffer.slice(image.sha256DataStart, image.sha256DataEnd);
+                    const regionData = await parser.sparseImage.slice_async(image.sha256DataStart, image.sha256DataEnd);
                     const regionHash = await ESP32Parser.calculateSHA256(regionData);
                     sha256RegionCalc = ESP32Parser.bytesToHex(regionHash);
                 }
@@ -2565,10 +2621,13 @@
                 // Find bootloader end (where 0xFF padding starts)
                 let bootloaderEnd = image.endOffset || 0;
                 // Scan forward from endOffset to find where 0xFF padding begins
+                // Limit scan to actual file size
+                const actualSize = parser.sparseImage.size;
+                const scanLimit = Math.min(maxBootloaderLength, actualSize);
                 const scanSize = 256; // Check in 256-byte blocks
-                for (let pos = bootloaderEnd; pos < maxBootloaderLength; pos += scanSize) {
+                for (let pos = bootloaderEnd; pos < scanLimit; pos += scanSize) {
                     let allFF = true;
-                    const checkLen = Math.min(scanSize, maxBootloaderLength - pos);
+                    const checkLen = Math.min(scanSize, scanLimit - pos);
                     for (let i = 0; i < checkLen; i++) {
                         if ((await parser.view.getUint8(pos + i)) !== 0xFF) {
                             allFF = false;
@@ -2751,18 +2810,23 @@
         }
 
         async function clearBootloader() {
-            if (!parser || (!parser.buffer && !parser.sparseImage)) {
+            if (!parser) {
                 alert('No firmware file loaded.');
                 return;
             }
 
             try {
                 const start = 0;
-                const length = 0x10000; /* 64KB bootloader max */
+                // Use same size calculation as download
+                let length;
+                if (bootloaderInfo && bootloaderInfo.bootloaderEnd) {
+                    length = bootloaderInfo.bootloaderEnd;
+                } else {
+                    length = partitionTableOffset || 0x8000;
+                }
                 const end = start + length;
 
-                const totalSize = parser.sparseImage ? parser.sparseImage.size : parser.buffer.length;
-                if (end > totalSize) {
+                if (end > parser.sparseImage.size) {
                     alert('Bootloader region exceeds firmware image size.');
                     return;
                 }
@@ -2783,7 +2847,7 @@
         }
 
         async function clearPartition(idx) {
-            if (!parser || (!parser.buffer && !parser.sparseImage)) {
+            if (!parser) {
                 alert('No firmware file loaded.');
                 return;
             }
@@ -2798,7 +2862,7 @@
                 const start = part.offset;
                 const end = start + part.length;
 
-                const totalSize = parser.sparseImage ? parser.sparseImage.size : parser.buffer.length;
+                const totalSize = parser.sparseImage.size;
                 if (end > totalSize) {
                     alert('Partition range exceeds firmware image size.');
                     return;
@@ -2830,7 +2894,7 @@
         }
 
         function handlePartitionReplaceFile(file, idx) {
-            if (!parser || (!parser.buffer && !parser.sparseImage)) {
+            if (!parser) {
                 alert('No firmware file loaded.');
                 return;
             }
@@ -2838,7 +2902,14 @@
             /* Handle bootloader (-1) and regular partitions */
             let part;
             if (idx === -1) {
-                part = { label: 'bootloader', offset: 0, length: 0x10000 };
+                // Use same size calculation as download
+                let bootloaderLength;
+                if (bootloaderInfo && bootloaderInfo.bootloaderEnd) {
+                    bootloaderLength = bootloaderInfo.bootloaderEnd;
+                } else {
+                    bootloaderLength = partitionTableOffset || 0x8000;
+                }
+                part = { label: 'bootloader', offset: 0, length: bootloaderLength };
             } else {
                 part = parser.partitions[idx];
                 if (!part) {
@@ -3592,16 +3663,16 @@
                     let sha256Calculated = null;
                     let sha256RegionCalc = null;
 
-                    const calcSliceEnd = Math.min(partition.offset + partition.length, parser.buffer.length);
+                    const calcSliceEnd = Math.min(partition.offset + partition.length, parser.sparseImage.size);
                     if (calcSliceEnd > partition.offset) {
-                        const calcData = parser.buffer.slice(partition.offset, calcSliceEnd);
+                        const calcData = await parser.sparseImage.slice_async(partition.offset, calcSliceEnd);
                         const calcHash = await ESP32Parser.calculateSHA256(calcData);
                         sha256Calculated = ESP32Parser.bytesToHex(calcHash);
                     }
 
                     if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined && image.sha256DataEnd > image.sha256DataStart) {
                         console.log(`Image SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
-                        const regionData = parser.buffer.slice(image.sha256DataStart, image.sha256DataEnd);
+                        const regionData = await parser.sparseImage.slice_async(image.sha256DataStart, image.sha256DataEnd);
                         const regionHash = await ESP32Parser.calculateSHA256(regionData);
                         sha256RegionCalc = ESP32Parser.bytesToHex(regionHash);
                     }
@@ -3720,7 +3791,13 @@
             /* Handle bootloader (-1) and regular partitions */
             let partition;
             if (idx === -1) {
-                partition = { label: 'bootloader', offset: bootloaderInfo.bootloaderStart, length: bootloaderInfo.bootloaderEnd - bootloaderInfo.bootloaderStart };
+                // Use parsed bootloader bounds if available, otherwise fall back to partition table offset
+                if (bootloaderInfo && bootloaderInfo.bootloaderEnd) {
+                    partition = { label: 'bootloader', offset: 0x0000, length: bootloaderInfo.bootloaderEnd };
+                } else {
+                    const bootloaderEnd = partitionTableOffset || 0x8000;
+                    partition = { label: 'bootloader', offset: 0x0000, length: bootloaderEnd };
+                }
             } else {
                 partition = parser.partitions[idx];
             }
@@ -3765,14 +3842,7 @@
                     const hasAppendedHash = !!image.sha256;
                     const end = image.sha256DataEnd + (hasAppendedHash ? 32 : 0);
 
-                    let bytes;
-                    if (parser && parser.sparseImage && typeof parser.sparseImage.slice_async === 'function') {
-                        bytes = await parser.sparseImage.slice_async(start, end);
-                    } else if (parser && parser.buffer && typeof parser.buffer.slice === 'function') {
-                        bytes = parser.buffer.slice(start, end);
-                    } else {
-                        bytes = new Uint8Array(parser.view.buffer, start, end - start);
-                    }
+                    const bytes = await parser.sparseImage.slice_async(start, end);
 
                     const blob = new Blob([bytes], { type: 'application/octet-stream' });
                     const url = URL.createObjectURL(blob);
@@ -3831,9 +3901,7 @@
                     return;
                 }
 
-                const totalLen = (parser && parser.buffer && typeof parser.buffer.length === 'number')
-                    ? parser.buffer.length
-                    : (parser.view && parser.view.buffer && parser.view.buffer.byteLength) ? parser.view.buffer.byteLength : 0;
+                const totalLen = parser.sparseImage.size;
 
                 if (offset < 0 || offset >= totalLen) {
                     rawContent.innerHTML = '<div class="error">Offset out of range</div>';
@@ -3854,14 +3922,7 @@
         }
 
         async function generateHexView(offset, length) {
-            let bytes;
-            if (parser && parser.sparseImage && typeof parser.sparseImage.subarray_async === 'function') {
-                bytes = await parser.sparseImage.subarray_async(offset, offset + length);
-            } else if (parser && parser.buffer && typeof parser.buffer.subarray === 'function') {
-                bytes = parser.buffer.subarray(offset, offset + length);
-            } else {
-                bytes = new Uint8Array(parser.view.buffer, offset, length);
-            }
+            const bytes = await parser.sparseImage.subarray_async(offset, offset + length);
             const widthInput = document.getElementById('hexWidth');
             const bytesPerLine = widthInput ? parseInt(widthInput.value) || 16 : 16;
 
