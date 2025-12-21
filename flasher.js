@@ -934,11 +934,11 @@ class ESPFlasher {
      * @description Reads MAC address from chip-specific eFuse registers
      */
     async readMac() {
+        /* Read the MAC address registers */
+        var chip = this.chip_descriptions[this.current_chip];
         if(!chip.mac_efuse_reg) {
             throw new Error(`MAC eFuse register not defined for chip ${this.current_chip}`);
         }
-        /* Read the MAC address registers */
-        var chip = this.chip_descriptions[this.current_chip];
         const register1 = await this.readReg(chip.mac_efuse_reg);
         const register2 = await this.readReg(chip.mac_efuse_reg + 4);
 
