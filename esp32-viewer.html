@@ -3200,6 +3200,8 @@
             try {
                 setDeviceStatus('Erasing flash...', 'loading');
                 const deviceSize = parser.sparseImage.size;
+                // Clear existing write buffers first, then fill with 0xFF
+                parser.sparseImage.writeBuffer = [];
                 parser.sparseImage.fill(0xFF, 0, deviceSize);
                 await parseAndDisplay(true);
                 setDeviceStatus('Flash erased (ready to write)', 'success');
@@ -3570,6 +3572,8 @@
                     if (shouldEraseFlash) {
                         setDeviceStatus('Erasing flash...', 'loading');
                         const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
+                        // Clear existing write buffers first, then fill with 0xFF
+                        parser.sparseImage.writeBuffer = [];
                         parser.sparseImage.fill(0xFF, 0, deviceSize);
                         console.log(`Erased flash: 0x0 - 0x${deviceSize.toString(16).toUpperCase()}`);
                     }
@@ -3607,14 +3611,14 @@
                         importCount++;
                     }
 
-                    updateMemoryMap();
                     const didErase = shouldEraseFlash;
                     const eraseMsg = didErase ? ' (flash erased and rebuilt)' : '';
                     setDeviceStatus(`Imported ${importCount} files from manifest${eraseMsg}. Re-analyzing firmware...`, 'loading');
                     hideImportPopup();
                     
-                    // Re-analyze the firmware after import
+                    // Re-analyze the firmware after import (this will update partitions and memory map)
                     await parseAndDisplay(true);
+                    
                     setDeviceStatus(`Imported ${importCount} files from manifest. Use "Write to Device" to flash.`, 'success');
                 } catch (error) {
                     console.error('Manifest import error:', error);

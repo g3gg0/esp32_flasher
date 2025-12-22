@@ -344,6 +344,13 @@ class SparseImage {
         const end = Math.min(address + normalized.length, this.size);
         if (end <= start) return;
 
+        const fmtRanges = (list) => list.map(s => `[0x${s.address.toString(16)}-0x${(s.address + s.data.length).toString(16)})`).join(', ');
+        const preRanges = fmtRanges(this.writeBuffer);
+        console.log('SparseImage.write start', { address: start, length: normalized.length, preRanges });
+
+        /* Track ranges where we're removing write buffer segments (need to force-write these) */
+        const removedOverlaps = [];
+
         /* Remove overlaps from existing write buffer, but preserve identical overlapping slices that already differ from read */
         const newWrite = [];
         for (const seg of this.writeBuffer) {
@@ -382,7 +389,9 @@ class SparseImage {
                     }
                 }
 
+                let kept = false;
                 if (identical) {
+                    /* Compare against READ buffer only - if write data differs from read, keep it */
                     const baseline = this._materializeReadRange(overlapStart, overlapEnd);
                     let differsFromRead = false;
                     for (let i = 0; i < existingSlice.length; i++) {
@@ -393,10 +402,30 @@ class SparseImage {
                     }
                     if (differsFromRead) {
                         newWrite.push({ address: overlapStart, data: existingSlice });
+                        kept = true;
                     }
                 }
+
+                /* If we're not keeping this overlap, track it so we force-write the new data */
+                if (!kept) {
+                    removedOverlaps.push({ start: overlapStart, end: overlapEnd });
+                }
+
+                console.log('SparseImage.write overlap handled', {
+                    overlap: `[0x${overlapStart.toString(16)}-0x${overlapEnd.toString(16)})`,
+                    kept: kept,
+                    differsFromRead: identical ? 'n/a' : undefined
+                });
             }
         }
+
+        /* Helper to check if position is in a removed overlap range */
+        const isInRemovedOverlap = (pos) => {
+            for (const r of removedOverlaps) {
+                if (pos >= r.start && pos < r.end) return true;
+            }
+            return false;
+        };
 
         /* Boundary helper across read and existing write buffers */
         const nextBoundary = (pos) => {
@@ -411,6 +440,11 @@ class SparseImage {
                 const sEnd = s.address + s.data.length;
                 if (sEnd > pos && sEnd < nb) nb = sEnd;
             }
+            /* Also add removed overlap boundaries */
+            for (const r of removedOverlaps) {
+                if (r.start > pos && r.start < nb) nb = r.start;
+                if (r.end > pos && r.end < nb) nb = r.end;
+            }
             return nb;
         };
 
@@ -423,7 +457,11 @@ class SparseImage {
 
             let subPos = cursor;
             while (subPos < boundary) {
+                const skipStart = subPos;
                 while (subPos < boundary) {
+                    /* Don't skip bytes in removed overlap ranges - we must write them */
+                    if (isInRemovedOverlap(subPos)) break;
+                    
                     const desired = normalized[subPos - start] & 0xFF;
                     const isCovered = this._findSegment(subPos, this.writeBuffer) || this._findSegment(subPos, this.readBuffer);
                     if (isCovered) {
@@ -441,11 +479,11 @@ class SparseImage {
                 while (subPos < boundary) {
                     const desired = normalized[subPos - start] & 0xFF;
                     const isCovered = this._findSegment(subPos, this.writeBuffer) || this._findSegment(subPos, this.readBuffer);
-                    if (isCovered) {
+                    if (isCovered && !isInRemovedOverlap(subPos)) {
                         const eff = this._effectiveByte(subPos);
                         if (desired === eff) break;
                     }
-                    /* Uncached or differs - continue run */
+                    /* Uncached, in removed overlap, or differs - continue run */
                     subPos++;
                 }
                 const runEnd = subPos;
@@ -477,22 +515,15 @@ class SparseImage {
             cursor = boundary;
         }
 
+        /* Always record covered sectors that were touched in this write call. */
         for (const [addr, dataBuf] of sectorMap.entries()) {
-            const sectorEnd = Math.min(addr + sectorSize, this.size);
-            const baseline = this._materializeReadRange(addr, sectorEnd);
-            let same = true;
-            for (let i = 0; i < dataBuf.length; i++) {
-                if (dataBuf[i] !== baseline[i]) {
-                    same = false;
-                    break;
-                }
-            }
-            if (!same) {
-                newWrite.push({ address: addr, data: dataBuf });
-            }
+            newWrite.push({ address: addr, data: dataBuf });
         }
 
         this.writeBuffer = this._mergeSegmentsGeneric(newWrite);
+
+        const postRanges = fmtRanges(this.writeBuffer);
+        console.log('SparseImage.write done', { address: start, length: normalized.length, preRanges, postRanges });
     }
 
     fill(value, start = 0, end = this.size) {
@@ -506,6 +537,7 @@ class SparseImage {
         const len = end - start;
         const buf = new Uint8Array(len);
         buf.fill(desired);
+        console.log('SparseImage.fill', { start, end, len, desired });
         this.write(start, buf);
     }
 
