@@ -1098,6 +1098,8 @@
                         File</button>
                     <button class="btn" id="importBinBtn" onclick="showImportPopup()"
                         style="display: none; background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Import...</button>
+                    <button class="btn" id="eraseFlashBtn" onclick="eraseFlash()"
+                        style="display: none; background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);">Erase Flash</button>
                     <button class="btn" id="writeToDeviceBtn" onclick="writeToDevice()"
                         style="display: none; background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%);">Write to
                         Device</button>
@@ -2574,10 +2576,14 @@
 
             fileInfo.classList.add('visible');
 
-            // Show/hide Import and Write to Device buttons based on device mode
+            // Show/hide buttons based on mode
             const importBtn = document.getElementById('importBinBtn');
             if (importBtn) {
-                importBtn.style.display = isDevice ? 'inline-block' : 'none';
+                importBtn.style.display = 'inline-block';
+            }
+            const eraseBtn = document.getElementById('eraseFlashBtn');
+            if (eraseBtn) {
+                eraseBtn.style.display = 'inline-block';
             }
             const writeBtn = document.getElementById('writeToDeviceBtn');
             if (writeBtn) {
@@ -2624,7 +2630,12 @@
             console.log("Detected partition table offset: ", detectedOffset ? `0x${detectedOffset.toString(16)}` : 'not found');
 
             partitionTableOffset = detectedOffset;
-            detectedOffset && await parser.parsePartitions(detectedOffset);
+            if (detectedOffset) {
+                await parser.parsePartitions(detectedOffset);
+            } else {
+                // No partition table detected, clear the list
+                parser.partitions = [];
+            }
 
             // Compute SHA-1 only in file mode to avoid heavy device reads
             if (!deviceMode) {
@@ -2634,6 +2645,7 @@
             }
 
             await displayPartitions();
+            await updateMemoryMap();
 
             // Show tabs
             document.getElementById('tabContainer').style.display = 'block';
@@ -3179,6 +3191,25 @@
             }
         }
 
+        async function eraseFlash() {
+            if (!parser || !parser.sparseImage) {
+                alert('No device connected or firmware loaded.');
+                return;
+            }
+
+            try {
+                setDeviceStatus('Erasing flash...', 'loading');
+                const deviceSize = parser.sparseImage.size;
+                parser.sparseImage.fill(0xFF, 0, deviceSize);
+                await parseAndDisplay(true);
+                setDeviceStatus('Flash erased (ready to write)', 'success');
+            } catch (error) {
+                console.error('Erase error:', error);
+                setDeviceStatus('Erase failed: ' + error.message, 'error');
+                alert('Error erasing flash: ' + error.message);
+            }
+        }
+
         async function writeToDevice() {
             if (!deviceFlasher || !deviceMode) {
                 alert('No device connected.');
@@ -3430,10 +3461,6 @@
         }
 
         function showImportPopup() {
-            if (!deviceMode || !parser) {
-                alert('Import is only available in device mode.');
-                return;
-            }
             const popup = document.getElementById('importPopup');
             if (popup) {
                 popup.style.display = 'flex';
@@ -3529,7 +3556,7 @@
         }
 
         async function applyImport() {
-            if (!deviceMode || !parser) {
+            if (!parser) {
                 return;
             }
 
