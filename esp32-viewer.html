@@ -914,6 +914,10 @@
             background: linear-gradient(180deg, #f44336 0%, #b71c1c 100%);
         }
 
+        .memory-segment.modified-ff {
+            background: linear-gradient(180deg, #b23434 0%, #7a1212 100%);
+        }
+
         #memoryMapLegend {
             display: flex;
             gap: 20px;
@@ -944,6 +948,10 @@
 
         .legend-color.modified {
             background: #f44336;
+        }
+
+        .legend-color.modified-ff {
+            background: #b23434;
         }
 
         /* Device popup */
@@ -1128,6 +1136,10 @@
                     <div class="legend-item">
                         <div class="legend-color modified"></div>
                         <span>Modified</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color modified-ff"></div>
+                        <span>Modified (0xFF)</span>
                     </div>
                 </div>
             </div>
@@ -1761,7 +1773,21 @@
 
                 for (let seg of segments) {
                     if (seg.end <= writeStart || seg.start >= writeEnd) continue;
-                    seg.type = 'modified';
+
+                    const overlapStart = Math.max(seg.start, writeStart);
+                    const overlapEnd = Math.min(seg.end, writeEnd);
+                    const off = overlapStart - writeStart;
+                    const len = overlapEnd - overlapStart;
+
+                    let isAllFF = true;
+                    for (let i = 0; i < len; i++) {
+                        if (write.data[off + i] !== 0xFF) {
+                            isAllFF = false;
+                            break;
+                        }
+                    }
+
+                    seg.type = isAllFF ? 'modified-ff' : 'modified';
                 }
             }
 
