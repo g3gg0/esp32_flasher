@@ -664,6 +664,143 @@
             color: #c9d1d9;
         }
 
+        /* Import popup */
+        #importPopup {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10001;
+        }
+
+        .import-popup-box {
+            background: #2a2a2a;
+            color: #e0e0e0;
+            padding: 30px;
+            border-radius: 10px;
+            border: 2px solid #5a6bb8;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+            min-width: 500px;
+            max-width: 600px;
+        }
+
+        .import-popup-title {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #7a8bdc;
+        }
+
+        .import-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #444;
+        }
+
+        .import-tab {
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .import-tab:hover {
+            color: #c9d1d9;
+        }
+
+        .import-tab.active {
+            color: #7a8bdc;
+            border-bottom-color: #7a8bdc;
+        }
+
+        .import-tab-content {
+            display: none;
+        }
+
+        .import-tab-content.active {
+            display: block;
+        }
+
+        .import-drop-zone {
+            border: 2px dashed #5a6bb8;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            background: #333;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+
+        .import-drop-zone:hover {
+            background: #3a3f5a;
+            border-color: #7a6bb8;
+        }
+
+        .import-drop-zone.drag-over {
+            background: #404560;
+            border-color: #8a7bc8;
+        }
+
+        .import-field {
+            margin-bottom: 20px;
+        }
+
+        .import-field label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #c9d1d9;
+        }
+
+        .import-field input {
+            width: 100%;
+            padding: 10px;
+            background: #1f1f1f;
+            border: 1px solid #444;
+            border-radius: 5px;
+            font-size: 14px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .import-preview {
+            background: #1f1f1f;
+            padding: 15px;
+            border-radius: 5px;
+            border: 1px solid #444;
+            margin-bottom: 20px;
+            min-height: 80px;
+        }
+
+        .import-preview-label {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #7a8bdc;
+        }
+
+        .import-preview-info {
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .import-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
         /* Write overlay (red accent) */
         #writeOverlay {
             position: fixed;
@@ -865,6 +1002,62 @@
             <div class="write-overlay-text" id="writeOverlayText">Please wait</div>
         </div>
     </div>
+
+    <div id="importPopup">
+        <div class="import-popup-box">
+            <div class="import-popup-title">📥 Import Binary File</div>
+            
+            <div class="import-tabs">
+                <button class="import-tab active" onclick="switchImportTab('file')">File</button>
+                <button class="import-tab" onclick="switchImportTab('url')">URL</button>
+            </div>
+
+            <div id="importTabFile" class="import-tab-content active">
+                <div class="import-drop-zone" id="importDropZone" onclick="document.getElementById('importFileInput').click()">
+                    <p style="font-size: 1.1em; margin-bottom: 10px;">📂 Drop .bin file here or click to browse</p>
+                    <p style="font-size: 0.9em; color: #888;">Selected: <span id="importFileName">None</span></p>
+                    <input type="file" id="importFileInput" accept=".bin,.json" style="display: none;">
+                </div>
+            </div>
+
+            <div id="importTabUrl" class="import-tab-content">
+                <div class="import-field" style="margin-bottom: 20px;">
+                    <label for="importUrlInput">URL (.bin or .json):</label>
+                    <input type="text" id="importUrlInput" placeholder="https://example.com/firmware.bin" style="width: 100%;">
+                    <button class="btn" onclick="loadImportUrl()" style="margin-top: 10px; width: 100%;">Load URL</button>
+                </div>
+            </div>
+
+            <div class="import-field">
+                <label for="importAddress">Start Address (Hex):</label>
+                <input type="text" id="importAddress" placeholder="0x10000" value="0x10000">
+            </div>
+
+            <div class="import-field" id="importEraseOption" style="display: none;">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" id="importEraseFlash" checked style="width: auto; cursor: pointer;">
+                    <span>Erase Flash (recommended)</span>
+                </label>
+                <p style="font-size: 0.85em; color: #888; margin-top: 5px; margin-left: 24px;">
+                    Remaining data may cause misdetection of partition table
+                </p>
+            </div>
+
+            <div class="import-preview">
+                <div class="import-preview-label">Preview:</div>
+                <div class="import-preview-info" id="importPreview">
+                    Select a file/URL and enter an address to see preview
+                </div>
+            </div>
+
+            <div class="import-buttons">
+                <button class="btn" onclick="hideImportPopup()" 
+                    style="background: linear-gradient(135deg, #666 0%, #444 100%);">Cancel</button>
+                <button class="btn" id="importApplyBtn" onclick="applyImport()" disabled
+                    style="background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Import</button>
+            </div>
+        </div>
+    </div>
     <div id="devicePopup" class="device-popup"></div>
     <div class="container">
         <div class="header">
@@ -903,6 +1096,8 @@
                     <button class="btn" id="closeFileBtn" onclick="closeFile()"
                         style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Close
                         File</button>
+                    <button class="btn" id="importBinBtn" onclick="showImportPopup()"
+                        style="display: none; background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Import...</button>
                     <button class="btn" id="writeToDeviceBtn" onclick="writeToDevice()"
                         style="display: none; background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%);">Write to
                         Device</button>
@@ -2379,7 +2574,11 @@
 
             fileInfo.classList.add('visible');
 
-            // Show/hide Write to Device button based on device mode
+            // Show/hide Import and Write to Device buttons based on device mode
+            const importBtn = document.getElementById('importBinBtn');
+            if (importBtn) {
+                importBtn.style.display = isDevice ? 'inline-block' : 'none';
+            }
             const writeBtn = document.getElementById('writeToDeviceBtn');
             if (writeBtn) {
                 writeBtn.style.display = isDevice ? 'inline-block' : 'none';
@@ -3016,6 +3215,533 @@
 
             await updateMemoryMap();
         }
+
+        /* Import binary file functions */
+        let importFile = null;
+        let importIsJson = false;
+        let importJsonData = null;
+        let importBaseUrl = null; // For resolving relative paths in JSON manifests
+
+        function switchImportTab(tab) {
+            const tabs = document.querySelectorAll('.import-tab');
+            const contents = document.querySelectorAll('.import-tab-content');
+            
+            tabs.forEach(t => t.classList.remove('active'));
+            contents.forEach(c => c.classList.remove('active'));
+            
+            if (tab === 'file') {
+                tabs[0].classList.add('active');
+                document.getElementById('importTabFile').classList.add('active');
+            } else {
+                tabs[1].classList.add('active');
+                document.getElementById('importTabUrl').classList.add('active');
+            }
+        }
+
+        async function loadImportUrl() {
+            const urlInput = document.getElementById('importUrlInput');
+            const url = urlInput.value.trim();
+            
+            if (!url) {
+                alert('Please enter a URL');
+                return;
+            }
+
+            try {
+                setDeviceStatus('Downloading from URL...', 'loading');
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const blob = await response.blob();
+                const filename = url.split('/').pop() || 'download.bin';
+                importFile = new File([blob], filename, { type: blob.type });
+
+                const fileNameSpan = document.getElementById('importFileName');
+                if (fileNameSpan) fileNameSpan.textContent = importFile.name + ' (from URL)';
+
+                // Check if JSON
+                if (filename.toLowerCase().endsWith('.json') || blob.type.includes('json')) {
+                    // Store base URL for resolving relative paths
+                    const urlParts = url.split('/');
+                    urlParts.pop(); // Remove filename
+                    importBaseUrl = urlParts.join('/');
+                    await handleJsonManifest(importFile);
+                } else {
+                    importBaseUrl = null;
+                    updateImportPreview();
+                }
+
+                setDeviceStatus('URL loaded successfully', 'success');
+            } catch (error) {
+                console.error('URL load error:', error);
+                
+                // Check if it's a CORS error
+                if (error.message.includes('CORS') || error.message.includes('cross-origin') || 
+                    error.name === 'TypeError' && !error.message.includes('HTTP')) {
+                    const corsMsg = 'CORS Error: The server does not allow cross-origin requests.\n\n' +
+                                   'The server at this URL has not enabled CORS (Cross-Origin Resource Sharing).\n' +
+                                   'To fix this, either:\n' +
+                                   '  • Download the files manually and use the File tab\n' +
+                                   '  • Ask the server administrator to enable CORS\n' +
+                                   '  • Use a CORS proxy service\n' +
+                                   '  • Run Edge with security disabled:\n' +
+                                   '    msedge.exe --user-data-dir=C:\\temp\\msedge-dev-data\\ --disable-web-security';
+                    setDeviceStatus('CORS blocked: Server does not allow cross-origin requests', 'error');
+                    alert(corsMsg);
+                } else {
+                    setDeviceStatus('Failed to load URL: ' + error.message, 'error');
+                    alert('Error loading URL: ' + error.message);
+                }
+            }
+        }
+
+        async function handleJsonManifest(file) {
+            try {
+                const text = await file.text();
+                const manifest = JSON.parse(text);
+
+                // Detect manifest format and normalize to common structure
+                let flashEntries = [];
+                let manifestType = '';
+                let availableBuilds = [];
+                
+                if (manifest.flash && Array.isArray(manifest.flash)) {
+                    // Format 1: { flash: [ { url, address } ] }
+                    manifestType = 'esptool';
+                    flashEntries = manifest.flash.map(entry => ({
+                        url: entry.url,
+                        address: entry.address ? parseInt(entry.address, 16) : 0,
+                        path: entry.url,
+                        isApp: entry.app || false
+                    }));
+                } else if (manifest.builds && Array.isArray(manifest.builds) && manifest.builds.length > 0) {
+                    // Format 2: { builds: [ { chipFamily, parts: [], ota: {} } ] }
+                    manifestType = 'esp-web-tools';
+                    
+                    // Collect available builds
+                    availableBuilds = manifest.builds.map((build, idx) => ({
+                        chipFamily: build.chipFamily || `Build ${idx + 1}`,
+                        index: idx
+                    }));
+                    
+                    // Try to auto-select build based on connected device chip
+                    let selectedBuildIdx = 0;
+                    if (deviceFlasher && deviceFlasher.current_chip) {
+                        const deviceChip = deviceFlasher.current_chip.toUpperCase();
+                        const matchIdx = manifest.builds.findIndex(build => {
+                            const chipFam = (build.chipFamily || '').toUpperCase();
+                            return chipFam.includes(deviceChip) || deviceChip.includes(chipFam);
+                        });
+                        if (matchIdx >= 0) selectedBuildIdx = matchIdx;
+                    }
+                    
+                    const build = manifest.builds[selectedBuildIdx];
+                    
+                    // Collect parts
+                    if (build.parts && Array.isArray(build.parts)) {
+                        flashEntries = build.parts.map(part => ({
+                            path: part.path,
+                            url: part.path,
+                            address: part.offset || 0,
+                            isApp: false
+                        }));
+                    }
+                    
+                    // Add OTA file if present (usually for OTA updates, not initial flash)
+                    // But we'll include it at offset 0 if no parts exist
+                    if (build.ota && build.ota.path) {
+                        if (flashEntries.length === 0) {
+                            // No parts, use OTA file at offset 0
+                            flashEntries.push({
+                                path: build.ota.path,
+                                url: build.ota.path,
+                                address: 0,
+                                isApp: true
+                            });
+                        }
+                    }
+                } else {
+                    throw new Error('Invalid manifest: missing "flash" or "builds" array');
+                }
+
+                if (flashEntries.length === 0) {
+                    throw new Error('No flash entries found in manifest');
+                }
+
+                importIsJson = true;
+                importJsonData = { ...manifest, flashEntries, manifestType, availableBuilds };
+
+                // Update preview to show JSON manifest details
+                const previewDiv = document.getElementById('importPreview');
+                const applyBtn = document.getElementById('importApplyBtn');
+                const addressInput = document.getElementById('importAddress');
+
+                // Hide address input for JSON manifests
+                if (addressInput && addressInput.parentElement) {
+                    addressInput.parentElement.style.display = 'none';
+                }
+                
+                // Show erase flash option for JSON manifests
+                const eraseOption = document.getElementById('importEraseOption');
+                if (eraseOption) {
+                    eraseOption.style.display = 'block';
+                }
+
+                let html = `<div style="line-height: 1.8;">`;
+                html += `<strong style="color: #7a8bdc;">JSON Manifest Detected</strong><br>`;
+                if (manifest.name) html += `Name: <strong>${manifest.name}</strong><br>`;
+                if (manifest.version) html += `Version: <strong>${manifest.version}</strong><br>`;
+                if (manifest.chip) html += `Chip: <strong>${manifest.chip}</strong><br>`;
+                
+                // Show selected build info
+                if (availableBuilds.length > 0) {
+                    const selectedBuild = manifest.builds[0]; // We used index 0 above after auto-selection
+                    html += `Build: <strong>${selectedBuild.chipFamily || 'Unknown'}</strong>`;
+                    if (availableBuilds.length > 1) {
+                        html += ` <span style="color: #888; font-size: 0.9em;">(${availableBuilds.length} builds available)</span>`;
+                    }
+                    html += `<br>`;
+                }
+                
+                html += `<br><strong>Flash Entries (${flashEntries.length}):</strong><br>`;
+
+                for (let i = 0; i < flashEntries.length; i++) {
+                    const entry = flashEntries[i];
+                    const addr = `0x${entry.address.toString(16).toUpperCase()}`;
+                    const filename = entry.path.split('/').pop();
+                    html += `${i + 1}. ${addr}: ${filename}`;
+                    if (entry.isApp) html += ` <span style="color: #ffa726;">(app)</span>`;
+                    html += `<br>`;
+                }
+
+                html += `</div>`;
+                previewDiv.innerHTML = html;
+
+                if (applyBtn) applyBtn.disabled = false;
+
+            } catch (error) {
+                console.error('JSON parse error:', error);
+                alert('Error parsing JSON manifest: ' + error.message);
+                importIsJson = false;
+                importJsonData = null;
+            }
+        }
+
+        function showImportPopup() {
+            if (!deviceMode || !parser) {
+                alert('Import is only available in device mode.');
+                return;
+            }
+            const popup = document.getElementById('importPopup');
+            if (popup) {
+                popup.style.display = 'flex';
+                updateImportPreview();
+            }
+        }
+
+        function hideImportPopup() {
+            const popup = document.getElementById('importPopup');
+            if (popup) {
+                popup.style.display = 'none';
+            }
+            importFile = null;
+            importIsJson = false;
+            importJsonData = null;
+            importBaseUrl = null;
+            const fileNameSpan = document.getElementById('importFileName');
+            if (fileNameSpan) fileNameSpan.textContent = 'None';
+            const applyBtn = document.getElementById('importApplyBtn');
+            if (applyBtn) applyBtn.disabled = true;
+            const addressInput = document.getElementById('importAddress');
+            if (addressInput && addressInput.parentElement) {
+                addressInput.parentElement.style.display = 'block';
+            }
+            const eraseOption = document.getElementById('importEraseOption');
+            if (eraseOption) {
+                eraseOption.style.display = 'none';
+            }
+        }
+
+        function updateImportPreview() {
+            const previewDiv = document.getElementById('importPreview');
+            const applyBtn = document.getElementById('importApplyBtn');
+            const addressInput = document.getElementById('importAddress');
+            
+            if (!importFile || !addressInput || !previewDiv) {
+                if (previewDiv) previewDiv.innerHTML = 'Select a file and enter an address to see preview';
+                if (applyBtn) applyBtn.disabled = true;
+                return;
+            }
+
+            const addressStr = addressInput.value.trim();
+            let address;
+            try {
+                address = parseInt(addressStr, 16);
+                if (isNaN(address) || address < 0) {
+                    throw new Error('Invalid address');
+                }
+            } catch (e) {
+                previewDiv.innerHTML = '<span style="color: #ff6b6b;">Invalid address format. Use hex format like 0x10000</span>';
+                if (applyBtn) applyBtn.disabled = true;
+                return;
+            }
+
+            const fileSize = importFile.size;
+            const endAddress = address + fileSize;
+            const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
+
+            let html = `<div style="line-height: 1.8;">`;
+            html += `File: <strong>${importFile.name}</strong><br>`;
+            html += `Size: <strong>${formatBytes(fileSize)}</strong> (${fileSize} bytes)<br>`;
+            html += `Start: <strong>0x${address.toString(16).toUpperCase()}</strong><br>`;
+            html += `End: <strong>0x${endAddress.toString(16).toUpperCase()}</strong><br>`;
+
+            // Check if it fits in device flash
+            if (endAddress > deviceSize) {
+                html += `<br><span style="color: #ff6b6b;">⚠️ Warning: File extends beyond device flash size (0x${deviceSize.toString(16).toUpperCase()})</span>`;
+                if (applyBtn) applyBtn.disabled = true;
+            } else {
+                // Check which partitions will be affected
+                const affectedPartitions = [];
+                if (parser.partitions) {
+                    for (const part of parser.partitions) {
+                        const partStart = part.offset;
+                        const partEnd = part.offset + part.length;
+                        // Check if ranges overlap
+                        if (address < partEnd && endAddress > partStart) {
+                            affectedPartitions.push(part.label);
+                        }
+                    }
+                }
+
+                if (affectedPartitions.length > 0) {
+                    html += `<br>Affected partitions: <strong style="color: #ffa726;">${affectedPartitions.join(', ')}</strong>`;
+                } else {
+                    html += `<br><span style="color: #7a8bdc;">Will write to unpartitioned area</span>`;
+                }
+
+                if (applyBtn) applyBtn.disabled = false;
+            }
+            html += `</div>`;
+            previewDiv.innerHTML = html;
+        }
+
+        async function applyImport() {
+            if (!deviceMode || !parser) {
+                return;
+            }
+
+            // Handle JSON manifest
+            if (importIsJson && importJsonData) {
+                try {
+                    // Check if erase flash is requested
+                    const eraseFlashCheckbox = document.getElementById('importEraseFlash');
+                    const shouldEraseFlash = eraseFlashCheckbox && eraseFlashCheckbox.checked;
+                    
+                    if (shouldEraseFlash) {
+                        setDeviceStatus('Erasing flash...', 'loading');
+                        const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
+                        parser.sparseImage.fill(0xFF, 0, deviceSize);
+                        console.log(`Erased flash: 0x0 - 0x${deviceSize.toString(16).toUpperCase()}`);
+                    }
+                    
+                    setDeviceStatus('Downloading and importing manifest files...', 'loading');
+                    
+                    let importCount = 0;
+                    for (const entry of importJsonData.flashEntries) {
+                        let url = entry.url || entry.path;
+                        
+                        // Resolve relative URLs
+                        if (importBaseUrl && !url.startsWith('http://') && !url.startsWith('https://')) {
+                            url = importBaseUrl + '/' + url;
+                        }
+
+                        if (!url) {
+                            console.warn('Skipping entry without URL:', entry);
+                            continue;
+                        }
+
+                        console.log(`Downloading ${url} for address 0x${entry.address.toString(16).toUpperCase()}`);
+                        
+                        const response = await fetch(url);
+                        if (!response.ok) {
+                            throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
+                        }
+
+                        const arrayBuffer = await response.arrayBuffer();
+                        const data = new Uint8Array(arrayBuffer);
+
+                        // Write data to sparse image
+                        await parser.sparseImage.write(entry.address, data);
+                        
+                        console.log(`Imported ${formatBytes(data.length)} at 0x${entry.address.toString(16).toUpperCase()}`);
+                        importCount++;
+                    }
+
+                    updateMemoryMap();
+                    const didErase = shouldEraseFlash;
+                    const eraseMsg = didErase ? ' (flash erased and rebuilt)' : '';
+                    setDeviceStatus(`Imported ${importCount} files from manifest${eraseMsg}. Re-analyzing firmware...`, 'loading');
+                    hideImportPopup();
+                    
+                    // Re-analyze the firmware after import
+                    await parseAndDisplay(true);
+                    setDeviceStatus(`Imported ${importCount} files from manifest. Use "Write to Device" to flash.`, 'success');
+                } catch (error) {
+                    console.error('Manifest import error:', error);
+                    
+                    // Check if it's a CORS error
+                    if (error.message.includes('CORS') || error.message.includes('cross-origin') || 
+                        error.name === 'TypeError' && !error.message.includes('HTTP')) {
+                        const corsMsg = 'CORS Error: The server does not allow cross-origin requests.\n\n' +
+                                       'The server hosting these files has not enabled CORS.\n' +
+                                       'To fix this, either:\n' +
+                                       '  • Download the files manually and import them individually\n' +
+                                       '  • Ask the server administrator to enable CORS\n' +
+                                       '  • Use a CORS proxy service\n' +
+                                       '  • Run Edge with security disabled:\n' +
+                                       '    msedge.exe --user-data-dir=C:\\temp\\msedge-dev-data\\ --disable-web-security';
+                        setDeviceStatus('CORS blocked: Server does not allow cross-origin requests', 'error');
+                        alert(corsMsg);
+                    } else {
+                        setDeviceStatus('Manifest import failed: ' + error.message, 'error');
+                        alert('Error importing manifest: ' + error.message);
+                    }
+                }
+                return;
+            }
+
+            // Handle single binary file
+            if (!importFile) {
+                return;
+            }
+
+            const addressInput = document.getElementById('importAddress');
+            const addressStr = addressInput.value.trim();
+            let address;
+            try {
+                address = parseInt(addressStr, 16);
+                if (isNaN(address) || address < 0) {
+                    throw new Error('Invalid address');
+                }
+            } catch (e) {
+                alert('Invalid address format. Use hex format like 0x10000');
+                return;
+            }
+
+            const fileSize = importFile.size;
+            const endAddress = address + fileSize;
+            const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
+
+            if (endAddress > deviceSize) {
+                alert(`File extends beyond device flash size (0x${deviceSize.toString(16).toUpperCase()})`);
+                return;
+            }
+
+            try {
+                const arrayBuffer = await importFile.arrayBuffer();
+                const data = new Uint8Array(arrayBuffer);
+
+                // Write data to sparse image
+                await parser.sparseImage.write(address, data);
+
+                hideImportPopup();
+                updateMemoryMap();
+
+                setDeviceStatus(`Imported ${formatBytes(fileSize)} at 0x${address.toString(16).toUpperCase()}. Re-analyzing firmware...`, 'loading');
+                
+                // Re-analyze the firmware after import
+                await parseAndDisplay(true);
+                setDeviceStatus(`Imported ${formatBytes(fileSize)} at 0x${address.toString(16).toUpperCase()}. Use "Write to Device" to flash.`, 'success');
+            } catch (error) {
+                console.error('Import error:', error);
+                alert('Error importing file: ' + error.message);
+            }
+        }
+
+        // Setup import popup event handlers
+        document.addEventListener('DOMContentLoaded', () => {
+            const importDropZone = document.getElementById('importDropZone');
+            const importFileInput = document.getElementById('importFileInput');
+            const importAddress = document.getElementById('importAddress');
+
+            if (importFileInput) {
+                importFileInput.addEventListener('change', async (e) => {
+                    if (e.target.files.length > 0) {
+                        importFile = e.target.files[0];
+                        const fileNameSpan = document.getElementById('importFileName');
+                        if (fileNameSpan) fileNameSpan.textContent = importFile.name;
+                        
+                        // Check if JSON
+                        if (importFile.name.toLowerCase().endsWith('.json')) {
+                            importBaseUrl = null; // No base URL for local files
+                            await handleJsonManifest(importFile);
+                        } else {
+                            importIsJson = false;
+                            importJsonData = null;
+                            importBaseUrl = null;
+                            updateImportPreview();
+                        }
+                    }
+                });
+            }
+
+            if (importAddress) {
+                importAddress.addEventListener('input', () => {
+                    updateImportPreview();
+                });
+            }
+
+            if (importDropZone) {
+                importDropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    importDropZone.classList.add('drag-over');
+                });
+
+                importDropZone.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    importDropZone.classList.remove('drag-over');
+                });
+
+                importDropZone.addEventListener('drop', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    importDropZone.classList.remove('drag-over');
+
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        importFile = files[0];
+                        const fileNameSpan = document.getElementById('importFileName');
+                        if (fileNameSpan) fileNameSpan.textContent = importFile.name;
+                        
+                        // Check if JSON
+                        if (importFile.name.toLowerCase().endsWith('.json')) {
+                            importBaseUrl = null; // No base URL for local files
+                            await handleJsonManifest(importFile);
+                        } else {
+                            importIsJson = false;
+                            importJsonData = null;
+                            importBaseUrl = null;
+                            updateImportPreview();
+                        }
+                    }
+                });
+            }
+
+            // Close popup when clicking outside
+            const importPopup = document.getElementById('importPopup');
+            if (importPopup) {
+                importPopup.addEventListener('click', (e) => {
+                    if (e.target === importPopup) {
+                        hideImportPopup();
+                    }
+                });
+            }
+        });
 
         function togglePartitionDetails(idx) {
             const row = document.getElementById(`details-${idx}`);
