@@ -41,12 +41,12 @@
  *   - Allows batching writes and deferred commit operations
  */
 class SparseImage {
-    constructor(size, readDataCallback = null, writeDataCallback = null, flushPrepareCallback = null, sectorSize = 0x1000) {
+    constructor(size, readDataCallback = null, writeDataCallback = null, flushPrepareCallback = null, sectorSize = 0x100) {
         this.size = size;
         this.readDataCallback = readDataCallback;
         this.writeDataCallback = writeDataCallback;
         this.flushPrepareCallback = flushPrepareCallback;
-        this.sectorSize = sectorSize || 0x1000;
+        this.sectorSize = sectorSize || 0x100;
         this.readBuffer = []; // Array of {address, data} structures
         this.writeBuffer = []; // Array of {address, data} structures
         this.length = size;
@@ -57,7 +57,7 @@ class SparseImage {
     /**
      * Initialize from an existing ArrayBuffer/Uint8Array
      */
-    static fromBuffer(arrayBuffer, sectorSize = 0x1000) {
+    static fromBuffer(arrayBuffer, sectorSize = 0x100) {
         const buffer = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
         const sparseImage = new SparseImage(buffer.length, null, null, null, sectorSize);
         sparseImage.readBuffer.push({
@@ -348,65 +348,176 @@ class SparseImage {
         const preRanges = fmtRanges(this.writeBuffer);
         console.log('SparseImage.write start', { address: start, length: normalized.length, preRanges });
 
-        /* Determine which sectors are touched by this write */
-        const touched = new Set();
-        for (let pos = start; pos < end; pos = Math.min(end, Math.floor(pos / this.sectorSize + 1) * this.sectorSize)) {
-            const sectorStart = Math.floor(pos / this.sectorSize) * this.sectorSize;
-            touched.add(sectorStart);
-        }
+        /* Track ranges where we're removing write buffer segments (need to force-write these) */
+        const removedOverlaps = [];
 
+        /* Remove overlaps from existing write buffer, but preserve identical overlapping slices that already differ from read */
         const newWrite = [];
-
-        /* Preserve existing write data for sectors not touched by this write */
         for (const seg of this.writeBuffer) {
             const segStart = seg.address;
             const segEnd = seg.address + seg.data.length;
-            let pos = segStart;
-            while (pos < segEnd) {
-                const sectorStart = Math.floor(pos / this.sectorSize) * this.sectorSize;
-                const sectorEnd = Math.min(sectorStart + this.sectorSize, this.size);
-                const sliceStart = Math.max(segStart, sectorStart);
-                const sliceEnd = Math.min(segEnd, sectorEnd);
-                const len = sliceEnd - sliceStart;
-                if (!touched.has(sectorStart) && len > 0) {
-                    const offset = sliceStart - segStart;
-                    const slice = seg.data.slice(offset, offset + len);
-                    newWrite.push({ address: sliceStart, data: slice });
+            if (segEnd <= start || segStart >= end) {
+                newWrite.push(seg);
+                continue;
+            }
+
+            if (segStart < start) {
+                const leftLen = start - segStart;
+                const leftData = seg.data.slice(0, leftLen);
+                newWrite.push({ address: segStart, data: leftData });
+            }
+
+            if (segEnd > end) {
+                const rightLen = segEnd - end;
+                const rightData = seg.data.slice(seg.data.length - rightLen);
+                newWrite.push({ address: end, data: rightData });
+            }
+
+            const overlapStart = Math.max(segStart, start);
+            const overlapEnd = Math.min(segEnd, end);
+            if (overlapEnd > overlapStart) {
+                const existingSlice = seg.data.slice(overlapStart - segStart, overlapEnd - segStart);
+                const desiredSlice = normalized.slice(overlapStart - start, overlapEnd - start);
+
+                let identical = existingSlice.length === desiredSlice.length;
+                if (identical) {
+                    for (let i = 0; i < existingSlice.length; i++) {
+                        if (existingSlice[i] !== desiredSlice[i]) {
+                            identical = false;
+                            break;
+                        }
+                    }
                 }
-                pos = sectorEnd;
+
+                let kept = false;
+                if (identical) {
+                    /* Compare against READ buffer only - if write data differs from read, keep it */
+                    const baseline = this._materializeReadRange(overlapStart, overlapEnd);
+                    let differsFromRead = false;
+                    for (let i = 0; i < existingSlice.length; i++) {
+                        if (existingSlice[i] !== baseline[i]) {
+                            differsFromRead = true;
+                            break;
+                        }
+                    }
+                    if (differsFromRead) {
+                        newWrite.push({ address: overlapStart, data: existingSlice });
+                        kept = true;
+                    }
+                }
+
+                /* If we're not keeping this overlap, track it so we force-write the new data */
+                if (!kept) {
+                    removedOverlaps.push({ start: overlapStart, end: overlapEnd });
+                }
+
+                console.log('SparseImage.write overlap handled', {
+                    overlap: `[0x${overlapStart.toString(16)}-0x${overlapEnd.toString(16)})`,
+                    kept: kept,
+                    differsFromRead: identical ? 'n/a' : undefined
+                });
             }
         }
 
-        /* Build sector-aligned buffers for touched sectors */
-        for (const sectorStart of touched) {
-            const sectorEnd = Math.min(sectorStart + this.sectorSize, this.size);
-            const sectorBuf = this._materializeRange(sectorStart, sectorEnd);
-
-            /* Overlay incoming data where it intersects this sector */
-            const writeStart = Math.max(start, sectorStart);
-            const writeEnd = Math.min(end, sectorEnd);
-            for (let pos = writeStart; pos < writeEnd; pos++) {
-                const desired = normalized[pos - start] & 0xFF;
-                const cur = sectorBuf[pos - sectorStart] & 0xFF;
-                if (desired !== cur) {
-                    sectorBuf[pos - sectorStart] = desired;
-                }
+        /* Helper to check if position is in a removed overlap range */
+        const isInRemovedOverlap = (pos) => {
+            for (const r of removedOverlaps) {
+                if (pos >= r.start && pos < r.end) return true;
             }
+            return false;
+        };
 
-            /* Drop sector if it matches read cache (no pending changes) */
-            const baseline = this._materializeReadRange(sectorStart, sectorEnd);
-            let identical = baseline.length === sectorBuf.length;
-            if (identical) {
-                for (let i = 0; i < sectorBuf.length; i++) {
-                    if (sectorBuf[i] !== baseline[i]) {
-                        identical = false;
+        /* Boundary helper across read and existing write buffers */
+        const nextBoundary = (pos) => {
+            let nb = end;
+            for (const s of this.readBuffer) {
+                if (s.address > pos && s.address < nb) nb = s.address;
+                const sEnd = s.address + s.data.length;
+                if (sEnd > pos && sEnd < nb) nb = sEnd;
+            }
+            for (const s of this.writeBuffer) {
+                if (s.address > pos && s.address < nb) nb = s.address;
+                const sEnd = s.address + s.data.length;
+                if (sEnd > pos && sEnd < nb) nb = sEnd;
+            }
+            /* Also add removed overlap boundaries */
+            for (const r of removedOverlaps) {
+                if (r.start > pos && r.start < nb) nb = r.start;
+                if (r.end > pos && r.end < nb) nb = r.end;
+            }
+            return nb;
+        };
+
+        const sectorSize = this.sectorSize || 0x100;
+        const sectorMap = new Map(); /* address -> Uint8Array */
+
+        let cursor = start;
+        while (cursor < end) {
+            const boundary = nextBoundary(cursor);
+
+            let subPos = cursor;
+            while (subPos < boundary) {
+                const skipStart = subPos;
+                while (subPos < boundary) {
+                    /* Don't skip bytes in removed overlap ranges - we must write them */
+                    if (isInRemovedOverlap(subPos)) break;
+                    
+                    const desired = normalized[subPos - start] & 0xFF;
+                    const isCovered = this._findSegment(subPos, this.writeBuffer) || this._findSegment(subPos, this.readBuffer);
+                    if (isCovered) {
+                        const eff = this._effectiveByte(subPos);
+                        if (desired !== eff) break;
+                    } else {
+                        /* Uncached - always write */
                         break;
                     }
+                    subPos++;
+                }
+                if (subPos >= boundary) break;
+
+                const runStart = subPos;
+                while (subPos < boundary) {
+                    const desired = normalized[subPos - start] & 0xFF;
+                    const isCovered = this._findSegment(subPos, this.writeBuffer) || this._findSegment(subPos, this.readBuffer);
+                    if (isCovered && !isInRemovedOverlap(subPos)) {
+                        const eff = this._effectiveByte(subPos);
+                        if (desired === eff) break;
+                    }
+                    /* Uncached, in removed overlap, or differs - continue run */
+                    subPos++;
+                }
+                const runEnd = subPos;
+
+                let pos = runStart;
+                while (pos < runEnd) {
+                    const sectorStart = Math.floor(pos / sectorSize) * sectorSize;
+                    const sectorEnd = Math.min(sectorStart + sectorSize, this.size);
+                    const limit = Math.min(runEnd, sectorEnd);
+                    const covered = this._isRangeCoveredAny(sectorStart, sectorEnd - sectorStart);
+
+                    if (covered) {
+                        let seg = sectorMap.get(sectorStart);
+                        if (!seg) {
+                            seg = this._materializeRange(sectorStart, sectorEnd);
+                            sectorMap.set(sectorStart, seg);
+                        }
+                        for (let p = pos; p < limit; p++) {
+                            seg[p - sectorStart] = normalized[p - start];
+                        }
+                    } else {
+                        const arr = normalized.slice(pos - start, limit - start);
+                        newWrite.push({ address: pos, data: arr });
+                    }
+                    pos = limit;
                 }
             }
-            if (!identical) {
-                newWrite.push({ address: sectorStart, data: sectorBuf });
-            }
+
+            cursor = boundary;
+        }
+
+        /* Always record covered sectors that were touched in this write call. */
+        for (const [addr, dataBuf] of sectorMap.entries()) {
+            newWrite.push({ address: addr, data: dataBuf });
         }
 
         this.writeBuffer = this._mergeSegmentsGeneric(newWrite);
