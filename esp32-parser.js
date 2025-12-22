@@ -41,12 +41,12 @@
  *   - Allows batching writes and deferred commit operations
  */
 class SparseImage {
-    constructor(size, readDataCallback = null, writeDataCallback = null, flushPrepareCallback = null, sectorSize = 0x100) {
+    constructor(size, readDataCallback = null, writeDataCallback = null, flushPrepareCallback = null, sectorSize = 0x1000) {
         this.size = size;
         this.readDataCallback = readDataCallback;
         this.writeDataCallback = writeDataCallback;
         this.flushPrepareCallback = flushPrepareCallback;
-        this.sectorSize = sectorSize || 0x100;
+        this.sectorSize = sectorSize || 0x1000;
         this.readBuffer = []; // Array of {address, data} structures
         this.writeBuffer = []; // Array of {address, data} structures
         this.length = size;
@@ -57,7 +57,7 @@ class SparseImage {
     /**
      * Initialize from an existing ArrayBuffer/Uint8Array
      */
-    static fromBuffer(arrayBuffer, sectorSize = 0x100) {
+    static fromBuffer(arrayBuffer, sectorSize = 0x1000) {
         const buffer = arrayBuffer instanceof Uint8Array ? arrayBuffer : new Uint8Array(arrayBuffer);
         const sparseImage = new SparseImage(buffer.length, null, null, null, sectorSize);
         sparseImage.readBuffer.push({
