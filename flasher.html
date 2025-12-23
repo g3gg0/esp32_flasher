@@ -801,8 +801,11 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
                 await flasher.openPort();
                 log('Serial port opened successfully', 'info');
-                // Technical limitation note about baud rate and ROM messages
-                log('Note: Web Serial cannot change baud rate without reopening; to avoid unintended resets we keep one baud from start to end. The ROM prints reset messages at 115200. With USB-UART RX/TX wiring you must choose: slow baud (115200) to see reset messages, or high baud (e.g., 921600) to get speed but miss those messages. Native USB/JTAG on ESP32-S series is unaffected.', 'warn');
+
+                if(!flasher.isEspressifUsbJtag) {
+                    // Technical limitation note about baud rate and ROM messages
+                    log('Note: Web Serial cannot change baud rate without reopening; to avoid unintended resets we keep one baud from start to end. The ROM prints reset messages at 115200. With USB-UART RX/TX wiring you must choose: slow baud (115200) to see reset messages, or high baud (e.g., 921600) to get speed but miss those messages.', 'warn');
+                }
                 updateStatus('Connected', 'connected');
 
                 updateButtons(true, false, false);

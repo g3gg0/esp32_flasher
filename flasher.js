@@ -322,6 +322,25 @@ class ESPFlasher {
             try {
                 this.port = await navigator.serial.requestPort();
                 await this.port.open({ baudRate: this.initialBaudRate });
+                
+                /* Get and log VID/PID information */
+                const portInfo = this.port.getInfo();
+                if (portInfo.usbVendorId !== undefined && portInfo.usbProductId !== undefined) {
+                    const vid = portInfo.usbVendorId;
+                    const pid = portInfo.usbProductId;
+                    this.logDebug(`Device: VID=0x${vid.toString(16).padStart(4, '0').toUpperCase()}, PID=0x${pid.toString(16).padStart(4, '0').toUpperCase()}`);
+                    
+                    /* Check for Espressif USB JTAG device */
+                    if (vid === 0x303A) {
+                        this.logDebug('Detected Espressif USB JTAG device - high baud rates supported, bootloader messages will be visible');
+                        this.isEspressifUsbJtag = true;
+                    } else {
+                        this.isEspressifUsbJtag = false;
+                    }
+                } else {
+                    this.logDebug('Device: VID/PID information not available (may not be a USB device)');
+                    this.isEspressifUsbJtag = false;
+                }
             } catch (error) {
                 reject(error);
                 return;
