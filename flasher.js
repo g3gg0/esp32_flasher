@@ -78,6 +78,8 @@ class SlipLayer {
         this.escaping = false;
         this.verbose = true;
         this.logPackets = false;
+        this.logDebug = () => { };
+        this.logError = () => { };
     }
 
     /**
@@ -118,8 +120,8 @@ class SlipLayer {
 
         if (this.logPackets) {
             const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
-            console.log(`%c${symbol} SLIP ${type}%c ${label} [${data.length} bytes]${truncMsg}`, bgColor, color);
-            lines.forEach(line => console.log('%c' + line, 'font-family: monospace; font-size: 11px; color: #888'));
+            this.logDebug(`%c${symbol} SLIP ${type}%c ${label} [${data.length} bytes]${truncMsg}`, bgColor, color);
+            lines.forEach(line => this.logDebug('%c' + line, 'font-family: monospace; font-size: 11px; color: #888'));
         }
     }
 
@@ -297,8 +299,8 @@ class ESPFlasher {
         }
         if (this.logPackets) {
             const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
-            console.log(`%c${arrow} ${direction}%c [${data.length} bytes]${truncMsg}`, bgColor, color);
-            lines.forEach(line => console.log('%c' + line, 'font-family: monospace; font-size: 11px'));
+            this.logDebug(`%c${arrow} ${direction}%c [${data.length} bytes]${truncMsg}`, bgColor, color);
+            lines.forEach(line => this.logDebug('%c' + line, 'font-family: monospace; font-size: 11px'));
         }
     }
 
@@ -349,7 +351,7 @@ class ESPFlasher {
                 while (true) {
                     const { value, done } = await this.reader.read();
                     if (done) {
-                        console.log('Reader has been canceled');
+                        this.logDebug('Reader has been canceled');
                         break;
                     }
                     if (value) {
@@ -619,7 +621,7 @@ class ESPFlasher {
             0xd0: 'ERASE_FLASH', 0xd1: 'ERASE_REGION', 0xd2: 'READ_FLASH', 0xd3: 'RUN_USER_CODE'
         };
         const cmdName = commandNames[packet.command] || `0x${packet.command.toString(16)}`;
-        console.log(`%c[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'color: #4CAF50; font-weight: bold', 'params:', pkt);
+        this.logDebug(`%c[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'color: #4CAF50; font-weight: bold', 'params:', pkt);
 
         this.dumpPacket(pkt);
 
@@ -860,16 +862,16 @@ class ESPFlasher {
             this.logDebug("Reading security information...");
             this.securityInfo = await this.getSecurityInfo();
             this.current_chip = CHIP_ID_MAP[this.securityInfo.chip_id_hex >>> 0] || "unknown";
-            console.log(`Security Info: Flags=${this.securityInfo.flags_hex}, Flash Crypt=${this.securityInfo.flash_crypt_cnt}, Chip ID=${this.securityInfo.chip_id_hex} (${this.current_chip}), ECO=${this.securityInfo.eco_version_hex}`);
+            this.logDebug(`Security Info: Flags=${this.securityInfo.flags_hex}, Flash Crypt=${this.securityInfo.flash_crypt_cnt}, Chip ID=${this.securityInfo.chip_id_hex} (${this.current_chip}), ECO=${this.securityInfo.eco_version_hex}`);
 
             /* Log enabled security features */
             const enabledFlags = Object.entries(this.securityInfo.flags_decoded)
                 .filter(([key, value]) => value)
                 .map(([key, _]) => key);
             if (enabledFlags.length > 0) {
-                console.log(`  Enabled security features: ${enabledFlags.join(', ')}`);
+                this.logDebug(`  Enabled security features: ${enabledFlags.join(', ')}`);
             } else {
-                console.log(`  No security features enabled`);
+                this.logDebug(`  No security features enabled`);
             }
 
             if (this.securityInfo.flags_decoded.SECURE_BOOT_EN) {
@@ -883,7 +885,7 @@ class ESPFlasher {
             /* if this command succeeded, we already have the chip type, so we can just return. only plain ESP32 doesn't have the security info command */
             return;
         } catch (error) {
-            console.log(`Failed to read security info: ${error.message}, maybe plain ESP32? Continuing to old chip detection...`);
+            this.logDebug(`Failed to read security info: ${error.message}, maybe plain ESP32? Continuing to old chip detection...`);
         }
 
         // --- Chip Detection (Runs only after successful sync) ---
@@ -1149,7 +1151,7 @@ class ESPFlasher {
                 3000 // Longer timeout for stub execution
             );
         } catch (error) {
-            console.log(error);
+            this.logDebug(error);
             this.logError("Failed to execute stub", "Is the device locked?");
             return false;
         }
@@ -1305,12 +1307,12 @@ class ESPFlasher {
                                 resolve(data);
                             } else {
                                 const error = `MD5 mismatch! Expected: ${receivedMD5}, Got: ${calculatedMD5}`;
-                                console.error(error);
+                                this.logError(error);
                                 reject(new Error(error));
                             }
                         } else {
                             const error = `Unknown response length for MD5! Expected: 16, Got: ${rawData.length}`;
-                            console.error(error);
+                            this.logError(error);
                             reject(new Error(error));
                         }
                     } else {
@@ -1762,12 +1764,12 @@ class ESPFlasher {
             return;
         }
         if (pkt.dir == 0) {
-            console.log(`Command: `, pkt);
-            console.log(`Command raw: ${Array.from(pkt.raw).map(byte => byte.toString(16).padStart(2, '0')).join(' ')}`);
+            this.logDebug(`Command: `, pkt);
+            this.logDebug(`Command raw: ${Array.from(pkt.raw).map(byte => byte.toString(16).padStart(2, '0')).join(' ')}`);
         }
         if (pkt.dir == 1) {
-            console.log(`Response: `, pkt);
-            console.log(`Response raw: ${Array.from(pkt.raw).map(byte => byte.toString(16).padStart(2, '0')).join(' ')}`);
+            this.logDebug(`Response: `, pkt);
+            this.logDebug(`Response raw: ${Array.from(pkt.raw).map(byte => byte.toString(16).padStart(2, '0')).join(' ')}`);
         }
     }
 
@@ -1811,7 +1813,7 @@ class ESPFlasher {
                 await handler(pkt);
             }
         } else {
-            //console.log(`Received raw SLIP: ${ Array.from(packet).map(byte => byte.toString(16).padStart(2, '0')).join(' ') }`);
+            //this.logDebug(`Received raw SLIP: ${ Array.from(packet).map(byte => byte.toString(16).padStart(2, '0')).join(' ') }`);
 
             if (this.responseHandlers.has(-1)) {
                 var handler = this.responseHandlers.get(-1);
