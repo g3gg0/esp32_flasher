@@ -207,6 +207,529 @@ class SlipLayer {
 }
 
 /**
+ * WebUSBSerial - Web Serial API-like wrapper for WebUSB
+ * Provides a familiar interface for serial communication over USB
+ */
+class WebUSBSerial {
+    constructor() {
+        this.device = null;
+        this.interfaceNumber = null;
+        this.endpointIn = null;
+        this.endpointOut = null;
+        this.controlInterface = null;
+        this.readableStream = null;
+        this.writableStream = null;
+        this._reader = null;
+        this._writer = null;
+        this._readLoopRunning = false;
+        this._usbDisconnectHandler = null;
+        this._eventListeners = {
+            'close': [],
+            'disconnect': []
+        };
+        this.logger = null; /* optional {info, error} callbacks for UI logging */
+    }
+
+    /**
+     * Request USB device (mimics navigator.serial.requestPort())
+     * @returns {Promise<WebUSBSerial>} This instance
+     */
+    static async requestPort() {
+        const filters = [
+            { vendorId: 0x303A }, // Espressif
+            { vendorId: 0x0403 }, // FTDI
+            { vendorId: 0x1A86 }, // CH340
+            { vendorId: 0x10C4 }, // CP210x
+            { vendorId: 0x067B }  // PL2303
+        ];
+
+        const device = await navigator.usb.requestDevice({ filters });
+        const port = new WebUSBSerial();
+        port.device = device;
+        return port;
+    }
+
+    /**
+     * Open the USB device (mimics port.open())
+     * @param {Object} options - {baudRate: number}
+     * @returns {Promise<void>}
+     */
+    async open(options = {}) {
+        if (!this.device) {
+            throw new Error('No device selected');
+        }
+
+        /* If already open (e.g., prior attempt), close to avoid stale claims */
+        if (this.device.opened) {
+            try { await this.device.close(); } catch (e) { }
+        }
+
+        /* Best-effort reset before attempting to open (helps if host kept a stale claim) */
+        try { if (this.device.reset) { await this.device.reset(); } } catch (e) { }
+
+        const attemptOpenAndClaim = async () => {
+            await this.device.open();
+            try {
+                /* Ensure configuration 1 is selected; some hosts keep a different active config */
+                const currentCfg = this.device.configuration ? this.device.configuration.configurationValue : null;
+                if (!currentCfg || currentCfg !== 1) {
+                    await this.device.selectConfiguration(1);
+                }
+            } catch (e) { /* ignore config select errors */ }
+
+            const config = this.device.configuration;
+
+            /* Collect all bulk IN/OUT interfaces and try preferred ones first (CDC > vendor > other)
+               Rationale: Espressif composite devices expose CDC data on iface 1 (class 0x0A) and JTAG/debug on vendor iface 2.
+               Selecting CDC first avoids landing on a non-UART function that won't speak the ROM bootloader. */
+            const candidates = [];
+            for (const iface of config.interfaces) {
+                const alt = iface.alternates[0];
+                let hasIn = false, hasOut = false;
+                for (const ep of alt.endpoints) {
+                    if (ep.type === 'bulk' && ep.direction === 'in') hasIn = true;
+                    if (ep.type === 'bulk' && ep.direction === 'out') hasOut = true;
+                }
+                if (hasIn && hasOut) {
+                    let score = 2; /* default */
+                    if (alt.interfaceClass === 0x0a) score = 0; /* CDC data first */
+                    else if (alt.interfaceClass === 0xff) score = 1; /* vendor-specific next */
+                    candidates.push({ iface, score });
+                }
+            }
+
+            if (!candidates.length) {
+                await this._dumpDeviceDetails('No suitable USB interface found');
+                throw new Error('No suitable USB interface found');
+            }
+
+            candidates.sort((a, b) => a.score - b.score);
+            let lastErr = null;
+            for (const cand of candidates) {
+                try {
+                    await this.device.claimInterface(cand.iface.interfaceNumber);
+                    this.interfaceNumber = cand.iface.interfaceNumber;
+
+                    /* Get endpoints */
+                    const alt = cand.iface.alternates[0];
+                    for (const ep of alt.endpoints) {
+                        if (ep.type === 'bulk' && ep.direction === 'in') {
+                            this.endpointIn = ep.endpointNumber;
+                        } else if (ep.type === 'bulk' && ep.direction === 'out') {
+                            this.endpointOut = ep.endpointNumber;
+                        }
+                    }
+                    this._emitLog(`[WebUSB] Claimed iface ${cand.iface.interfaceNumber} (class=${alt.interfaceClass}) with IN=${this.endpointIn} OUT=${this.endpointOut}`);
+                    return config;
+                } catch (claimErr) {
+                    lastErr = claimErr;
+                    this._emitLog(`[WebUSB] claim failed on iface ${cand.iface.interfaceNumber} (class=${cand.iface.alternates[0].interfaceClass}): ${claimErr && claimErr.message ? claimErr.message : claimErr}`);
+                }
+            }
+
+            await this._dumpDeviceDetails('All candidate interfaces failed to claim', lastErr);
+            this._emitLog('[WebUSB] If you are on Windows and see repeat claim failures, ensure the interface is bound to WinUSB (e.g., via Zadig) and close any app using it.');
+            throw lastErr || new Error('Unable to claim any USB interface');
+        };
+
+        let config;
+        try {
+            config = await attemptOpenAndClaim();
+        } catch (err) {
+            console.warn('[WebUSBSerial-flasher] open/claim failed:', err.message);
+            await this._dumpDeviceDetails('open/claim failed (first attempt)', err);
+            /* Retry once after a best-effort device reset/close to clear stale claims (common on Android) */
+            console.warn('[WebUSBSerial-flasher] claimInterface failed, retrying after reset/close:', err.message);
+            try { if (this.device.reset) { await this.device.reset(); } } catch (e) { }
+            try { await this.device.close(); } catch (e) { }
+            try {
+                config = await attemptOpenAndClaim();
+            } catch (err2) {
+                await this._dumpDeviceDetails('claimInterface failed (retry)', err2);
+                throw new Error(`Unable to claim USB interface. This can happen if another app has the device open or Android retained a stale claim. Unplug/replug the device, close other apps, and retry. Original: ${err2.message}`);
+            }
+        }
+
+        // Try to claim CDC control interface
+        const controlIface = config.interfaces.find(i =>
+            i.alternates[0].interfaceClass === 0x02 &&
+            i.interfaceNumber !== this.interfaceNumber
+        );
+
+        if (controlIface) {
+            try {
+                await this.device.claimInterface(controlIface.interfaceNumber);
+                this.controlInterface = controlIface.interfaceNumber;
+            } catch (e) {
+                // Use data interface for control if claim fails
+                this.controlInterface = this.interfaceNumber;
+            }
+        } else {
+            this.controlInterface = this.interfaceNumber;
+        }
+
+        // Set line coding
+        const baudRate = options.baudRate || 115200;
+        try {
+            const lineCoding = new Uint8Array([
+                baudRate & 0xFF,
+                (baudRate >> 8) & 0xFF,
+                (baudRate >> 16) & 0xFF,
+                (baudRate >> 24) & 0xFF,
+                0x00, // 1 stop bit
+                0x00, // No parity
+                0x08  // 8 data bits
+            ]);
+
+            await this.device.controlTransferOut({
+                requestType: 'class',
+                recipient: 'interface',
+                request: 0x20, // SET_LINE_CODING
+                value: 0,
+                index: this.controlInterface
+            }, lineCoding);
+        } catch (e) {
+            console.warn('Could not set line coding:', e.message);
+        }
+
+        // Assert DTR/RTS
+        try {
+            await this.device.controlTransferOut({
+                requestType: 'class',
+                recipient: 'interface',
+                request: 0x22, // SET_CONTROL_LINE_STATE
+                value: 0x03, // DTR=1, RTS=1
+                index: this.controlInterface
+            });
+        } catch (e) {
+            console.warn('Could not set control lines:', e.message);
+        }
+
+        // Create streams
+        this._createStreams();
+
+        // Setup disconnect handler
+        console.log('[WebUSBSerial-flasher] Setting up USB disconnect handler');
+        this._usbDisconnectHandler = (event) => {
+            console.log('[WebUSBSerial-flasher] USB disconnect event fired, device:', event.device.productId);
+            if (event.device === this.device) {
+                console.log('[WebUSBSerial-flasher] Device matches, firing close event');
+                // Fire 'close' event to mimic Web Serial behavior
+                this._fireEvent('close');
+                this._cleanup();
+            } else {
+                console.log('[WebUSBSerial-flasher] Device mismatch - different device disconnected');
+            }
+        };
+        navigator.usb.addEventListener('disconnect', this._usbDisconnectHandler);
+        console.log('[WebUSBSerial-flasher] Disconnect handler registered with navigator.usb');
+    }
+
+    /**
+     * Close the device (mimics port.close())
+     * @returns {Promise<void>}
+     */
+    async close() {
+        this._cleanup();
+        if (this.device) {
+            try {
+                if (this.interfaceNumber !== null) {
+                    await this.device.releaseInterface(this.interfaceNumber);
+                }
+                if (this.controlInterface !== null && this.controlInterface !== this.interfaceNumber) {
+                    await this.device.releaseInterface(this.controlInterface);
+                }
+                await this.device.close();
+            } catch (e) {
+                // Ignore errors if device already disconnected
+                if (!e.message || !e.message.includes('disconnected')) {
+                    console.warn('Error closing device:', e.message || e);
+                }
+            }
+            this.device = null;
+        }
+    }
+
+    /* Dump detailed device info for diagnostics */
+    async _dumpDeviceDetails(label, err) {
+        try {
+            if (!this.device) {
+                this._emitLog(`[WebUSB] ${label}: no device set`);
+                return;
+            }
+            const d = this.device;
+            const lines = [];
+            lines.push(`[WebUSB] ${label}: ${err && err.message ? err.message : err || ''}`);
+            lines.push(`[WebUSB] Basic: opened=${d.opened} vid=0x${(d.vendorId || 0).toString(16).padStart(4, '0')} pid=0x${(d.productId || 0).toString(16).padStart(4, '0')}`);
+            lines.push(`[WebUSB] Strings: product="${d.productName || 'n/a'}" manufacturer="${d.manufacturerName || 'n/a'}" serial="${d.serialNumber || 'n/a'}"`);
+            const cfg = d.configuration;
+            if (!cfg) {
+                lines.push('[WebUSB] No active configuration');
+                this._emitLog(lines.join('\n'));
+                return;
+            }
+            lines.push(`[WebUSB] Active config: value=${cfg.configurationValue} interfaces=${cfg.interfaces.length}`);
+            for (const iface of cfg.interfaces) {
+                const alt = iface.alternates[0];
+                lines.push(`[WebUSB]  iface ${iface.interfaceNumber}: class=${alt.interfaceClass} subclass=${alt.interfaceSubclass} proto=${alt.interfaceProtocol} eps=${alt.endpoints.length}`);
+                for (const ep of alt.endpoints) {
+                    lines.push(`[WebUSB]    ep ${ep.endpointNumber}: dir=${ep.direction} type=${ep.type} packetSize=${ep.packetSize}`);
+                }
+            }
+            this._emitLog(lines.join('\n'));
+        } catch (dumpErr) {
+            this._emitLog(`[WebUSB] Failed to dump device details: ${dumpErr && dumpErr.message ? dumpErr.message : dumpErr}`);
+        }
+    }
+
+    _emitLog(msg) {
+        if (this.logger && typeof this.logger.info === 'function') {
+            this.logger.info(msg);
+        } else {
+            console.log(msg);
+        }
+    }
+
+    /**
+     * Get device info (mimics port.getInfo())
+     * @returns {Object} {usbVendorId, usbProductId}
+     */
+    getInfo() {
+        if (!this.device) {
+            return {};
+        }
+        return {
+            usbVendorId: this.device.vendorId,
+            usbProductId: this.device.productId
+        };
+    }
+
+    /**
+     * Set DTR/RTS signals (mimics port.setSignals())
+     * @param {Object} signals - {dataTerminalReady, requestToSend}
+     * @returns {Promise<void>}
+     */
+    async setSignals(signals) {
+        if (!this.device) {
+            throw new Error('Device not open');
+        }
+
+        var value = 0;
+        value |= signals.dataTerminalReady ? 1 : 0;
+        value |= signals.requestToSend ? 2 : 0;
+
+        return this.device.controlTransferOut({
+            requestType: 'class',
+            recipient: 'interface',
+            request: 0x22, /* CDC_SET_CONTROL_LINE_STATE */
+            value: value,
+            index: this.controlInterface
+        });
+    }
+
+    /**
+     * Get readable stream
+     */
+    get readable() {
+        return this.readableStream;
+    }
+
+    /**
+     * Get writable stream
+     */
+    get writable() {
+        return this.writableStream;
+    }
+
+    /**
+     * Create ReadableStream and WritableStream
+     * @private
+     */
+    _createStreams() {
+        // ReadableStream for incoming data
+        this.readableStream = new ReadableStream({
+            start: async (controller) => {
+                this._readLoopRunning = true;
+
+                /* Minimal queue so transferIn can immediately reissue; drain converts to Uint8Array */
+                const pending = [];
+                let draining = false;
+                const scheduleDrain = () => {
+                    if (draining) return;
+                    draining = true;
+                    queueMicrotask(() => {
+                        while (pending.length) {
+                            const dv = pending.shift();
+
+                            /* Hexdump-style logging (32-byte width, hex editor format) 
+                            const data = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+                            console.log(`[WebUSB-RX] Draining ${dv.byteLength} bytes:`);
+                            for (let offset = 0; offset < data.length; offset += 32) {
+                                let hexStr = '';
+                                let asciiStr = '';
+                                const lineEnd = Math.min(offset + 32, data.length);
+
+                                for (let i = offset; i < lineEnd; i++) {
+                                    const byte = data[i];
+                                    hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
+                                    asciiStr += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+                                }
+
+                                const hexPadding = ' '.repeat(Math.max(0, (32 - (lineEnd - offset)) * 3));
+                                const offsetStr = offset.toString(16).padStart(8, '0').toUpperCase();
+                                console.log(`  ${offsetStr}: ${hexStr}${hexPadding} | ${asciiStr}`);
+                            }
+                                */
+
+                            controller.enqueue(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
+                        }
+                        draining = false;
+                    });
+                };
+
+                try {
+                    /*
+                        WebUSB RX behavior and limitations (important):
+                        - USB bulk IN transfers complete immediately when a "short packet" (< wMaxPacketSize) is received.
+                            ESP devices often emit small bursts (e.g., 1–9 bytes), which are short packets on Full-Speed USB (wMaxPacketSize=64).
+                            Each short packet forces the transfer to finish right away.
+
+                        - Browsers only allow one outstanding bulk IN transfer per endpoint with WebUSB. Parallel transferIn calls
+                            are not supported, so after each short packet completes we must reissue another transfer. The turnaround
+                            involves scheduling overhead in the JS event loop and browser/USB stack.
+
+                        - At very high rates of short packets, the device can outpace the host's reissue cadence, especially if the
+                            device's USB endpoint buffer is small. This can manifest as dropped responses, even though the code keeps
+                            the loop tight.
+
+                        Mitigations implemented here:
+                        - Keep the hot path lean: no logging/allocations before reissuing transferIn.
+                        - Push the raw DataView into a minimal queue and defer conversion to Uint8Array via queueMicrotask, so the
+                            next transferIn is issued immediately.
+
+                        Notes on transfer size:
+                        - Increasing the requested transferIn length does NOT coalesce multiple short packets; a short packet ends the
+                            transfer by USB semantics. Larger requests only help when the device sends full-size packets (64 bytes on FS,
+                            512 bytes on HS), allowing multiple max-size packets before a short one terminates the transfer.
+
+
+                        This is a platform constraint, not a logic bug in the code.
+                    */
+                    while (this._readLoopRunning && this.device) {
+                        try {
+                            /* Request one max-packet worth; large sizes can stall on some Android stacks */
+                            const result = await this.device.transferIn(this.endpointIn, 64);
+
+                            if (result.status === 'ok') {
+                                pending.push(result.data);
+                                scheduleDrain();
+                                continue;
+                            }
+                            if (result.status === 'stall') {
+                                await this.device.clearHalt('in', this.endpointIn);
+                                await new Promise(r => setTimeout(r, 1));
+                                continue;
+                            }
+                            /* No data or zero-length transfer: immediately loop */
+                            await new Promise(r => setTimeout(r, 1));
+                        } catch (error) {
+                            if (error.message && (error.message.includes('device unavailable') ||
+                                error.message.includes('device has been lost') ||
+                                error.message.includes('device was disconnected') ||
+                                error.message.includes('No device selected'))) {
+                                break;
+                            }
+                            if (error.message && (error.message.includes('transfer was cancelled') ||
+                                error.message.includes('transfer error has occurred'))) {
+                                continue;
+                            }
+                            /* Log other errors but continue */
+                            console.warn('USB read error:', error.message);
+                        }
+                    }
+                } catch (error) {
+                    controller.error(error);
+                } finally {
+                    controller.close();
+                }
+            },
+            cancel: () => {
+                console.log('[WebUSBSerial-flasher] Read loop canceled');
+                this._readLoopRunning = false;
+            }
+        });
+
+        // WritableStream for outgoing data
+        this.writableStream = new WritableStream({
+            write: async (chunk) => {
+                if (!this.device) {
+                    throw new Error('Device not open');
+                }
+                await this.device.transferOut(this.endpointOut, chunk);
+            }
+        });
+    }
+
+    /**
+     * Cleanup resources
+     * @private
+     */
+    _cleanup() {
+        console.log('[WebUSBSerial-flasher] Cleanup called');
+        this._readLoopRunning = false;
+        if (this._usbDisconnectHandler) {
+            navigator.usb.removeEventListener('disconnect', this._usbDisconnectHandler);
+            this._usbDisconnectHandler = null;
+            console.log('[WebUSBSerial-flasher] Disconnect handler unregistered');
+        }
+    }
+
+    /**
+     * Fire event to all registered listeners
+     * @private
+     */
+    _fireEvent(type) {
+        const listeners = this._eventListeners[type] || [];
+        console.log(`[WebUSBSerial-flasher] Firing '${type}' event to ${listeners.length} listener(s)`);
+        listeners.forEach(listener => {
+            try {
+                listener();
+            } catch (e) {
+                console.error(`Error in ${type} event listener:`, e);
+            }
+        });
+    }
+
+    /**
+     * Add event listener (mimics addEventListener for 'close' and 'disconnect')
+     * @param {string} type - Event type
+     * @param {Function} listener - Event handler
+     */
+    addEventListener(type, listener) {
+        if (this._eventListeners[type]) {
+            this._eventListeners[type].push(listener);
+            console.log(`[WebUSBSerial-flasher] addEventListener('${type}') - now have ${this._eventListeners[type].length} listener(s)`);
+        } else {
+            console.log(`[WebUSBSerial-flasher] addEventListener('${type}') - unknown event type`);
+        }
+    }
+
+    /**
+     * Remove event listener
+     * @param {string} type - Event type
+     * @param {Function} listener - Event handler
+     */
+    removeEventListener(type, listener) {
+        if (this._eventListeners[type]) {
+            const index = this._eventListeners[type].indexOf(listener);
+            if (index !== -1) {
+                this._eventListeners[type].splice(index, 1);
+            }
+        }
+    }
+}
+
+/**
  * ESP32 Bootloader Communication Handler
  * Manages serial communication with ESP32 devices using bootloader protocol
  * Supports reading/writing flash, downloading code to RAM, and firmware verification
@@ -241,9 +764,17 @@ class ESPFlasher {
         this.logError = () => { };
         this.reader = null;
 
+
+        this.dtrState = true;
+        this.rtsState = true;
+
         /* Command execution lock to prevent concurrent command execution */
         this._commandLock = Promise.resolve();
         this.logPackets = false;
+
+        /* Persistent writer + queued writes to avoid WritableStream lock contention */
+        this._activeWriter = null;
+        this._writeChain = Promise.resolve();
 
         /*
         Technical Limitation:
@@ -260,6 +791,43 @@ class ESPFlasher {
             Normal ESP32 needs 115200 or 250000 for any operation.
         */
         this.initialBaudRate = 921600;
+    }
+
+    /**
+     * Ensure a single persistent WritableStreamDefaultWriter exists
+     * @private
+     */
+    async _ensureWriter() {
+        if (!this.port || !this.port.writable) {
+            throw new Error('Port is not writable.');
+        }
+        if (!this._activeWriter) {
+            this._activeWriter = this.port.writable.getWriter();
+        }
+        return this._activeWriter;
+    }
+
+    /**
+     * Queue a write on the persistent writer to serialize all writes
+     * @private
+     */
+    async _writeFrame(frame) {
+        this._writeChain = this._writeChain.then(async () => {
+            const writer = await this._ensureWriter();
+            await writer.write(frame);
+        });
+        return this._writeChain;
+    }
+
+    /**
+     * Release the persistent writer if held
+     * @private
+     */
+    _releaseWriter() {
+        if (this._activeWriter) {
+            try { this._activeWriter.releaseLock(); } catch (e) { }
+            this._activeWriter = null;
+        }
     }
 
     /**
@@ -316,20 +884,41 @@ class ESPFlasher {
             throw new Error('Web Serial API not available. Please use Chrome or Edge.');
         }
 
+        const port = await navigator.serial.requestPort();
+        return this.openPortWithPort(port);
+    }
+
+    /**
+     * Open a provided serial port (Web Serial or WebUSB)
+     * @async
+     * @param {SerialPort|WebUSBSerial} port - Port instance to open
+     * @returns {Promise<void>}
+     * @throws {Error} If connection fails
+     */
+    async openPortWithPort(port) {
         return new Promise(async (resolve, reject) => {
 
-            /* Request a port and open a connection */
+            /* Open the port */
             try {
-                this.port = await navigator.serial.requestPort();
+                this.port = port;
+
+                /* If WebUSBSerial, provide logger callbacks so low-level dumps reach UI log */
+                if (this.port instanceof WebUSBSerial) {
+                    this.port.logger = {
+                        info: (msg) => { this.logDebug && this.logDebug(msg); },
+                        error: (msg) => { this.logError && this.logError(msg); }
+                    };
+                }
+
                 await this.port.open({ baudRate: this.initialBaudRate });
-                
+
                 /* Get and log VID/PID information */
                 const portInfo = this.port.getInfo();
                 if (portInfo.usbVendorId !== undefined && portInfo.usbProductId !== undefined) {
                     const vid = portInfo.usbVendorId;
                     const pid = portInfo.usbProductId;
                     this.logDebug(`Device: VID=0x${vid.toString(16).padStart(4, '0').toUpperCase()}, PID=0x${pid.toString(16).padStart(4, '0').toUpperCase()}`);
-                    
+
                     /* Check for Espressif USB JTAG device */
                     if (vid === 0x303A) {
                         this.logDebug('Detected Espressif USB JTAG device - high baud rates supported, bootloader messages will be visible');
@@ -347,19 +936,27 @@ class ESPFlasher {
             }
 
 
-            // Register for device lost
-            navigator.serial.addEventListener('disconnect', (event) => {
-                if (event.target === this.port) {
-                    this.logError(`The device was disconnected`);
-                    this.disconnect();
-                }
-            });
+            // Register for device lost (Web Serial API)
+            if (navigator.serial) {
+                navigator.serial.addEventListener('disconnect', (event) => {
+                    if (event.target === this.port) {
+                        this.logError(`The device was disconnected`);
+                        this.disconnect();
+                    }
+                });
+            }
 
             // Register for port closing
-            this.port.addEventListener('close', () => {
-                this.logError('Serial port closed');
-                this.disconnect();
-            });
+            if (this.port.addEventListener) {
+                console.log('[flasher.js] Registering close listener on port');
+                this.port.addEventListener('close', () => {
+                    console.log('[flasher.js] Close event fired from port');
+                    this.logError('Device disconnected');
+                    this.disconnect();
+                });
+            } else {
+                console.log('[flasher.js] Port does not have addEventListener');
+            }
 
             resolve();
 
@@ -370,6 +967,7 @@ class ESPFlasher {
                 while (true) {
                     const { value, done } = await this.reader.read();
                     if (done) {
+                        console.log('[flasher.js] Reader returned done=true, exiting read loop');
                         this.logDebug('Reader has been canceled');
                         break;
                     }
@@ -521,6 +1119,11 @@ class ESPFlasher {
             const line = this.consoleBuffer.slice(0, newlineIdx).trim();
             this.consoleBuffer = this.consoleBuffer.slice(newlineIdx + 1);
             if (line.length) {
+                // Only print device messages if not yet synced
+                if (!this.synced) {
+                    this.logDebug(`[Device] ${line}`);
+                }
+
                 const lower = line.toLowerCase();
                 const rstBootMatch = line.match(/rst:0x([0-9a-f]+)/i);
                 const bootMatch = line.match(/boot:0x([0-9a-f]+)/i);
@@ -604,17 +1207,15 @@ class ESPFlasher {
      * @throws {Error} On timeout or command failure
      */
     async executeCommand(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
-        /* Create command promise first */
-        const commandPromise = this._executeCommandUnlocked(packet, callback, default_callback, timeout, hasTimeoutCbr);
-
-        /* Chain it to the lock, ensuring lock always continues even on error */
-        this._commandLock = this._commandLock.then(
-            () => commandPromise,
-            () => commandPromise  /* On previous error, still execute our command */
-        );
-
-        /* Return our command directly to propagate result/error to caller */
-        return commandPromise;
+        /*
+         Serialize command execution properly:
+         - Do NOT create the command promise before acquiring the logical lock.
+           Creating it early can start the async work and contend for the writable stream.
+         - Instead, chain the creation to the existing lock so only one writer is active.
+        */
+        const run = () => this._executeCommandUnlocked(packet, callback, default_callback, timeout, hasTimeoutCbr);
+        this._commandLock = this._commandLock.then(run, run);
+        return this._commandLock;
     }
 
     /**
@@ -640,7 +1241,7 @@ class ESPFlasher {
             0xd0: 'ERASE_FLASH', 0xd1: 'ERASE_REGION', 0xd2: 'READ_FLASH', 0xd3: 'RUN_USER_CODE'
         };
         const cmdName = commandNames[packet.command] || `0x${packet.command.toString(16)}`;
-        this.logDebug(`%c[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'color: #4CAF50; font-weight: bold', 'params:', pkt);
+        this.logDebug(`[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'params:', pkt);
 
         this.dumpPacket(pkt);
 
@@ -648,13 +1249,15 @@ class ESPFlasher {
             /* Register response handlers */
             this.responseHandlers.clear();
             this.responseHandlers.set(packet.command, async (response) => {
-                if (callback) {
-                    return callback(resolve, reject, response);
-                }
+                /* Ensure per-command timeout is cleared before resolving */
+                try { clearTimeout(timeoutHandle); } catch (e) { }
+                if (callback) { return callback(resolve, reject, response); }
             });
 
             if (default_callback) {
                 this.responseHandlers.set(-1, async (response) => {
+                    /* Clear timeout as soon as we hand raw data to caller */
+                    try { clearTimeout(timeoutHandle); } catch (e) { }
                     return default_callback(resolve, reject, response);
                 });
             }
@@ -671,23 +1274,13 @@ class ESPFlasher {
             }, timeout);
 
             /* Send the packet with proper error handling */
-            let writer = null;
             try {
-                writer = this.port.writable.getWriter();
                 const slipFrame = this.slipLayer.encode(packet.payload);
                 this.logSerialData(slipFrame, 'TX');
-                await writer.write(slipFrame);
+                await this._writeFrame(slipFrame);
             } catch (error) {
                 clearTimeout(timeoutHandle);
                 reject(error);
-            } finally {
-                if (writer) {
-                    try {
-                        writer.releaseLock();
-                    } catch (e) {
-                        /* Ignore release errors */
-                    }
-                }
             }
         });
     }
@@ -708,6 +1301,9 @@ class ESPFlasher {
             }
         }
 
+        /* Release persistent writer before closing port */
+        this._releaseWriter();
+
         if (this.port) {
             try {
                 this.port.removeEventListener('close', this.disconnect);
@@ -725,11 +1321,42 @@ class ESPFlasher {
         this.disconnected && this.disconnected();
     }
 
+    async setDtr(value) {
+        try {
+            this.dtrState = value;
+            await this.port.setSignals({
+                dataTerminalReady: value,
+                requestToSend: this.rtsState,
+            });
+            return true;
+        } catch (error) {
+            console.error(`Could not set DTR: ${error}.`);
+            return false;
+        }
+    }
+
+    async setRts(value) {
+        try {
+            this.rtsState = value;
+            await this.port.setSignals({
+                dataTerminalReady: this.dtrState,
+                requestToSend: value,
+            });
+            return true;
+        } catch (error) {
+            console.error(`Could not set RTS: ${error}.`);
+            return false;
+        }
+    }
+
     async setDtrRts(dtr, rts) {
         if (!this.port) {
             this.logError("Port is not open. Cannot set signals.");
             return false;
         }
+
+        this.dtrState = dtr;
+        this.rtsState = rts;
 
         try {
             await this.port.setSignals({
@@ -761,15 +1388,27 @@ class ESPFlasher {
         this.logDebug("Automatic bootloader reset sequence...");
 
         try {
-            await this.setDtrRts(false, false);
-            await this.setDtrRts(true, true);
-            await this.setDtrRts(false, bootloader);
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            await this.setDtrRts(true, !bootloader);
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            await this.setDtrRts(false, false);
 
-            this.slipLayer.buffer = [];
+            // Idle
+            await this.setRts(false);
+            await this.setDtr(false);
+            await new Promise(r => setTimeout(r, 100));
+
+            // Set IO0 (bootloader mode = DTR high = IO0 low)
+            await this.setDtr(bootloader);
+            await this.setRts(false);
+            await new Promise(r => setTimeout(r, 100));
+
+            // Reset - calls inverted to go through (1,1) instead of (0,0)
+            await this.setRts(true);
+            await this.setDtr(!bootloader);
+            // RTS set as Windows only propagates DTR on RTS setting
+            await this.setRts(true);
+            await new Promise(r => setTimeout(r, 100));
+
+            // Chip out of reset
+            await this.setDtr(false);
+            await this.setRts(false);
 
             return true;
         } catch (error) {
@@ -826,8 +1465,8 @@ class ESPFlasher {
      */
     async sync() {
         const maxRetries = 4;
-        const retryDelayMs = 50; /* Delay between retries */
-        const syncTimeoutMs = 100; /* Timeout for each individual sync attempt */
+        const retryDelayMs = 100; /* Delay between retries (Android stacks can be slower) */
+        const syncTimeoutMs = 300; /* Timeout for each individual sync attempt */
         let synchronized = false;
 
         this.logDebug(`Attempting to synchronize (${maxRetries} attempts)...`);
@@ -881,6 +1520,7 @@ class ESPFlasher {
             this.logDebug("Reading security information...");
             this.securityInfo = await this.getSecurityInfo();
             this.current_chip = CHIP_ID_MAP[this.securityInfo.chip_id_hex >>> 0] || "unknown";
+
             this.logDebug(`Security Info: Flags=${this.securityInfo.flags_hex}, Flash Crypt=${this.securityInfo.flash_crypt_cnt}, Chip ID=${this.securityInfo.chip_id_hex} (${this.current_chip}), ECO=${this.securityInfo.eco_version_hex}`);
 
             /* Log enabled security features */
@@ -957,7 +1597,7 @@ class ESPFlasher {
     async readMac() {
         /* Read the MAC address registers */
         var chip = this.chip_descriptions[this.current_chip];
-        if(!chip.mac_efuse_reg) {
+        if (!chip.mac_efuse_reg) {
             throw new Error(`MAC eFuse register not defined for chip ${this.current_chip}`);
         }
         const register1 = await this.readReg(chip.mac_efuse_reg);
@@ -1143,10 +1783,15 @@ class ESPFlasher {
      *              Stub provides additional capabilities like flash read/write and MD5.
      */
     async downloadStub() {
+        var current_chip = this.current_chip;
+        if (this.chip_descriptions[this.current_chip + "-webusb"] && this.port instanceof WebUSBSerial) {
+            current_chip = this.current_chip + "-webusb";
+        }
+        var stub = this.chip_descriptions[current_chip].stub
 
-        var stub = this.chip_descriptions[this.current_chip].stub
-
-        await this.downloadMem(stub.data_start, stub.data);
+        if (stub.data_start != undefined && stub.data != undefined) {
+            await this.downloadMem(stub.data_start, stub.data);
+        }
         await this.downloadMem(stub.text_start, stub.text);
 
         try {
@@ -1272,11 +1917,16 @@ class ESPFlasher {
             if (sectorSize > length) {
                 sectorSize = length;
             }
-            const packets = length / sectorSize;
             let packet = 0;
             let ackMax = 64;
+
+            if(this.port instanceof WebUSBSerial){
+                ackMax = 1;
+                sectorSize = 40;
+            }
             var data = new Uint8Array(0);
             var lastDataTime = Date.now();
+            const packets = length / sectorSize;
 
             /* Timing measurements */
             const readStartTime = Date.now();
@@ -1361,10 +2011,8 @@ class ESPFlasher {
 
                         /* Encode and write response */
                         const slipFrame = this.slipLayer.encode(resp);
-                        const writer = this.port.writable.getWriter();
                         this.logSerialData(slipFrame, 'TX');
-                        await writer.write(slipFrame);
-                        writer.releaseLock();
+                        await this._writeFrame(slipFrame);
                         packet++;
                     }
                 },

@@ -1470,7 +1470,17 @@
                     }
                 };
 
-                await deviceFlasher.openPort();
+                /* Detect Android and use WebUSB (Web Serial not available on Android) */
+                const isAndroid = /Android/i.test(navigator.userAgent);
+                if (isAndroid) {
+                    console.log('Android device detected, using WebUSB');
+                    setDeviceStatus('Android detected - using WebUSB', 'info');
+                    const port = await WebUSBSerial.requestPort();
+                    await deviceFlasher.openPortWithPort(port);
+                } else {
+                    console.log('Desktop detected, using Web Serial API');
+                    await deviceFlasher.openPort(); // Use Web Serial (default)
+                }
                 setDeviceButtons({ connected: true });
 
                 /* Try hard reset + sync across baud rates: default, 250000, 115200 */

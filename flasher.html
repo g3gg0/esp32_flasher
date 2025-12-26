@@ -327,6 +327,38 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             color: #ffffff;
         }
 
+        .radio-group {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            padding: 15px;
+            background: #0d1117;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            border: 1px solid #30363d;
+        }
+
+        .radio-group label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #c9d1d9;
+            font-weight: 500;
+        }
+
+        .radio-group input[type="radio"] {
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+        }
+
+        .radio-group strong {
+            color: #58a6ff;
+            margin-right: 10px;
+        }
+
         @keyframes spin {
             0% {
                 transform: rotate(0deg);
@@ -419,10 +451,22 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             <!-- Connection Section -->
             <div class="section">
                 <h2>📡 Connection</h2>
+                <div class="radio-group">
+                    <strong>Connection Type:</strong>
+                    <label>
+                        <input type="radio" name="connectionType" value="webserial" checked>
+                        Web Serial
+                    </label>
+                    <label>
+                        <input type="radio" name="connectionType" value="webusb">
+                        WebUSB
+                    </label>
+                </div>
                 <div class="button-group">
                     <button id="connectBtn" onclick="connectDevice()">Connect Device</button>
                     <button id="disconnectBtn" onclick="disconnectDevice()" disabled>Disconnect</button>
-                    <button id="hardResetBtn" onclick="hardReset()" disabled>Hard Reset</button>
+                    <button id="hardResetBtn" onclick="hardReset()" disabled>Reset (Download)</button>
+                    <button id="appResetBtn" onclick="appReset()" disabled>Reset (Application)</button>
                     <button id="syncBtn" onclick="syncDevice()" disabled>Sync & Detect</button>
                 </div>
                 <div class="info-panel">
@@ -728,6 +772,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             document.getElementById('connectBtn').disabled = connected;
             document.getElementById('disconnectBtn').disabled = !connected;
             document.getElementById('hardResetBtn').disabled = !connected;
+            document.getElementById('appResetBtn').disabled = !connected;
             document.getElementById('syncBtn').disabled = !connected;
             document.getElementById('loadStubBtn').disabled = !synced || stubLoaded;
             document.getElementById('readRegBtn').disabled = !synced;
@@ -769,7 +814,9 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
         async function connectDevice() {
             try {
-                log('Requesting serial port...', 'info');
+                const connectionType = document.querySelector('input[name="connectionType"]:checked').value;
+                
+                log(`Requesting ${connectionType === 'webusb' ? 'WebUSB' : 'Web Serial'} port...`, 'info');
                 flasher = new ESPFlasher();
 
                 flasher.logDebug = (msg) => log(`[DEBUG] ${msg}`, 'debug');
@@ -799,8 +846,16 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                     }
                 };
 
-                await flasher.openPort();
-                log('Serial port opened successfully', 'info');
+                if (connectionType === 'webusb') {
+                    // Use WebUSB
+                    const port = await WebUSBSerial.requestPort();
+                    await flasher.openPortWithPort(port);
+                } else {
+                    // Use Web Serial
+                    await flasher.openPort();
+                }
+                
+                log('Port opened successfully', 'info');
 
                 if(!flasher.isEspressifUsbJtag) {
                     // Technical limitation note about baud rate and ROM messages
@@ -827,13 +882,13 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 const hardResetBtn = document.getElementById('hardResetBtn');
                 hardResetBtn.classList.remove('highlighted');
 
-                updateStatus('Performing hard reset...', 'busy');
-                log('Initiating hard reset...', 'info');
+                updateStatus('Performing reset (download mode)...', 'busy');
+                log('Initiating reset to download mode...', 'info');
                 const result = await flasher.hardReset(true);
                 if (result) {
-                    log('Hard reset successful', 'info');
+                    log('Reset to download mode successful', 'info');
                 } else {
-                    log('Hard reset failed or not supported', 'warn');
+                    log('Reset failed or not supported', 'warn');
                 }
                 updateStatus('Connected', 'connected');
 
@@ -844,7 +899,25 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
 
             } catch (error) {
-                log(`Hard reset error: ${error.message}`, 'error');
+                log(`Reset error: ${error.message}`, 'error');
+                updateStatus('Connected (Error)', 'warning');
+            }
+        }
+
+        async function appReset() {
+            if (!flasher) return;
+            try {
+                updateStatus('Performing reset (application mode)...', 'busy');
+                log('Initiating reset to application mode...', 'info');
+                const result = await flasher.hardReset(false);
+                if (result) {
+                    log('Reset to application mode successful', 'info');
+                } else {
+                    log('Reset failed or not supported', 'warn');
+                }
+                updateStatus('Connected', 'connected');
+            } catch (error) {
+                log(`Reset error: ${error.message}`, 'error');
                 updateStatus('Connected (Error)', 'warning');
             }
         }
@@ -891,6 +964,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
                 // Clear any highlights
                 document.getElementById('hardResetBtn').classList.remove('highlighted');
+                document.getElementById('appResetBtn').classList.remove('highlighted');
                 document.getElementById('syncBtn').classList.remove('highlighted');
 
                 const popup = document.getElementById('devicePopup');
