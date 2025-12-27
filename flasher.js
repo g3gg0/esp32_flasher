@@ -228,6 +228,7 @@ class WebUSBSerial {
             'disconnect': []
         };
         this.logger = null; /* optional {info, error} callbacks for UI logging */
+        this.maxTransferSize = 0x10000;
     }
 
     /**
@@ -551,84 +552,21 @@ class WebUSBSerial {
             start: async (controller) => {
                 this._readLoopRunning = true;
 
-                /* Minimal queue so transferIn can immediately reissue; drain converts to Uint8Array */
-                const pending = [];
-                let draining = false;
-                const scheduleDrain = () => {
-                    if (draining) return;
-                    draining = true;
-                    queueMicrotask(() => {
-                        while (pending.length) {
-                            const dv = pending.shift();
-
-                            /* Hexdump-style logging (32-byte width, hex editor format) 
-                            const data = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
-                            console.log(`[WebUSB-RX] Draining ${dv.byteLength} bytes:`);
-                            for (let offset = 0; offset < data.length; offset += 32) {
-                                let hexStr = '';
-                                let asciiStr = '';
-                                const lineEnd = Math.min(offset + 32, data.length);
-
-                                for (let i = offset; i < lineEnd; i++) {
-                                    const byte = data[i];
-                                    hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
-                                    asciiStr += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
-                                }
-
-                                const hexPadding = ' '.repeat(Math.max(0, (32 - (lineEnd - offset)) * 3));
-                                const offsetStr = offset.toString(16).padStart(8, '0').toUpperCase();
-                                console.log(`  ${offsetStr}: ${hexStr}${hexPadding} | ${asciiStr}`);
-                            }
-                                */
-
-                            controller.enqueue(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
-                        }
-                        draining = false;
-                    });
-                };
-
                 try {
-                    /*
-                        WebUSB RX behavior and limitations (important):
-                        - USB bulk IN transfers complete immediately when a "short packet" (< wMaxPacketSize) is received.
-                            ESP devices often emit small bursts (e.g., 1–9 bytes), which are short packets on Full-Speed USB (wMaxPacketSize=64).
-                            Each short packet forces the transfer to finish right away.
-
-                        - Browsers only allow one outstanding bulk IN transfer per endpoint with WebUSB. Parallel transferIn calls
-                            are not supported, so after each short packet completes we must reissue another transfer. The turnaround
-                            involves scheduling overhead in the JS event loop and browser/USB stack.
-
-                        - At very high rates of short packets, the device can outpace the host's reissue cadence, especially if the
-                            device's USB endpoint buffer is small. This can manifest as dropped responses, even though the code keeps
-                            the loop tight.
-
-                        Mitigations implemented here:
-                        - Keep the hot path lean: no logging/allocations before reissuing transferIn.
-                        - Push the raw DataView into a minimal queue and defer conversion to Uint8Array via queueMicrotask, so the
-                            next transferIn is issued immediately.
-
-                        Notes on transfer size:
-                        - Increasing the requested transferIn length does NOT coalesce multiple short packets; a short packet ends the
-                            transfer by USB semantics. Larger requests only help when the device sends full-size packets (64 bytes on FS,
-                            512 bytes on HS), allowing multiple max-size packets before a short one terminates the transfer.
-
-
-                        This is a platform constraint, not a logic bug in the code.
-                    */
                     while (this._readLoopRunning && this.device) {
                         try {
                             /* Request one max-packet worth; large sizes can stall on some Android stacks */
-                            const result = await this.device.transferIn(this.endpointIn, 64);
+                            const result = await this.device.transferIn(this.endpointIn, this.maxTransferSize);
 
                             if (result.status === 'ok') {
-                                pending.push(result.data);
-                                scheduleDrain();
+                                controller.enqueue(new Uint8Array(result.data.buffer, result.data.byteOffset, result.data.byteLength));
                                 continue;
-                            }
-                            if (result.status === 'stall') {
+                            } else if (result.status === 'stall') {
                                 await this.device.clearHalt('in', this.endpointIn);
                                 await new Promise(r => setTimeout(r, 1));
                                 continue;
+                            } else {
+                                console.warn('USB transferIn returned status:', result.status);
                             }
                             /* No data or zero-length transfer: immediately loop */
                             await new Promise(r => setTimeout(r, 1));
@@ -1241,7 +1179,10 @@ class ESPFlasher {
             0xd0: 'ERASE_FLASH', 0xd1: 'ERASE_REGION', 0xd2: 'READ_FLASH', 0xd3: 'RUN_USER_CODE'
         };
         const cmdName = commandNames[packet.command] || `0x${packet.command.toString(16)}`;
-        this.logDebug(`[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'params:', pkt);
+
+        if (this.devMode) {
+            this.logDebug(`[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'params:', pkt);
+        }
 
         this.dumpPacket(pkt);
 
@@ -1783,11 +1724,7 @@ class ESPFlasher {
      *              Stub provides additional capabilities like flash read/write and MD5.
      */
     async downloadStub() {
-        var current_chip = this.current_chip;
-        if (this.chip_descriptions[this.current_chip + "-webusb"] && this.port instanceof WebUSBSerial) {
-            current_chip = this.current_chip + "-webusb";
-        }
-        var stub = this.chip_descriptions[current_chip].stub
+        var stub = this.chip_descriptions[this.current_chip].stub
 
         if (stub.data_start != undefined && stub.data != undefined) {
             await this.downloadMem(stub.data_start, stub.data);
@@ -1912,21 +1849,21 @@ class ESPFlasher {
     async readFlashPlain(address, length = 0x1000, progressCallback) {
 
         const performRead = async (cbr) => {
-            let sectorSize = 0x1000;
+            let blockSize = 0x1000;
 
-            if (sectorSize > length) {
-                sectorSize = length;
+            if (blockSize > length) {
+                blockSize = length;
             }
             let packet = 0;
-            let ackMax = 64;
+            let maxInFlight = 64;
 
-            if(this.port instanceof WebUSBSerial){
-                ackMax = 1;
-                sectorSize = 40;
-            }
             var data = new Uint8Array(0);
             var lastDataTime = Date.now();
-            const packets = length / sectorSize;
+            const packets = length / blockSize;
+
+            if (packets > maxInFlight) {
+                maxInFlight = packets;
+            }
 
             /* Timing measurements */
             const readStartTime = Date.now();
@@ -1934,8 +1871,10 @@ class ESPFlasher {
             let lastPacketTime = readStartTime;
             let totalBytesReceived = 0;
 
+            //console.log("Starting ReadFlash:", { address, length, sectorSize: blockSize, packets, ackMax: maxInFlight });
+
             return this.executeCommand(
-                this.buildCommandPacketU32(READ_FLASH, address, length, sectorSize, ackMax),
+                this.buildCommandPacketU32(READ_FLASH, address, length, blockSize, maxInFlight),
                 async () => {
                     packet = 0;
                 },
@@ -1968,10 +1907,12 @@ class ESPFlasher {
                                     ? Math.max(...packetLatencies)
                                     : 0;
 
-                                this.logDebug(`ReadFlash timing: ${totalBytesReceived} bytes in ${totalTime}ms`);
-                                this.logDebug(`  Data rate: ${(dataRate / 1024 / 1024).toFixed(2)} MB/s (${dataRate.toFixed(0)} B/s)`);
-                                this.logDebug(`  Packet latency: min=${minLatency}ms, max=${maxLatency}ms, avg=${avgLatency.toFixed(1)}ms`);
-                                this.logDebug(`  Packets received: ${packetLatencies.length}`);
+                                if (this.devMode) {
+                                    this.logDebug(`ReadFlash timing: ${totalBytesReceived} bytes in ${totalTime}ms`);
+                                    this.logDebug(`  Data rate: ${(dataRate / 1024 / 1024).toFixed(2)} MB/s (${dataRate.toFixed(0)} B/s)`);
+                                    this.logDebug(`  Packet latency: min=${minLatency}ms, max=${maxLatency}ms, avg=${avgLatency.toFixed(1)}ms`);
+                                    this.logDebug(`  Packets received: ${packetLatencies.length}`);
+                                }
 
                                 resolve(data);
                             } else {
@@ -2083,16 +2024,20 @@ class ESPFlasher {
      * @throws {Error} If read/verification fails
      */
     async readFlash(address, size, progressCallback) {
-        const BLOCK_SIZE = 64 * 0x1000;
+        var blockSize = 64 * 0x1000;
+
+        if (this.port instanceof WebUSBSerial) {
+            blockSize = (this.port.maxTransferSize - 2) / 2; /* remove 2 bytes for SLIP overhead, divide by 2 because 0xC0 gets potentially escaped */
+        }
 
         try {
-            /* Step 1: Read data in 4KB blocks */
-            this.logDebug(`ReadFlashSafe: Reading ${size} bytes in ${BLOCK_SIZE}-byte blocks...`);
+            /* Step 1: Read data in blocks */
+            this.logDebug(`ReadFlashSafe: Reading ${size} bytes in ${blockSize}-byte blocks...`);
             const allData = new Uint8Array(size);
             let offset = 0;
 
             while (offset < size) {
-                const readSize = Math.min(BLOCK_SIZE, size - offset);
+                const readSize = Math.min(blockSize, size - offset);
                 let cbr = (read, readBlockSize) => {
                     progressCallback && progressCallback(offset + read, size, 'reading');
                 }
@@ -2105,7 +2050,9 @@ class ESPFlasher {
                 /* Call progress callback */
                 progressCallback && progressCallback(offset, size, 'reading');
 
-                this.logDebug(`ReadFlashSafe: Read ${offset}/${size} bytes (${Math.round((offset / size) * 100)}%)`);
+                if (this.devMode) {
+                    this.logDebug(`ReadFlashSafe: Read ${offset}/${size} bytes (${Math.round((offset / size) * 100)}%)`);
+                }
             }
 
             /* Step 2: Calculate MD5 of read data */
