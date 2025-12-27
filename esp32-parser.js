@@ -2960,26 +2960,13 @@ class ESP32Parser {
         /* Fixed offset: header (24) + first segment header (8) */
         const descOffset = (image.offset ?? 0) + 24 + 8;
         if (descOffset + 256 > this.sparseImage.size || descOffset < 0) {
-            console.warn(
-                `AppDesc: fixed offset 0x${descOffset.toString(16)} out of bounds (buffer length 0x${this.sparseImage.size.toString(16)})`
-            );
+            // Out of bounds - silently return null
             return null;
         }
 
         const magic = await this.view.getUint32(descOffset, true);
         if (magic !== ESP_APP_DESC_MAGIC_WORD) {
-            let peek = null;
-            try {
-                const end = Math.min(descOffset + 16, this.sparseImage.size);
-                peek = await this.buffer.slice_async(descOffset, end);
-            } catch (err) {
-                console.warn(`AppDesc: error reading peek bytes at 0x${descOffset.toString(16)}: ${err.message}`);
-            }
-
-            const peekHex = peek ? ESP32Parser.bytesToHex(peek) : 'n/a';
-            console.warn(
-                `AppDesc: magic mismatch at 0x${descOffset.toString(16)} (got 0x${magic.toString(16)}, expected 0x${ESP_APP_DESC_MAGIC_WORD.toString(16)}), first bytes ${peekHex}`
-            );
+            // No app descriptor found - this is normal for bootloaders, erased partitions, etc.
             return null;
         }
 
@@ -3156,6 +3143,157 @@ class ESP32Parser {
             this._spiffsParser = new SpiffsParser(this.sparseImage);
         }
         return await this._spiffsParser.readFile(partition, file, spiffsInfo);
+    }
+
+    /**
+     * High-level validation pipeline for an ESP32 image.
+     * - Detect bootloader at 0x0 or 0x1000
+     * - Find and parse partition table
+     * - Parse OTA data; if valid, resolve boot OTA partition
+     * - Validate referenced boot OTA partition image
+     * - Parse NVS partition if present and valid
+     * Returns a summary structure.
+     */
+    async isValidImage() {
+        const result = {
+            success: false,
+            allValid: false,
+            bootloader: false,
+            bootloaderOffset: null,
+            otadata: false,
+            bootPartition: null,
+            bootPartitionValid: false
+        };
+
+        /* Step 1: detect bootloader at 0x0, then fallback to 0x1000 */
+        let bootloaderImage = null;
+        try {
+            bootloaderImage = await this.parseImage(0x0000, 0x10000);
+            if (bootloaderImage && bootloaderImage.magic === 0xE9 && !bootloaderImage.error) {
+                result.bootloader = true;
+                result.bootloaderOffset = 0x0000;
+            } else {
+                bootloaderImage = await this.parseImage(0x1000, 0x10000);
+                if (bootloaderImage && bootloaderImage.magic === 0xE9 && !bootloaderImage.error) {
+                    result.bootloader = true;
+                    result.bootloaderOffset = 0x1000;
+                }
+            }
+        } catch (e) {
+            /* Leave result.bootloader false */
+        }
+
+        /* Step 2: detect and parse partition table (reference viewer logic) */
+        let ptOffset = null;
+        try {
+            ptOffset = await this.detectPartitionTableOffset(bootloaderImage);
+            if (ptOffset !== null) {
+                await this.parsePartitions(ptOffset);
+            } else {
+                this.partitions = [];
+            }
+        } catch (e) {
+            /* keep partitions empty on error */
+            this.partitions = this.partitions || [];
+        }
+
+        /* Step 3: parse OTA data and resolve boot partition if checksums valid */
+        let bootOtaSubType = null;
+        let activeOtaSeq = null;
+        let allOtaCrcsValid = false;
+        const otaDataPart = this.partitions.find(p => p.type === 1 && p.subType === 0x00);
+        if (otaDataPart) {
+            try {
+                const otaInfo = await this.parseOTAData(otaDataPart);
+                if (otaInfo && Array.isArray(otaInfo.entries) && otaInfo.entries.length === 2) {
+                    /* Consider otadata valid if both CRCs are valid OR at least one valid entry exists */
+                    const crcAll = otaInfo.entries.every(e => e.crcValid);
+                    const anyValid = otaInfo.entries.some(e => e.isValid);
+                    allOtaCrcsValid = crcAll;
+                    result.otadata = anyValid;
+
+                    if (anyValid) {
+                        const activeIdx = otaInfo.activeEntry;
+                        if (activeIdx !== null && otaInfo.entries[activeIdx]) {
+                            activeOtaSeq = otaInfo.entries[activeIdx].sequence >>> 0;
+                            /* Count APP OTA partitions */
+                            const otaApps = this.partitions.filter(p => p.type === 0 && p.subType >= 0x10 && p.subType <= 0x1F);
+                            const otaCount = otaApps.length;
+                            if (otaCount > 0) {
+                                const slot = ((activeOtaSeq - 1) % otaCount) >>> 0;
+                                bootOtaSubType = 0x10 + slot;
+                                result.bootPartition = `ota_${slot}`;
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                /* otadata parse failed */
+            }
+        }
+
+        /* Step 4: validate the referenced boot OTA partition image */
+        if (bootOtaSubType !== null) {
+            const bootPart = this.partitions.find(p => p.type === 0 && p.subType === bootOtaSubType);
+            if (bootPart) {
+                try {
+                    const hasMagic = await this.hasValidImageMagic(bootPart);
+                    if (hasMagic) {
+                        /* Parse image and validate appended SHA256 when present */
+                        const img = await this.parseImage(bootPart.offset, bootPart.length);
+                        if (img && img.hasHash) {
+                            const shaRes = await this.validateImageSHA256(img);
+                            result.bootPartitionValid = !!(shaRes && shaRes.valid);
+                        } else {
+                            /* No appended hash; treat valid magic as acceptable */
+                            result.bootPartitionValid = true;
+                        }
+                        
+                        /* Extract app description if available */
+                        if (img && img.appDesc && img.appDesc.found) {
+                            result.appProjectName = img.appDesc.projectName || null;
+                            result.appVersion = img.appDesc.version || null;
+                        }
+                    }
+                } catch (e) {
+                    /* Leave bootPartitionValid as false on failure */
+                }
+            }
+        }
+
+        /* Step 5: parse NVS if present (validity requires actual valid entries) */
+        const nvsPart = this.partitions.find(p => p.type === 1 && p.subType === 0x02);
+        let nvsValid = false;
+        if (nvsPart) {
+            try {
+                const pages = await this.parseNVS(nvsPart);
+                if (Array.isArray(pages) && pages.length > 0) {
+                    /* Count valid items (not just pages) */
+                    let itemCount = 0;
+                    for (const page of pages) {
+                        if (page.items && Array.isArray(page.items)) {
+                            itemCount += page.items.length;
+                        }
+                    }
+                    nvsValid = itemCount > 0;
+                }
+            } catch (e) {
+                nvsValid = false;
+            }
+        }
+
+        /* Step 6: aggregate success */
+        const partitionsFound = Array.isArray(this.partitions) && this.partitions.length > 0;
+        result.success = !!(result.bootloader && partitionsFound);
+
+        /* All valid if: bootloader parsed, partition table found, otadata OK with all CRCs valid, and boot partition valid */
+        result.allValid = !!(result.bootloader && partitionsFound && result.otadata && allOtaCrcsValid && result.bootPartitionValid);
+
+        /* Attach optional details for callers that need them */
+        result.partitionTableOffset = ptOffset ?? null;
+        result.nvs = nvsValid;
+
+        return result;
     }
 }
 
