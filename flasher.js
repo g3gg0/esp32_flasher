@@ -280,6 +280,20 @@ class WebUSBSerial {
 
             const config = this.device.configuration;
 
+            /* Try to claim CDC control interface FIRST on Android/CH34x to unblock data iface claim */
+            const preControlIface = config.interfaces.find(i => i.alternates && i.alternates[0] && i.alternates[0].interfaceClass === 0x02);
+            if (preControlIface) {
+                try {
+                    await this.device.claimInterface(preControlIface.interfaceNumber);
+                    /* Ensure alt setting 0 is active */
+                    try { await this.device.selectAlternateInterface(preControlIface.interfaceNumber, 0); } catch (e) { }
+                    this.controlInterface = preControlIface.interfaceNumber;
+                    this._emitLog(`[WebUSB] Pre-claimed CDC control iface ${preControlIface.interfaceNumber}`);
+                } catch (e) {
+                    this._emitLog(`[WebUSB] Could not pre-claim CDC control iface ${preControlIface.interfaceNumber}: ${e && e.message ? e.message : e}`);
+                }
+            }
+
             /* Collect all bulk IN/OUT interfaces and try preferred ones first (CDC > vendor > other)
                Rationale: Espressif composite devices expose CDC data on iface 1 (class 0x0A) and JTAG/debug on vendor iface 2.
                Selecting CDC first avoids landing on a non-UART function that won't speak the ROM bootloader. */
@@ -308,6 +322,8 @@ class WebUSBSerial {
             let lastErr = null;
             for (const cand of candidates) {
                 try {
+                    /* Ensure alt setting 0 before claiming */
+                    try { await this.device.selectAlternateInterface(cand.iface.interfaceNumber, 0); } catch (e) { }
                     await this.device.claimInterface(cand.iface.interfaceNumber);
                     this.interfaceNumber = cand.iface.interfaceNumber;
 
@@ -320,6 +336,13 @@ class WebUSBSerial {
                             this.endpointOut = ep.endpointNumber;
                         }
                     }
+                    /* Adopt endpoint packet size as transfer length (Android prefers max-packet) */
+                    try {
+                        const inEp = alt.endpoints.find(ep => ep.type === 'bulk' && ep.direction === 'in');
+                        if (inEp && inEp.packetSize) {
+                            this.maxTransferSize = Math.min(inEp.packetSize, 64);
+                        }
+                    } catch (e) { }
                     this._emitLog(`[WebUSB] Claimed iface ${cand.iface.interfaceNumber} (class=${alt.interfaceClass}) with IN=${this.endpointIn} OUT=${this.endpointOut}`);
                     return config;
                 } catch (claimErr) {
@@ -351,22 +374,25 @@ class WebUSBSerial {
             }
         }
 
-        // Try to claim CDC control interface
-        const controlIface = config.interfaces.find(i =>
-            i.alternates[0].interfaceClass === 0x02 &&
-            i.interfaceNumber !== this.interfaceNumber
-        );
+        /* Control iface may already be claimed in attemptOpenAndClaim; avoid double-claim */
+        if (this.controlInterface == null) {
+            const controlIface = config.interfaces.find(i =>
+                i.alternates[0].interfaceClass === 0x02 &&
+                i.interfaceNumber !== this.interfaceNumber
+            );
 
-        if (controlIface) {
-            try {
-                await this.device.claimInterface(controlIface.interfaceNumber);
-                this.controlInterface = controlIface.interfaceNumber;
-            } catch (e) {
-                // Use data interface for control if claim fails
+            if (controlIface) {
+                try {
+                    await this.device.claimInterface(controlIface.interfaceNumber);
+                    try { await this.device.selectAlternateInterface(controlIface.interfaceNumber, 0); } catch (e) { }
+                    this.controlInterface = controlIface.interfaceNumber;
+                } catch (e) {
+                    /* Use data interface for control if claim fails */
+                    this.controlInterface = this.interfaceNumber;
+                }
+            } else {
                 this.controlInterface = this.interfaceNumber;
             }
-        } else {
-            this.controlInterface = this.interfaceNumber;
         }
 
         // Set line coding
