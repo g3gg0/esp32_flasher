@@ -1311,6 +1311,28 @@ class ESPFlasher {
         }
     }
 
+    async setSignals(signals) {
+        if (!this.port) {
+            this.logError("Port is not open. Cannot set signals.");
+            return false;
+        }
+
+        if (signals.dataTerminalReady !== undefined) {
+            this.dtrState = signals.dataTerminalReady;
+        }
+        if (signals.requestToSend !== undefined) {
+            this.rtsState = signals.requestToSend;
+        }
+
+        try {
+            await this.port.setSignals(signals);
+            return true;
+        } catch (error) {
+            this.logError(`Could not set signals: ${error}.`);
+            return false;
+        }
+    }
+
     /**
      * Attempts to put the ESP device into bootloader mode using RTS/DTR signals.
      * Relies on the common DTR=EN, RTS=GPIO0 circuit. May not work on all boards.
@@ -1330,26 +1352,23 @@ class ESPFlasher {
 
         try {
 
-            // Idle
-            await this.setRts(false);
-            await this.setDtr(false);
-            await new Promise(r => setTimeout(r, 100));
-
-            // Set IO0 (bootloader mode = DTR high = IO0 low)
-            await this.setDtr(bootloader);
-            await this.setRts(false);
-            await new Promise(r => setTimeout(r, 100));
-
-            // Reset - calls inverted to go through (1,1) instead of (0,0)
-            await this.setRts(true);
-            await this.setDtr(!bootloader);
-            // RTS set as Windows only propagates DTR on RTS setting
-            await this.setRts(true);
-            await new Promise(r => setTimeout(r, 100));
-
-            // Chip out of reset
-            await this.setDtr(false);
-            await this.setRts(false);
+            if (this.isEspressifUsbJtag) {
+                await this.setSignals({ requestToSend: false, dataTerminalReady: false });
+                await this.setSignals({ requestToSend: false, dataTerminalReady: bootloader });
+                await this.setSignals({ requestToSend: true, dataTerminalReady: bootloader });
+                await new Promise(r => setTimeout(r, 100));
+                await this.setSignals({ requestToSend: true, dataTerminalReady: false });
+                await new Promise(r => setTimeout(r, 100));
+                await this.setSignals({ requestToSend: true, dataTerminalReady: true });
+            } else {
+                await this.setSignals({ requestToSend: false, dataTerminalReady: false });
+                await this.setSignals({ requestToSend: true, dataTerminalReady: !bootloader });
+                await new Promise(r => setTimeout(r, 100));
+                await this.setSignals({ requestToSend: false, dataTerminalReady: bootloader });
+                await new Promise(r => setTimeout(r, 100));
+                await this.setSignals({ requestToSend: false, dataTerminalReady: false });
+                await this.setDtr(false);
+            }
 
             return true;
         } catch (error) {
