@@ -912,14 +912,11 @@ class ESPFlasher {
 
             // Register for port closing
             if (this.port.addEventListener) {
-                console.log('[flasher.js] Registering close listener on port');
                 this.port.addEventListener('close', () => {
-                    console.log('[flasher.js] Close event fired from port');
-                    this.logError('Device disconnected');
-                    this.disconnect();
+                    if (!this._disconnecting) {
+                        this.logError('Device disconnected unexpectedly');
+                    }
                 });
-            } else {
-                console.log('[flasher.js] Port does not have addEventListener');
             }
 
             resolve();
@@ -931,7 +928,6 @@ class ESPFlasher {
                 while (true) {
                     const { value, done } = await this.reader.read();
                     if (done) {
-                        console.log('[flasher.js] Reader returned done=true, exiting read loop');
                         this.logDebug('Reader has been canceled');
                         break;
                     }
@@ -1258,6 +1254,11 @@ class ESPFlasher {
      * @returns {Promise<void>}
      */
     async disconnect() {
+        if (this._disconnecting) {
+            return; /* Already disconnecting, avoid double-close */
+        }
+        this._disconnecting = true;
+
         navigator.serial.removeEventListener('disconnect', this.disconnect);
 
         if (this.reader) {
@@ -1284,6 +1285,7 @@ class ESPFlasher {
         this.synced = false;
         this.consoleBuffer = '';
         this._preSyncState = 'idle';
+        this._disconnecting = false;
 
         this.disconnected && this.disconnected();
     }
@@ -2880,4 +2882,9 @@ class ESPFlasher {
         };
         return Md5;
     })();
+}
+
+/* CommonJS export for Node.js */
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = ESPFlasher;
 }
