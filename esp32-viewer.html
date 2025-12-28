@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[g3gg0.de] ESP32 Firmware Editor</title>
+    <title>ESP32 Firmware Editor</title>
     <style>
         * {
             margin: 0;
@@ -1069,8 +1069,9 @@
     <div id="devicePopup" class="device-popup"></div>
     <div class="container">
         <div class="header">
-            <h1>[g3gg0.de] ESP32 Firmware Editor</h1>
-            <p>Analyze ESP32 firmware images - View partitions, NVS data, and file systems</p>
+            <h1>ESP32 Firmware Editor</h1>
+            <p>Reverse engineering & firmware analysis</p>
+            <div style="font-size: 0.75em; margin-top: 12px; opacity: 0.7;">by g3gg0.de</div>
         </div>
 
         <div class="content">
@@ -2133,6 +2134,7 @@
             }
             readStartTime = Date.now();
             readSlowWarningShown = false;
+            lastProgressPercent = -1; /* Reset percentage tracker for new operation */
         }
 
         function setFetchOverlayReason(reason) {
@@ -2149,48 +2151,65 @@
             return overlay && overlay.style.display === 'flex';
         }
 
+        let lastProgressPercent = -1;
+        let pendingProgressUpdate = null;
+
         function updateFetchOverlayProgress(address, bytesRead, totalBytes) {
-            const label = document.getElementById('fetchOverlayText');
-            if (!label) {
+            const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesRead / totalBytes) * 100)) : 0;
+            
+            /* Skip update if percentage hasn't changed (reduces redundant DOM updates) */
+            if (pct === lastProgressPercent && pct !== 0 && pct !== 100) {
                 return;
             }
+            lastProgressPercent = pct;
 
-            const kbRead = Math.round(bytesRead / 1024);
-            const kbTotal = Math.round(totalBytes / 1024);
-            const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesRead / totalBytes) * 100)) : 0;
+            /* Defer DOM update to next animation frame to avoid blocking WebUSB loop */
+            if (pendingProgressUpdate) {
+                cancelAnimationFrame(pendingProgressUpdate);
+            }
+            pendingProgressUpdate = requestAnimationFrame(() => {
+                pendingProgressUpdate = null;
+                const label = document.getElementById('fetchOverlayText');
+                if (!label) {
+                    return;
+                }
 
-            let text = `Reading 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbRead} / ${kbTotal} KB)`;
-            let addWarning = false;
+                const kbRead = Math.round(bytesRead / 1024);
+                const kbTotal = Math.round(totalBytes / 1024);
 
-            /* Calculate speed if operation has been running > 1 second */
-            if (readStartTime) {
-                const elapsedMs = Date.now() - readStartTime;
-                if (elapsedMs > SPEED_CHECK_DELAY && bytesRead > 0) {
-                    const speedBytesPerSec = (bytesRead / elapsedMs) * 1000;
-                    const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
-                    text += ` - ${speedKiBPerSec} KiB/s`;
+                let text = `Reading 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbRead} / ${kbTotal} KB)`;
+                let addWarning = false;
 
-                    /* Show warning if speed is too slow */
-                    if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
-                        addWarning = true;
-                        if (!readSlowWarningShown) {
-                            readSlowWarningShown = true;
-                            readWarningShownTime = Date.now();
+                /* Calculate speed if operation has been running > 1 second */
+                if (readStartTime) {
+                    const elapsedMs = Date.now() - readStartTime;
+                    if (elapsedMs > SPEED_CHECK_DELAY && bytesRead > 0) {
+                        const speedBytesPerSec = (bytesRead / elapsedMs) * 1000;
+                        const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
+                        text += ` - ${speedKiBPerSec} KiB/s`;
+
+                        /* Show warning if speed is too slow */
+                        if (speedBytesPerSec < SLOW_SPEED_THRESHOLD) {
+                            addWarning = true;
+                            if (!readSlowWarningShown) {
+                                readSlowWarningShown = true;
+                                readWarningShownTime = Date.now();
+                            }
                         }
                     }
+                } else if (readSlowWarningShown && readWarningShownTime) {
+                    /* Keep showing warning if still within minimum display time */
+                    const warningElapsedMs = Date.now() - readWarningShownTime;
+                    if (warningElapsedMs < WARNING_MIN_DISPLAY_TIME) {
+                        addWarning = true;
+                    }
                 }
-            } else if (readSlowWarningShown && readWarningShownTime) {
-                /* Keep showing warning if still within minimum display time */
-                const warningElapsedMs = Date.now() - readWarningShownTime;
-                if (warningElapsedMs < WARNING_MIN_DISPLAY_TIME) {
-                    addWarning = true;
+                if (addWarning) {
+                    text += `<br><br>⚠️ SLOW: due to hardware/stub bug, ESP32-S3 and C3 are very slow with onchip USB-JTAG`;
                 }
-            }
-            if (addWarning) {
-                text += `<br><br>⚠️ SLOW: due to hardware/stub bug, ESP32-S3 and C3 are very slow with onchip USB-JTAG`;
-            }
 
-            label.innerHTML = text;
+                label.innerHTML = text;
+            });
         }
 
         function hideFetchOverlay() {
