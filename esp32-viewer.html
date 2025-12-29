@@ -906,7 +906,7 @@
             background: linear-gradient(180deg, #4CAF50 0%, #2e7d32 100%);
         }
 
-        .memory-segment.cached-erased {
+        .memory-segment.cached-ff {
             background: linear-gradient(180deg, #2e7d32 0%, #1b4620 100%);
         }
 
@@ -944,6 +944,10 @@
 
         .legend-color.cached {
             background: #4CAF50;
+        }
+
+        .legend-color.cached-ff {
+            background: #2e7d32;
         }
 
         .legend-color.modified {
@@ -1014,14 +1018,15 @@
     <div id="importPopup">
         <div class="import-popup-box">
             <div class="import-popup-title">📥 Import Binary File</div>
-            
+
             <div class="import-tabs">
                 <button class="import-tab active" onclick="switchImportTab('file')">File</button>
                 <button class="import-tab" onclick="switchImportTab('url')">URL</button>
             </div>
 
             <div id="importTabFile" class="import-tab-content active">
-                <div class="import-drop-zone" id="importDropZone" onclick="document.getElementById('importFileInput').click()">
+                <div class="import-drop-zone" id="importDropZone"
+                    onclick="document.getElementById('importFileInput').click()">
                     <p style="font-size: 1.1em; margin-bottom: 10px;">📂 Drop .bin file here or click to browse</p>
                     <p style="font-size: 0.9em; color: #888;">Selected: <span id="importFileName">None</span></p>
                     <input type="file" id="importFileInput" accept=".bin,.json" style="display: none;">
@@ -1031,8 +1036,10 @@
             <div id="importTabUrl" class="import-tab-content">
                 <div class="import-field" style="margin-bottom: 20px;">
                     <label for="importUrlInput">URL (.bin or .json):</label>
-                    <input type="text" id="importUrlInput" placeholder="https://example.com/firmware.bin" style="width: 100%;">
-                    <button class="btn" onclick="loadImportUrl()" style="margin-top: 10px; width: 100%;">Load URL</button>
+                    <input type="text" id="importUrlInput" placeholder="https://example.com/firmware.bin"
+                        style="width: 100%;">
+                    <button class="btn" onclick="loadImportUrl()" style="margin-top: 10px; width: 100%;">Load
+                        URL</button>
                 </div>
             </div>
 
@@ -1059,7 +1066,7 @@
             </div>
 
             <div class="import-buttons">
-                <button class="btn" onclick="hideImportPopup()" 
+                <button class="btn" onclick="hideImportPopup()"
                     style="background: linear-gradient(135deg, #666 0%, #444 100%);">Cancel</button>
                 <button class="btn" id="importApplyBtn" onclick="applyImport()" disabled
                     style="background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Import</button>
@@ -1071,7 +1078,8 @@
         <div class="header">
             <h1>ESP32 Firmware Editor</h1>
             <p>Reverse engineering & firmware analysis</p>
-            <div style="font-size: 0.75em; margin-top: 12px; opacity: 0.7;">by g3gg0.de</div>
+            <div style="font-size: 0.75em; margin-top: 12px; opacity: 0.7;"><a href="https://www.g3gg0.de">g3gg0.de</a>
+            </div>
         </div>
 
         <div class="content">
@@ -1108,7 +1116,8 @@
                     <button class="btn" id="importBinBtn" onclick="showImportPopup()"
                         style="display: none; background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Import...</button>
                     <button class="btn" id="eraseFlashBtn" onclick="eraseFlash()"
-                        style="display: none; background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);">Erase Flash</button>
+                        style="display: none; background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);">Erase
+                        Flash</button>
                     <button class="btn" id="writeToDeviceBtn" onclick="writeToDevice()"
                         style="display: none; background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%);">Write to
                         Device</button>
@@ -1137,6 +1146,10 @@
                     <div class="legend-item">
                         <div class="legend-color modified"></div>
                         <span>Modified</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-color cached-ff"></div>
+                        <span>Cached (0xFF)</span>
                     </div>
                     <div class="legend-item">
                         <div class="legend-color modified-ff"></div>
@@ -1507,7 +1520,7 @@
                     deviceFlasher.disconnect();
                     throw new Error('Failed to sync after trying default, 250000, 115200 baud.');
                 }
-                
+
                 // Read MAC address after successful sync
                 try {
                     deviceMac = await deviceFlasher.readMac();
@@ -1515,7 +1528,7 @@
                     console.warn('Could not read device MAC:', macErr);
                     deviceMac = null;
                 }
-                
+
                 const isStub = await deviceFlasher.isStubLoader();
                 setDeviceButtons({ connected: true, synced: true, stub: isStub });
 
@@ -1772,8 +1785,8 @@
                         }
                     }
 
-                    /* Mark segment as 'cached' (normal green) or 'cached-erased' (darker green) */
-                    seg.type = isAllFF ? 'cached-erased' : 'cached';
+                    /* Mark segment as 'cached' (normal green) or 'cached-ff' (darker green) */
+                    seg.type = isAllFF ? 'cached-ff' : 'cached';
                 }
             }
 
@@ -2156,7 +2169,7 @@
 
         function updateFetchOverlayProgress(address, bytesRead, totalBytes) {
             const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesRead / totalBytes) * 100)) : 0;
-            
+
             /* Skip update if percentage hasn't changed (reduces redundant DOM updates) */
             if (pct === lastProgressPercent && pct !== 0 && pct !== 100) {
                 return;
@@ -2436,7 +2449,7 @@
             try {
                 setDeviceStatus('Syncing...', 'loading');
                 await deviceFlasher.sync();
-                
+
                 // Read MAC address
                 try {
                     deviceMac = await deviceFlasher.readMac();
@@ -2444,7 +2457,7 @@
                     console.warn('Could not read device MAC:', macErr);
                     deviceMac = null;
                 }
-                
+
                 setDeviceStatus('Synced to ' + deviceFlasher.current_chip + '.', 'success');
                 setDeviceButtons({ connected: true, synced: true, stub: await deviceFlasher.isStubLoader() });
             } catch (e) {
@@ -2798,16 +2811,22 @@
                     html += '<div class="info-grid">';
                     html += `<div class="info-item"><label>Checksum:</label><span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
                     html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
+
+                    const sha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
+                    const validIcon = sha256Validation && sha256Validation.valid ?
+                        '<span style="color: #6ec589; font-size: 1.2em;" title="Hash verified over header..checksum region">✓</span>' :
+                        sha256Validation && sha256Validation.valid === false ?
+                            '<span style="color: #e88888; font-size: 1.2em;" title="' + sha256Validation.reason + '">✗</span>' :
+                            '<span style="color: #9a9a9a; font-size: 1.2em;" title="Validating...">⏳</span>';
+
                     if (image.sha256) {
-                        const validIcon = sha256Validation && sha256Validation.valid ?
-                            '<span style="color: #6ec589; font-size: 1.2em;" title="Hash verified over header..checksum region">✓</span>' :
-                            sha256Validation && sha256Validation.valid === false ?
-                                '<span style="color: #e88888; font-size: 1.2em;" title="' + sha256Validation.reason + '">✗</span>' :
-                                '<span style="color: #9a9a9a; font-size: 1.2em;" title="Validating...">⏳</span>';
-                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Image SHA256 (appended):</label><span class="mono">${image.sha256} ${validIcon}</span></div>`;
+                        /* Only show Image SHA256 if it differs from Region SHA256 */
+                        if (!sha256Match) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Image SHA256 (appended):</label><span class="mono">${image.sha256} ${validIcon}</span></div>`;
+                        }
                     }
                     if (sha256RegionCalc) {
-                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Region SHA256 (header..checksum):</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Region SHA256:</label><span class="mono">${sha256RegionCalc} ${validIcon}</span></div>`;
                     }
                     if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
                         const regionLen = image.sha256DataEnd - image.sha256DataStart;
@@ -2819,8 +2838,8 @@
                             html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Expected vs Calc (region):</label><span class="mono" style="color: #e88888;">${sha256Validation.expected} ≠ ${sha256Validation.calculated}</span></div>`;
                         }
                     }
+                    
                     html += '</div>';
-
                     html += '<h4 style="margin-top: 15px;">Segments</h4>';
                     html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
                     image.segmentList.forEach((seg, sidx) => {
@@ -3218,7 +3237,7 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                
+
                 // Generate meaningful filename
                 let filename;
                 if (deviceMode && deviceFlasher) {
@@ -3313,10 +3332,10 @@
         function switchImportTab(tab) {
             const tabs = document.querySelectorAll('.import-tab');
             const contents = document.querySelectorAll('.import-tab-content');
-            
+
             tabs.forEach(t => t.classList.remove('active'));
             contents.forEach(c => c.classList.remove('active'));
-            
+
             if (tab === 'file') {
                 tabs[0].classList.add('active');
                 document.getElementById('importTabFile').classList.add('active');
@@ -3329,7 +3348,7 @@
         async function loadImportUrl() {
             const urlInput = document.getElementById('importUrlInput');
             const url = urlInput.value.trim();
-            
+
             if (!url) {
                 alert('Please enter a URL');
                 return;
@@ -3364,18 +3383,18 @@
                 setDeviceStatus('URL loaded successfully', 'success');
             } catch (error) {
                 console.error('URL load error:', error);
-                
+
                 // Check if it's a CORS error
-                if (error.message.includes('CORS') || error.message.includes('cross-origin') || 
+                if (error.message.includes('CORS') || error.message.includes('cross-origin') ||
                     error.name === 'TypeError' && !error.message.includes('HTTP')) {
                     const corsMsg = 'CORS Error: The server does not allow cross-origin requests.\n\n' +
-                                   'The server at this URL has not enabled CORS (Cross-Origin Resource Sharing).\n' +
-                                   'To fix this, either:\n' +
-                                   '  • Download the files manually and use the File tab\n' +
-                                   '  • Ask the server administrator to enable CORS\n' +
-                                   '  • Use a CORS proxy service\n' +
-                                   '  • Run Edge with security disabled:\n' +
-                                   '    msedge.exe --user-data-dir=C:\\temp\\msedge-dev-data\\ --disable-web-security';
+                        'The server at this URL has not enabled CORS (Cross-Origin Resource Sharing).\n' +
+                        'To fix this, either:\n' +
+                        '  • Download the files manually and use the File tab\n' +
+                        '  • Ask the server administrator to enable CORS\n' +
+                        '  • Use a CORS proxy service\n' +
+                        '  • Run Edge with security disabled:\n' +
+                        '    msedge.exe --user-data-dir=C:\\temp\\msedge-dev-data\\ --disable-web-security';
                     setDeviceStatus('CORS blocked: Server does not allow cross-origin requests', 'error');
                     alert(corsMsg);
                 } else {
@@ -3394,7 +3413,7 @@
                 let flashEntries = [];
                 let manifestType = '';
                 let availableBuilds = [];
-                
+
                 if (manifest.flash && Array.isArray(manifest.flash)) {
                     // Format 1: { flash: [ { url, address } ] }
                     manifestType = 'esptool';
@@ -3407,13 +3426,13 @@
                 } else if (manifest.builds && Array.isArray(manifest.builds) && manifest.builds.length > 0) {
                     // Format 2: { builds: [ { chipFamily, parts: [], ota: {} } ] }
                     manifestType = 'esp-web-tools';
-                    
+
                     // Collect available builds
                     availableBuilds = manifest.builds.map((build, idx) => ({
                         chipFamily: build.chipFamily || `Build ${idx + 1}`,
                         index: idx
                     }));
-                    
+
                     // Try to auto-select build based on connected device chip
                     let selectedBuildIdx = 0;
                     if (deviceFlasher && deviceFlasher.current_chip) {
@@ -3424,9 +3443,9 @@
                         });
                         if (matchIdx >= 0) selectedBuildIdx = matchIdx;
                     }
-                    
+
                     const build = manifest.builds[selectedBuildIdx];
-                    
+
                     // Collect parts
                     if (build.parts && Array.isArray(build.parts)) {
                         flashEntries = build.parts.map(part => ({
@@ -3436,7 +3455,7 @@
                             isApp: false
                         }));
                     }
-                    
+
                     // Add OTA file if present (usually for OTA updates, not initial flash)
                     // But we'll include it at offset 0 if no parts exist
                     if (build.ota && build.ota.path) {
@@ -3470,7 +3489,7 @@
                 if (addressInput && addressInput.parentElement) {
                     addressInput.parentElement.style.display = 'none';
                 }
-                
+
                 // Show erase flash option for JSON manifests
                 const eraseOption = document.getElementById('importEraseOption');
                 if (eraseOption) {
@@ -3482,7 +3501,7 @@
                 if (manifest.name) html += `Name: <strong>${manifest.name}</strong><br>`;
                 if (manifest.version) html += `Version: <strong>${manifest.version}</strong><br>`;
                 if (manifest.chip) html += `Chip: <strong>${manifest.chip}</strong><br>`;
-                
+
                 // Show selected build info
                 if (availableBuilds.length > 0) {
                     const selectedBuild = manifest.builds[0]; // We used index 0 above after auto-selection
@@ -3492,7 +3511,7 @@
                     }
                     html += `<br>`;
                 }
-                
+
                 html += `<br><strong>Flash Entries (${flashEntries.length}):</strong><br>`;
 
                 for (let i = 0; i < flashEntries.length; i++) {
@@ -3552,7 +3571,7 @@
             const previewDiv = document.getElementById('importPreview');
             const applyBtn = document.getElementById('importApplyBtn');
             const addressInput = document.getElementById('importAddress');
-            
+
             if (!importFile || !addressInput || !previewDiv) {
                 if (previewDiv) previewDiv.innerHTML = 'Select a file and enter an address to see preview';
                 if (applyBtn) applyBtn.disabled = true;
@@ -3623,7 +3642,7 @@
                     // Check if erase flash is requested
                     const eraseFlashCheckbox = document.getElementById('importEraseFlash');
                     const shouldEraseFlash = eraseFlashCheckbox && eraseFlashCheckbox.checked;
-                    
+
                     if (shouldEraseFlash) {
                         setDeviceStatus('Erasing flash...', 'loading');
                         const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
@@ -3632,13 +3651,13 @@
                         parser.sparseImage.fill(0xFF, 0, deviceSize);
                         console.log(`Erased flash: 0x0 - 0x${deviceSize.toString(16).toUpperCase()}`);
                     }
-                    
+
                     setDeviceStatus('Downloading and importing manifest files...', 'loading');
-                    
+
                     let importCount = 0;
                     for (const entry of importJsonData.flashEntries) {
                         let url = entry.url || entry.path;
-                        
+
                         // Resolve relative URLs
                         if (importBaseUrl && !url.startsWith('http://') && !url.startsWith('https://')) {
                             url = importBaseUrl + '/' + url;
@@ -3650,7 +3669,7 @@
                         }
 
                         console.log(`Downloading ${url} for address 0x${entry.address.toString(16).toUpperCase()}`);
-                        
+
                         const response = await fetch(url);
                         if (!response.ok) {
                             throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
@@ -3661,7 +3680,7 @@
 
                         // Write data to sparse image
                         await parser.sparseImage.write(entry.address, data);
-                        
+
                         console.log(`Imported ${formatBytes(data.length)} at 0x${entry.address.toString(16).toUpperCase()}`);
                         importCount++;
                     }
@@ -3670,25 +3689,25 @@
                     const eraseMsg = didErase ? ' (flash erased and rebuilt)' : '';
                     setDeviceStatus(`Imported ${importCount} files from manifest${eraseMsg}. Re-analyzing firmware...`, 'loading');
                     hideImportPopup();
-                    
+
                     // Re-analyze the firmware after import (this will update partitions and memory map)
                     await parseAndDisplay(true);
-                    
+
                     setDeviceStatus(`Imported ${importCount} files from manifest. Use "Write to Device" to flash.`, 'success');
                 } catch (error) {
                     console.error('Manifest import error:', error);
-                    
+
                     // Check if it's a CORS error
-                    if (error.message.includes('CORS') || error.message.includes('cross-origin') || 
+                    if (error.message.includes('CORS') || error.message.includes('cross-origin') ||
                         error.name === 'TypeError' && !error.message.includes('HTTP')) {
                         const corsMsg = 'CORS Error: The server does not allow cross-origin requests.\n\n' +
-                                       'The server hosting these files has not enabled CORS.\n' +
-                                       'To fix this, either:\n' +
-                                       '  • Download the files manually and import them individually\n' +
-                                       '  • Ask the server administrator to enable CORS\n' +
-                                       '  • Use a CORS proxy service\n' +
-                                       '  • Run Edge with security disabled:\n' +
-                                       '    msedge.exe --user-data-dir=C:\\temp\\msedge-dev-data\\ --disable-web-security';
+                            'The server hosting these files has not enabled CORS.\n' +
+                            'To fix this, either:\n' +
+                            '  • Download the files manually and import them individually\n' +
+                            '  • Ask the server administrator to enable CORS\n' +
+                            '  • Use a CORS proxy service\n' +
+                            '  • Run Edge with security disabled:\n' +
+                            '    msedge.exe --user-data-dir=C:\\temp\\msedge-dev-data\\ --disable-web-security';
                         setDeviceStatus('CORS blocked: Server does not allow cross-origin requests', 'error');
                         alert(corsMsg);
                     } else {
@@ -3737,7 +3756,7 @@
                 updateMemoryMap();
 
                 setDeviceStatus(`Imported ${formatBytes(fileSize)} at 0x${address.toString(16).toUpperCase()}. Re-analyzing firmware...`, 'loading');
-                
+
                 // Re-analyze the firmware after import
                 await parseAndDisplay(true);
                 setDeviceStatus(`Imported ${formatBytes(fileSize)} at 0x${address.toString(16).toUpperCase()}. Use "Write to Device" to flash.`, 'success');
@@ -3759,7 +3778,7 @@
                         importFile = e.target.files[0];
                         const fileNameSpan = document.getElementById('importFileName');
                         if (fileNameSpan) fileNameSpan.textContent = importFile.name;
-                        
+
                         // Check if JSON
                         if (importFile.name.toLowerCase().endsWith('.json')) {
                             importBaseUrl = null; // No base URL for local files
@@ -3803,7 +3822,7 @@
                         importFile = files[0];
                         const fileNameSpan = document.getElementById('importFileName');
                         if (fileNameSpan) fileNameSpan.textContent = importFile.name;
-                        
+
                         // Check if JSON
                         if (importFile.name.toLowerCase().endsWith('.json')) {
                             importBaseUrl = null; // No base URL for local files
@@ -4540,10 +4559,14 @@
                                 sha256Validation && sha256Validation.valid === false ?
                                     '<span style="color: #e88888; font-size: 1.2em;" title="' + sha256Validation.reason + '">✗</span>' :
                                     '<span style="color: #9a9a9a; font-size: 1.2em;" title="Validating...">⏳</span>';
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Image SHA256 (appended):</label><span class="mono">${image.sha256} ${validIcon}</span></div>`;
+                            /* Only show Image SHA256 if it differs from Region SHA256 */
+                            const sha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
+                            if (!sha256Match) {
+                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Image SHA256 (appended):</label><span class="mono">${image.sha256} ${validIcon}</span></div>`;
+                            }
                         }
                         if (sha256RegionCalc) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Region SHA256 (header..checksum):</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Region SHA256:</label><span class="mono">${sha256RegionCalc}</span></div>`;
                         }
                         if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
                             const regionLen = image.sha256DataEnd - image.sha256DataStart;
