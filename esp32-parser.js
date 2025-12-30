@@ -1832,7 +1832,7 @@ class NVSParser {
                 if (nsIndex === 0 && datatype !== 0xFF && datatype !== 0x00) {
                     const key = await this.readString(entryOffset + 8, 16);
                     const namespaceIndex = await this.view.getUint8(entryOffset + 24);
-                    console.log(`[NVS Parse]     Namespace definition: "${key}" -> index ${namespaceIndex}`);
+                    //console.log(`[NVS Parse]     Namespace definition: "${key}" -> index ${namespaceIndex}`);
                     if (key && namespaceIndex < 255) {
                         namespaces.set(namespaceIndex, key);
                     }
@@ -1851,10 +1851,10 @@ class NVSParser {
             }
 
             if (page.items.length > 0) {
-                console.log(`[NVS Parse] Page added with ${page.items.length} items`);
+                //console.log(`[NVS Parse] Page added with ${page.items.length} items`);
                 pages.push(page);
             } else {
-                console.log(`[NVS Parse] Page has no items, not added`);
+                //console.log(`[NVS Parse] Page has no items, not added`);
             }
         }
 
@@ -2136,11 +2136,17 @@ class NVSParser {
 
                     if (hasSpace) {
                         const entryOffset = blockOffset + 64 + entry * 32;
-                        item.entries[0][0] = nsIndex;
-                        const headerCrc = NVSParser.crc32Header(item.entries[0]);
-                        new DataView(item.entries[0].buffer).setUint32(4, headerCrc, true);
+                        
+                        /* Set nsIndex for all entries and calculate header CRC */
+                        for (let i = 0; i < item.entries.length; i++) {
+                            if (item.entries[i][0] === 0) {
+                                item.entries[i][0] = nsIndex;
+                                const headerCrc = NVSParser.crc32Header(item.entries[i]);
+                                new DataView(item.entries[i].buffer).setUint32(4, headerCrc, true);
+                            }
+                        }
 
-                        console.log(`[NVS Add] Writing item at entry ${entry}, nsIndex=${nsIndex}, key="${key}", span=${item.span}`);
+                        console.log(`[NVS Add] Writing item at entry ${entry}, nsIndex=${nsIndex}, key="${key}", span=${item.span}, entries=${item.entries.length}`);
 
                         for (let slice = 0; slice < item.entries.length; slice++) {
                             const sliceOffset = entryOffset + slice * 32;
@@ -2173,7 +2179,7 @@ class NVSParser {
         const typeMap = {
             'U8': 0x01, 'U16': 0x02, 'U32': 0x04, 'U64': 0x08,
             'I8': 0x11, 'I16': 0x12, 'I32': 0x14, 'I64': 0x18,
-            'String': 0x21, 'Blob': 0x42
+            'String': 0x21, 'Blob': 0x42, 'BlobSmall': 0x42
         };
 
         const datatype = typeMap[type];
@@ -2271,30 +2277,104 @@ class NVSParser {
                 for (let i = 0; i < span - 1; i++) entries.push(dataEntry.slice(i * 32, (i + 1) * 32));
                 break;
             }
-            case 'Blob': {
+            case 'BlobSmall': {
                 const hexBytes = value.split(/\s+/).filter(b => b).map(b => parseInt(b, 16));
                 if (hexBytes.some(b => isNaN(b) || b < 0 || b > 255)) throw new Error('Invalid hex bytes');
-                if (hexBytes.length > 64) throw new Error('Blob too long (max 64 bytes)');
+                if (hexBytes.length > 32) throw new Error('BlobSmall too long (max 32 bytes)');
                 const blobData = new Uint8Array(hexBytes);
+                
+                /* Small blob: single entry without blob index */
                 new DataView(entry.buffer).setUint16(24, blobData.length, true);
+                /* Reserved bytes (26-27) must stay 0xFF to match firmware */
+                entry[26] = 0xFF;
+                entry[27] = 0xFF;
                 const dataCrc = NVSParser.crc32(blobData);
                 new DataView(entry.buffer).setUint32(28, dataCrc, true);
                 const span = 1 + Math.ceil(blobData.length / 32);
                 entry[2] = span;
                 entry[3] = 0; /* chunkIndex for first chunk */
                 entries.push(entry);
-                const dataEntry = new Uint8Array(32 * (span - 1));
-                dataEntry.fill(0xFF);
-                dataEntry.set(blobData, 0);
-                for (let i = 0; i < span - 1; i++) entries.push(dataEntry.slice(i * 32, (i + 1) * 32));
+                if (span > 1) {
+                    const dataEntry = new Uint8Array(32 * (span - 1));
+                    dataEntry.fill(0xFF);
+                    dataEntry.set(blobData, 0);
+                    for (let i = 0; i < span - 1; i++) entries.push(dataEntry.slice(i * 32, (i + 1) * 32));
+                }
+                break;
+            }
+            case 'Blob': {
+                const hexBytes = value.split(/\s+/).filter(b => b).map(b => parseInt(b, 16));
+                if (hexBytes.some(b => isNaN(b) || b < 0 || b > 255)) throw new Error('Invalid hex bytes');
+                if (hexBytes.length > 1984) throw new Error('Blob too long (max 1984 bytes)');
+                const blobData = new Uint8Array(hexBytes);
+                
+                {
+                    /* Large blob: write blob chunks first, then blob index (firmware order) */
+                    const indexEntry = new Uint8Array(32);
+                    indexEntry.fill(0x00);
+                    indexEntry[0] = 0; /* nsIndex will be set later */
+                    indexEntry[1] = 0x48; /* Blob Index type */
+                    indexEntry[2] = 1; /* span */
+                    indexEntry[3] = 0xFF; /* chunkIndex */
+                    const keyBytes = new TextEncoder().encode(key.substring(0, 15));
+                    indexEntry.set(keyBytes, 8);
+                    indexEntry[8 + keyBytes.length] = 0;
+                    new DataView(indexEntry.buffer).setUint32(24, blobData.length, true); /* totalSize */
+                    
+                    /* Calculate number of chunks needed */
+                    const maxChunkSize = 32 + 31 * 32; /* first entry has 32 bytes, each additional can hold 32 bytes */
+                    const chunkCount = Math.ceil(blobData.length / maxChunkSize);
+                    indexEntry[28] = chunkCount; /* chunkCount */
+                    indexEntry[29] = 0; /* chunkStart */
+                    
+                    /* Create chunk entries first */
+                    let offset = 0;
+                    for (let chunkIdx = 0; chunkIdx < chunkCount; chunkIdx++) {
+                        const chunkSize = Math.min(maxChunkSize, blobData.length - offset);
+                        const chunkData = blobData.slice(offset, offset + chunkSize);
+                        
+                        const chunkEntry = new Uint8Array(32);
+                        chunkEntry.fill(0x00);
+                        chunkEntry[0] = 0; /* nsIndex will be set later */
+                        chunkEntry[1] = 0x42; /* Blob type */
+                        const chunkSpan = 1 + Math.ceil(chunkSize / 32);
+                        chunkEntry[2] = chunkSpan;
+                        chunkEntry[3] = chunkIdx; /* chunkIndex */
+                        chunkEntry.set(keyBytes, 8);
+                        chunkEntry[8 + keyBytes.length] = 0;
+                        new DataView(chunkEntry.buffer).setUint16(24, chunkSize, true);
+                        /* Reserved bytes (26-27) must stay 0xFF to match firmware */
+                        chunkEntry[26] = 0xFF;
+                        chunkEntry[27] = 0xFF;
+                        const chunkCrc = NVSParser.crc32(chunkData);
+                        new DataView(chunkEntry.buffer).setUint32(28, chunkCrc, true);
+                        
+                        entries.push(chunkEntry);
+                        
+                        const chunkDataEntry = new Uint8Array(32 * (chunkSpan - 1));
+                        chunkDataEntry.fill(0xFF);
+                        chunkDataEntry.set(chunkData, 0);
+                        for (let i = 0; i < chunkSpan - 1; i++) {
+                            entries.push(chunkDataEntry.slice(i * 32, (i + 1) * 32));
+                        }
+                        
+                        offset += chunkSize;
+                    }
+
+                    /* Append blob index after all chunks (firmware ordering) */
+                    entries.push(indexEntry);
+                }
                 break;
             }
         }
 
+        /* Calculate total span (sum of all entry spans, but entries array contains all 32-byte blocks) */
+        const totalSpan = entries.length;
+        
         const headerCrc = NVSParser.crc32Header(entries[0]);
         new DataView(entries[0].buffer).setUint32(4, headerCrc, true);
 
-        return { span: entry[2], entries };
+        return { span: totalSpan, entries };
     }
 
     /**
@@ -2569,8 +2649,8 @@ class ESP32Parser {
         let bestCandidate = null;
         let bestPartitionCount = 0;
 
-        console.log(`Detecting partition table offset starting from 0x${start.toString(16)}`);
-        console.log(`Buffer length: 0x${len.toString(16)}, search limit: 0x${searchLimit.toString(16)}`);
+        //console.log(`Detecting partition table offset starting from 0x${start.toString(16)}`);
+        //console.log(`Buffer length: 0x${len.toString(16)}, search limit: 0x${searchLimit.toString(16)}`);
 
         while (!bestCandidate && ptr < searchLimit) {
             // Skip 0xFF bytes and check for 4K boundary alignment
@@ -2579,7 +2659,7 @@ class ESP32Parser {
                 const validCount = await this.validatePartitionTable(ptr);
 
                 if (validCount > 0) {
-                    console.log(`Found valid partition table at 0x${ptr.toString(16)} with ${validCount} entries`);
+                    //console.log(`Found valid partition table at 0x${ptr.toString(16)} with ${validCount} entries`);
 
                     // Keep track of best candidate (most partitions)
                     if (validCount > bestPartitionCount) {
@@ -2593,11 +2673,11 @@ class ESP32Parser {
 
         if (bestCandidate !== null) {
             this.partitionTableOffset = bestCandidate;
-            console.log(`Selected partition table offset at 0x${bestCandidate.toString(16)} with ${bestPartitionCount} entries`);
+            //console.log(`Selected partition table offset at 0x${bestCandidate.toString(16)} with ${bestPartitionCount} entries`);
             return bestCandidate;
         }
 
-        console.log(`No partition table detected`);
+        //console.log(`No partition table detected`);
         return null;
     }
 
@@ -2986,7 +3066,7 @@ class ESP32Parser {
         }
 
         try {
-            console.log(`Image SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
+            //console.log(`Image SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
             const dataToHash = await this.sparseImage.slice_async(image.sha256DataStart, image.sha256DataEnd);
             const calculatedHash = await ESP32Parser.calculateSHA256(dataToHash);
             const calculatedHashHex = ESP32Parser.bytesToHex(calculatedHash);
