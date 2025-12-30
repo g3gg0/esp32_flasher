@@ -4891,7 +4891,10 @@
                     <option value="I32">I32 (Signed 32-bit)</option>
                     <option value="I64">I64 (Signed 64-bit)</option>
                     <option value="String">String</option>
+                    <option value="BlobSmall">Blob Small (Hex, ≤32 bytes)</option>
+                    <option value="BlobSmallString">Blob Small (String, ≤32 bytes)</option>
                     <option value="Blob">Blob (Hex)</option>
+                    <option value="BlobString">Blob (String)</option>
                 </select>
                 
                 <label for="nvs-add-value">Value:</label>
@@ -4987,7 +4990,10 @@
                     <option value="I32" ${type === 'I32' ? 'selected' : ''}>I32 (Signed 32-bit)</option>
                     <option value="I64" ${type === 'I64' ? 'selected' : ''}>I64 (Signed 64-bit)</option>
                     <option value="String" ${type === 'String' ? 'selected' : ''}>String</option>
+                    <option value="BlobSmall" ${type === 'BlobSmall' ? 'selected' : ''}>Blob Small (Hex, ≤32 bytes)</option>
+                    <option value="BlobSmallString" ${type === 'BlobSmallString' ? 'selected' : ''}>Blob Small (String, ≤32 bytes)</option>
                     <option value="Blob" ${type === 'Blob' ? 'selected' : ''}>Blob (Hex)</option>
+                    <option value="BlobString" ${type === 'BlobString' ? 'selected' : ''}>Blob (String)</option>
                 </select>
                 
                 <label for="nvs-add-value">Value:</label>
@@ -5064,12 +5070,27 @@
                 case 'String':
                     valueInput.type = 'text';
                     valueInput.placeholder = 'Enter string value';
-                    hint.textContent = 'Enter any text (max 64 bytes)';
+                    hint.textContent = 'Enter any text (max 1984 bytes)';
+                    break;
+                case 'BlobSmall':
+                    valueInput.type = 'text';
+                    valueInput.placeholder = 'Enter hex bytes (e.g., 01 02 03 FF)';
+                    hint.textContent = 'Enter hex bytes separated by spaces (max 32 bytes)';
+                    break;
+                case 'BlobSmallString':
+                    valueInput.type = 'text';
+                    valueInput.placeholder = 'Enter string value';
+                    hint.textContent = 'Enter string to be stored as small blob (max 32 bytes)';
                     break;
                 case 'Blob':
                     valueInput.type = 'text';
                     valueInput.placeholder = 'Enter hex bytes (e.g., 01 02 03 FF)';
-                    hint.textContent = 'Enter hex bytes separated by spaces';
+                    hint.textContent = 'Enter hex bytes separated by spaces (max 1984 bytes)';
+                    break;
+                case 'BlobString':
+                    valueInput.type = 'text';
+                    valueInput.placeholder = 'Enter string value';
+                    hint.textContent = 'Enter string to be stored as blob (max 1984 bytes)';
                     break;
             }
         }
@@ -5085,8 +5106,8 @@
 
         async function submitNVSAddDialog() {
             const key = document.getElementById('nvs-add-key').value.trim();
-            const type = document.getElementById('nvs-add-type').value;
-            const value = document.getElementById('nvs-add-value').value.trim();
+            let type = document.getElementById('nvs-add-type').value;
+            let value = document.getElementById('nvs-add-value').value.trim();
 
             if (!key) {
                 alert('Please enter a key name.');
@@ -5101,6 +5122,22 @@
             if (!value) {
                 alert('Please enter a value.');
                 return;
+            }
+
+            // Convert BlobString to Blob with hex bytes
+            if (type === 'BlobString') {
+                const encoder = new TextEncoder();
+                const bytes = encoder.encode(value);
+                value = Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+                type = 'Blob';
+            }
+
+            // Convert BlobSmallString to BlobSmall with hex bytes
+            if (type === 'BlobSmallString') {
+                const encoder = new TextEncoder();
+                const bytes = encoder.encode(value);
+                value = Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+                type = 'BlobSmall';
             }
 
             // Save partition index and namespace before closing dialog
@@ -5130,12 +5167,28 @@
 
         async function submitNVSEditDialog() {
             const oldKey = window.currentNVSEditKey;
-            const type = document.getElementById('nvs-add-type').value;
-            const value = document.getElementById('nvs-add-value').value.trim();
+            let type = document.getElementById('nvs-add-type').value;
+            let value = document.getElementById('nvs-add-value').value.trim();
 
             if (!value) {
                 alert('Please enter a value.');
                 return;
+            }
+
+            // Convert BlobString to Blob with hex bytes
+            if (type === 'BlobString') {
+                const encoder = new TextEncoder();
+                const bytes = encoder.encode(value);
+                value = Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+                type = 'Blob';
+            }
+
+            // Convert BlobSmallString to BlobSmall with hex bytes
+            if (type === 'BlobSmallString') {
+                const encoder = new TextEncoder();
+                const bytes = encoder.encode(value);
+                value = Array.from(bytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+                type = 'BlobSmall';
             }
 
             // Save partition index and namespace before closing dialog
