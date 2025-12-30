@@ -25,9 +25,6 @@
  * // Access like a normal Uint8Array - data is fetched automatically
  * const byte = buffer[0x1000];
  * const chunk = buffer.subarray(0x1000, 0x2000);
- * 
- * // Check cache statistics
- * console.log(sparseImage.getStats());
  * ```
  * 
  * Architecture:
@@ -767,37 +764,7 @@ class SparseImage {
         return new SparseImageDataView(this);
     }
 
-    /**
-     * Get statistics about the sparse image
-     */
-    getStats() {
-        let totalCached = 0;
-        const segments = [];
 
-        for (const segment of this.readBuffer) {
-            totalCached += segment.data.length;
-            segments.push({
-                address: segment.address,
-                size: segment.data.length,
-                endAddress: segment.address + segment.data.length
-            });
-        }
-
-        return {
-            totalSize: this.size,
-            cachedBytes: totalCached,
-            cachedPercent: (totalCached / this.size * 100).toFixed(2),
-            segmentCount: this.readBuffer.length,
-            segments: segments
-        };
-    }
-
-    /**
-     * Clear all cached data
-     */
-    clearCache() {
-        this.readBuffer = [];
-    }
 
     /**
      * Pre-fetch a range of data
@@ -1500,18 +1467,26 @@ class FATParser {
 
 
 class SpiffsParser {
-    constructor(sparseImage) {
+    constructor(sparseImage, startOffset, size) {
         if (!sparseImage) {
             throw new Error('SpiffsParser requires a SparseImage');
         }
         this.sparseImage = sparseImage;
+        this.startOffset = startOffset;
+        this.size = size;
         this.buffer = SparseImage._createProxy(sparseImage);
         this.view = sparseImage.createDataView();
+        this.spiffsInfo = null;
     }
 
-    async parse(partition) {
-        const offset = partition.offset;
-        const size = partition.length;
+    async initialize() {
+        this.spiffsInfo = await this.parse();
+        return this.spiffsInfo;
+    }
+
+    async parse() {
+        const offset = this.startOffset;
+        const size = this.size;
 
         console.log(`[SPIFFS] Parsing partition at offset 0x${offset.toString(16)}, size ${size} bytes`);
 
@@ -1669,10 +1644,10 @@ class SpiffsParser {
         return foundPattern;
     }
 
-    async readFile(partition, file, spiffsInfo) {
-        const offset = partition.offset;
-        const blockSize = spiffsInfo.blockSize;
-        const pageSize = spiffsInfo.pageSize;
+    async readFile(file) {
+        const offset = this.startOffset;
+        const blockSize = this.spiffsInfo.blockSize;
+        const pageSize = this.spiffsInfo.pageSize;
         const pagesPerBlock = Math.floor(blockSize / pageSize);
         const fileSize = file.size >>> 0;
 
@@ -1688,7 +1663,7 @@ class SpiffsParser {
         const IX_FLAG_MASK = 0x8000;
         const dataObjId = (file.objId & ~IX_FLAG_MASK) & 0xFFFF;
 
-        const totalBlocks = Math.floor(spiffsInfo.totalSize / blockSize) || Math.floor(partition.length / blockSize);
+        const totalBlocks = Math.floor(this.spiffsInfo.totalSize / blockSize) || Math.floor(this.size / blockSize);
         const dataHeaderLen = 5;
         const dataPerPage = pageSize - dataHeaderLen;
 
@@ -1908,13 +1883,21 @@ class OTADataParser {
 }
 
 class NVSParser {
-    constructor(sparseImage) {
+    constructor(sparseImage, startOffset, size) {
         if (!sparseImage) {
             throw new Error('NVSParser requires a SparseImage');
         }
         this.sparseImage = sparseImage;
+        this.startOffset = startOffset;
+        this.size = size;
         this.buffer = SparseImage._createProxy(sparseImage);
         this.view = sparseImage.createDataView();
+        this.pages = null;
+    }
+
+    async initialize() {
+        this.pages = await this.parse();
+        return this.pages;
     }
 
     static bytesToHex(bytes, separator = '') {
@@ -1993,7 +1976,7 @@ class NVSParser {
         stateBitmap[bmpIdx] |= (state << bmpBit);
     }
 
-    async parseItem(offset, namespaces, partition) {
+    async parseItem(offset, namespaces) {
         if (offset + 32 > this.sparseImage.size) {
             return null;
         }
@@ -2045,7 +2028,7 @@ class NVSParser {
             value: null,
             typeName: this.getNVSTypeName(datatype),
             isBlobChunk: false,
-            offset: partition ? offset - partition.offset : offset,
+            offset: offset - this.startOffset,
             entrySize: 32
         };
 
@@ -2148,7 +2131,7 @@ class NVSParser {
         return item;
     }
 
-    async parse(partition) {
+    async parse() {
         const NVS_SECTOR_SIZE = 4096;
         const MAX_ENTRY_COUNT = 126;
         const NVS_PAGE_STATE = {
@@ -2163,10 +2146,10 @@ class NVSParser {
         const namespaces = new Map();
         namespaces.set(0, '');
 
-        //console.log(`[NVS Parse] Starting NVS parse for partition at offset 0x${partition.offset.toString(16)}, length 0x${partition.length.toString(16)}`);
+        //console.log(`[NVS Parse] Starting NVS parse for partition at offset 0x${this.startOffset.toString(16)}, length 0x${this.size.toString(16)}`);
 
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
+        for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
+            const blockOffset = this.startOffset + sectorOffset;
             if (blockOffset + 64 > this.sparseImage.size) break;
 
             const state = await this.view.getUint32(blockOffset, true);
@@ -2235,7 +2218,7 @@ class NVSParser {
                     }
                 }
 
-                const item = await this.parseItem(entryOffset, namespaces, partition);
+                const item = await this.parseItem(entryOffset, namespaces);
                 if (item) {
                     //console.log(`[NVS Parse]     Parsed item: nsIndex=${item.nsIndex}, key="${item.key}", type=${item.typeName}, value=${JSON.stringify(item.value)}`);
                     page.items.push(item);
@@ -2271,13 +2254,13 @@ class NVSParser {
      * Build a map of namespace names to their indices
      * Returns: { name: index, ... }
      */
-    async buildNamespaceMap(partition) {
+    async buildNamespaceMap() {
         const NVS_SECTOR_SIZE = 4096;
         const MAX_ENTRY_COUNT = 126;
         const namespaceMap = {};
 
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
+        for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
+            const blockOffset = this.startOffset + sectorOffset;
             if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
@@ -2314,15 +2297,15 @@ class NVSParser {
     /**
      * Add a new namespace entry to NVS
      */
-    async addNamespace(partition, namespaceName) {
+    async addNamespace(namespaceName) {
         const NVS_SECTOR_SIZE = 4096;
         const MAX_ENTRY_COUNT = 126;
 
         let maxNsIndex = 0;
         const usedIndices = new Set();
 
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
+        for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
+            const blockOffset = this.startOffset + sectorOffset;
             if (blockOffset + 64 > this.sparseImage.size) break;
 
             const state = await this.view.getUint32(blockOffset, true);
@@ -2379,8 +2362,8 @@ class NVSParser {
         const headerCrc = NVSParser.crc32Header(entry);
         new DataView(entry.buffer).setUint32(4, headerCrc, true);
 
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
+        for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
+            const blockOffset = this.startOffset + sectorOffset;
             if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
@@ -2409,14 +2392,14 @@ class NVSParser {
     /**
      * Delete an item by namespace + key
      */
-    async deleteItem(partition, namespace, key) {
+    async deleteItem(namespace, key) {
         const NVS_SECTOR_SIZE = 4096;
         const MAX_ENTRY_COUNT = 126;
 
         console.log(`[NVS Delete] Starting delete for ${namespace}.${key}`);
         
         // Build namespace map first
-        const namespaceMap = await this.buildNamespaceMap(partition);
+        const namespaceMap = await this.buildNamespaceMap();
         console.log(`[NVS Delete] Namespace map:`, namespaceMap);
         
         const nsIndex = namespaceMap[namespace];
@@ -2426,8 +2409,8 @@ class NVSParser {
         }
         console.log(`[NVS Delete] Target namespace "${namespace}" has index ${nsIndex}`);
 
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
+        for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
+            const blockOffset = this.startOffset + sectorOffset;
             if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
@@ -2488,15 +2471,15 @@ class NVSParser {
     /**
      * Add an item
      */
-    async addItem(partition, namespace, key, type, value) {
+    async addItem(namespace, key, type, value) {
         const NVS_SECTOR_SIZE = 4096;
         const MAX_ENTRY_COUNT = 126;
 
         const item = this.createItem(key, type, value);
         let nsIndex = -1;
 
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
+        for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
+            const blockOffset = this.startOffset + sectorOffset;
             if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
@@ -2777,20 +2760,20 @@ class NVSParser {
     /**
      * Convenience: update item by deleting and re-adding
      */
-    async updateItem(partition, namespace, key, type, value) {
-        try { await this.deleteItem(partition, namespace, key); } catch (e) { /* ignore if not exists */ }
-        await this.addItem(partition, namespace, key, type, value);
+    async updateItem(namespace, key, type, value) {
+        try { await this.deleteItem(namespace, key); } catch (e) { /* ignore if not exists */ }
+        await this.addItem(namespace, key, type, value);
     }
 
     /**
      * Find item metadata by namespace/key
      */
-    async findItem(partition, namespace, key) {
+    async findItem(namespace, key) {
         const NVS_SECTOR_SIZE = 4096;
         const MAX_ENTRY_COUNT = 126;
         let nsIndex = -1;
-        for (let sectorOffset = 0; sectorOffset < partition.length; sectorOffset += NVS_SECTOR_SIZE) {
-            const blockOffset = partition.offset + sectorOffset;
+        for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
+            const blockOffset = this.startOffset + sectorOffset;
             if (blockOffset + 64 > this.sparseImage.size) break;
             const state = await this.view.getUint32(blockOffset, true);
             if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
@@ -3201,15 +3184,14 @@ class ESP32Parser {
         return result;
     }
 
-    // Parse NVS (Non-Volatile Storage) — delegated to NVSParser class
+    // Parse NVS (Non-Volatile Storage) — returns NVSParser instance
     async parseNVS(partition) {
         if (!this.sparseImage) {
             throw new Error('ESP32Parser has no SparseImage for NVS parsing');
         }
-        if (!this._nvsParser) {
-            this._nvsParser = new NVSParser(this.sparseImage);
-        }
-        return await this._nvsParser.parse(partition);
+        const nvsParser = new NVSParser(this.sparseImage, partition.offset, partition.length);
+        await nvsParser.initialize();
+        return nvsParser;
     }
 
     // Parse OTA data partition — delegated to OTADataParser class
@@ -3481,33 +3463,6 @@ class ESP32Parser {
         }
     }
 
-    // Validate app ELF SHA256 (stored in app description)
-    async validateAppElfSHA256(image) {
-        if (!image.appDesc || !image.appDesc.appElfSha256) {
-            return { valid: false, reason: 'No app ELF hash available' };
-        }
-
-        // We can't validate the ELF hash without the original ELF file
-        // This hash is for reference only
-        return {
-            valid: null,
-            reason: 'ELF file not available for validation',
-            hash: image.appDesc.appElfSha256
-        };
-    }
-
-    // FAT: delegate to FATParser
-    async parseWearLeveling(partition) {
-        const parser = new FATParser(this.sparseImage, partition.offset, partition.length);
-        return await parser.parseWearLeveling();
-    }
-
-    // Translate sector through wear leveling
-    wlTranslateSector(wlInfo, sector) {
-        const parser = new FATParser(this.sparseImage, 0, this.sparseImage.size);
-        return parser.wlTranslateSector(wlInfo, sector);
-    }
-
     // Parse FAT filesystem with wear leveling - returns the FATParser instance
     async parseFATFilesystem(partition) {
         const parser = new FATParser(this.sparseImage, partition.offset, partition.length);
@@ -3518,57 +3473,6 @@ class ESP32Parser {
     // Get partition by label
     getPartition(label) {
         return this.partitions.find(p => p.label === label);
-    }
-
-    /**
-     * Delete an NVS item by namespace and key
-     */
-    async deleteNVSItem(partition, namespace, key) {
-        if (!this._nvsParser) {
-            this._nvsParser = new NVSParser(this.sparseImage);
-        }
-        return await this._nvsParser.deleteItem(partition, namespace, key);
-    }
-
-    /**
-     * Set NVS item state in bitmap
-     */
-
-
-    /**
-     * Add a new NVS item
-     */
-    async addNVSNamespace(partition, namespaceName) {
-        if (!this._nvsParser) {
-            this._nvsParser = new NVSParser(this.sparseImage);
-        }
-        return await this._nvsParser.addNamespace(partition, namespaceName);
-    }
-
-    async addNVSItem(partition, namespace, key, type, value) {
-        if (!this._nvsParser) {
-            this._nvsParser = new NVSParser(this.sparseImage);
-        }
-        return await this._nvsParser.addItem(partition, namespace, key, type, value);
-    }
-
-    /**
-     * Update an existing NVS item by namespace/key
-     */
-    async updateNVSItem(partition, namespace, key, type, value) {
-        if (!this._nvsParser) {
-            this._nvsParser = new NVSParser(this.sparseImage);
-        }
-        return await this._nvsParser.updateItem(partition, namespace, key, type, value);
-
-        // Calculate and set header CRC for first entry
-        const headerCrc = ESP32Parser.crc32Header(entries[0]);
-        new DataView(entries[0].buffer).setUint32(4, headerCrc, true);
-
-        return {
-            span: entry[2],
-            entries: entries
-        };
     }
 
     // Export methods
@@ -3582,20 +3486,9 @@ class ESP32Parser {
      * SPIFFS (SPI Flash File System) is a file system for embedded devices
      */
     async parseSPIFFS(partition) {
-        if (!this._spiffsParser) {
-            this._spiffsParser = new SpiffsParser(this.sparseImage);
-        }
-        return await this._spiffsParser.parse(partition);
-    }
-
-    /**
-     * Read file data from SPIFFS partition
-     */
-    async readSPIFFSFile(partition, file, spiffsInfo) {
-        if (!this._spiffsParser) {
-            this._spiffsParser = new SpiffsParser(this.sparseImage);
-        }
-        return await this._spiffsParser.readFile(partition, file, spiffsInfo);
+        const spiffsParser = new SpiffsParser(this.sparseImage, partition.offset, partition.length);
+        await spiffsParser.initialize();
+        return spiffsParser;
     }
 
     /**

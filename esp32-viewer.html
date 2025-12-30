@@ -4009,7 +4009,10 @@
             // Use setTimeout to allow UI to update
             setTimeout(async () => {
                 try {
-                    const pages = await parser.parseNVS(partition);
+                    const nvsParser = await parser.parseNVS(partition);
+                    currentNVSParser = nvsParser;
+                    currentNVSPartition = partition;
+                    const pages = nvsParser.pages;
 
                     console.log('NVS pages:', pages);
 
@@ -4174,7 +4177,9 @@
 
         let currentFATParser = null;
         let currentFATPartition = null;
-        let currentSPIFFSInfo = null;
+        let currentNVSParser = null;
+        let currentNVSPartition = null;
+        let currentSPIFFSParser = null;
         let currentSPIFFSPartition = null;
 
         function parseSPIFFSPartition(idx) {
@@ -4187,11 +4192,12 @@
             // Use setTimeout to allow UI to update
             setTimeout(async () => {
                 try {
-                    const spiffsInfo = await parser.parseSPIFFS(partition);
-
-                    // Store for file downloads
-                    currentSPIFFSInfo = spiffsInfo;
+                    const spiffsParser = await parser.parseSPIFFS(partition);
+                    currentSPIFFSParser = spiffsParser;
                     currentSPIFFSPartition = partition;
+                    const spiffsInfo = spiffsParser.spiffsInfo;
+
+                    console.log('SPIFFS info:', spiffsInfo);
 
                     let html = '';
 
@@ -4301,7 +4307,7 @@
 
         async function downloadSPIFFSFile(fileId) {
             const file = window[fileId];
-            if (!file || !currentSPIFFSInfo || !currentSPIFFSPartition) {
+            if (!file || !currentSPIFFSParser) {
                 alert('File data not available');
                 return;
             }
@@ -4314,7 +4320,7 @@
             document.body.appendChild(loadingDiv);
 
             try {
-                const fileData = await parser.readSPIFFSFile(currentSPIFFSPartition, file, currentSPIFFSInfo);
+                const fileData = await currentSPIFFSParser.readFile(file);
                 const blob = new Blob([fileData], { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -5050,19 +5056,13 @@
         }
 
         async function deleteNVSItem(partitionIdx, namespace, key) {
-            if (!parser || !parser.sparseImage) {
-                alert('No firmware loaded.');
-                return;
-            }
-
-            const partition = parser.partitions[partitionIdx];
-            if (!partition) {
-                alert('Partition not found.');
+            if (!currentNVSParser) {
+                alert('No NVS partition loaded.');
                 return;
             }
 
             try {
-                await parser.deleteNVSItem(partition, namespace, key);
+                await currentNVSParser.deleteItem(namespace, key);
 
                 // Refresh the NVS display
                 parseNVSPartition(partitionIdx);
@@ -5359,8 +5359,12 @@
             const namespace = currentNVSAddNamespace;
 
             try {
-                const partition = parser.partitions[partitionIdx];
-                await parser.addNVSItem(partition, namespace, key, type, value);
+                if (!currentNVSParser) {
+                    alert('No NVS partition loaded.');
+                    return;
+                }
+                
+                await currentNVSParser.addItem(namespace, key, type, value);
 
                 closeNVSAddDialog();
 
@@ -5410,15 +5414,14 @@
             const namespace = currentNVSAddNamespace;
 
             try {
-                const partition = parser.partitions[partitionIdx];
+                if (!currentNVSParser) {
+                    alert('No NVS partition loaded.');
+                    return;
+                }
 
-                // Delete old entry
-                await parser.deleteNVSItem(partition, namespace, oldKey);
-                console.log(`Deleted old NVS item: ${namespace}/${oldKey}`);
-
-                // Add new entry with same key
-                await parser.addNVSItem(partition, namespace, oldKey, type, value);
-                console.log(`Added updated NVS item: ${namespace}/${oldKey} = ${value} (${type})`);
+                // Update using the updateItem method (delete + add)
+                await currentNVSParser.updateItem(namespace, oldKey, type, value);
+                console.log(`Updated NVS item: ${namespace}/${oldKey} = ${value} (${type})`);
 
                 closeNVSAddDialog();
 
@@ -5454,8 +5457,12 @@
             const partitionIdx = currentNVSAddPartition;
 
             try {
-                const partition = parser.partitions[partitionIdx];
-                await parser.addNVSNamespace(partition, namespaceName);
+                if (!currentNVSParser) {
+                    alert('No NVS partition loaded.');
+                    return;
+                }
+                
+                await currentNVSParser.addNamespace(namespaceName);
                 console.log(`Added namespace: ${namespaceName}`);
 
                 closeNVSAddDialog();
