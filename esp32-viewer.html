@@ -1233,6 +1233,7 @@
         let intentionalDisconnect = false; /* Track intentional disconnects */
         let bootloaderInfo = null;
         let partitionTableOffset = null;
+        let isDebugMode = window.location.hash.includes('debug');
 
         /* Performance tracking for read/write operations */
         let readStartTime = null;
@@ -1465,6 +1466,12 @@
             try {
                 setDeviceStatus('Requesting serial port...', 'loading');
                 deviceFlasher = new ESPFlasher();
+                deviceFlasher.logError = (msg) => { console.error('Flasher:', msg); };
+
+                if (isDebugMode) {
+                    deviceFlasher.logDebug = (msg) => { console.log('Flasher:', msg); };
+                    deviceFlasher.logPackets = true;
+                }
 
                 /* Set up callback for unexpected device disconnection */
                 deviceFlasher.disconnected = () => {
@@ -2838,7 +2845,7 @@
                             html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Expected vs Calc (region):</label><span class="mono" style="color: #e88888;">${sha256Validation.expected} ≠ ${sha256Validation.calculated}</span></div>`;
                         }
                     }
-                    
+
                     html += '</div>';
                     html += '<h4 style="margin-top: 15px;">Segments</h4>';
                     html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';

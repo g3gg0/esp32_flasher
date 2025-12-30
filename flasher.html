@@ -428,9 +428,17 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         }
 
         @keyframes blink-red {
-            0%, 100% { box-shadow: 0 0 0 rgba(0,0,0,0); }
-            50% { box-shadow: 0 0 12px rgba(248, 81, 73, 0.8); }
+
+            0%,
+            100% {
+                box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+            }
+
+            50% {
+                box-shadow: 0 0 12px rgba(248, 81, 73, 0.8);
+            }
         }
+
         .device-popup.secure-warning {
             border-color: #f85149;
             background: rgba(62, 12, 12, 0.95);
@@ -536,7 +544,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                         Flash</button>
                     <button id="readFlashBtn" onclick="readFlash()" disabled title="Load stub loader first">Read Flash &
                         Download</button>
-                    <button id="md5FlashBtn" onclick="calculateMD5()" disabled title="Load stub loader first">Calculate MD5</button>
+                    <button id="md5FlashBtn" onclick="calculateMD5()" disabled title="Load stub loader first">Calculate
+                        MD5</button>
                 </div>
                 <div class="input-group">
                     <label for="flashAddress">Flash Address (hex):</label>
@@ -554,7 +563,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 <div class="info-panel" style="margin-top: 10px;">
                     <div class="info-row" id="md5Row" style="display: none;">
                         <span class="info-label">MD5 Hash:</span>
-                        <span class="info-value" id="md5Value" style="font-family: 'Courier New', monospace; font-size: 13px;">--</span>
+                        <span class="info-value" id="md5Value"
+                            style="font-family: 'Courier New', monospace; font-size: 13px;">--</span>
                     </div>
                 </div>
                 <div class="progress-bar">
@@ -619,6 +629,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         let selectedFile = null;
         let devicePopupTimer = null;
         let devicePopupContent = '';
+        let isDebugMode = window.location.hash.includes('debug');
 
         // Register presets for each chip type
         const registerPresets = {
@@ -815,11 +826,17 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         async function connectDevice() {
             try {
                 const connectionType = document.querySelector('input[name="connectionType"]:checked').value;
-                
+
                 log(`Requesting ${connectionType === 'webusb' ? 'WebUSB' : 'Web Serial'} port...`, 'info');
                 flasher = new ESPFlasher();
 
-                flasher.logDebug = (msg) => log(`[DEBUG] ${msg}`, 'debug');
+                if (isDebugMode) {
+                    flasher.logPackets = true;
+                    flasher.logDebug = (msg) => {
+                        log(`[DEBUG] ${msg}`, 'debug');
+                        console.log(`[Flasher DEBUG] ${msg}`);
+                    };
+                }
                 flasher.logError = (msg, detail = '') => log(`[ERROR] ${msg} ${detail}`, 'error');
 
                 flasher.deviceStateCallback = (state, data) => {
@@ -854,10 +871,10 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                     // Use Web Serial
                     await flasher.openPort();
                 }
-                
+
                 log('Port opened successfully', 'info');
 
-                if(!flasher.isEspressifUsbJtag) {
+                if (!flasher.isEspressifUsbJtag) {
                     // Technical limitation note about baud rate and ROM messages
                     log('Note: Web Serial cannot change baud rate without reopening; to avoid unintended resets we keep one baud from start to end. The ROM prints reset messages at 115200. With USB-UART RX/TX wiring you must choose: slow baud (115200) to see reset messages, or high baud (e.g., 921600) to get speed but miss those messages.', 'warn');
                 }
@@ -1077,7 +1094,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 updateStatus('Calculating MD5...', 'busy');
 
                 const md5Hash = await flasher.checksumFlash(address, size);
-                
+
                 log(`MD5 hash: ${md5Hash}`, 'info');
                 document.getElementById('md5Value').textContent = md5Hash;
                 document.getElementById('md5Row').style.display = 'flex';

@@ -24,6 +24,11 @@ const ERASE_REGION = 0xd1;
 const READ_FLASH = 0xd2;
 const RUN_USER_CODE = 0xd3;
 
+/* Resolve ChipDescriptions for both browser and Node environments */
+const ChipDescriptionsClass = typeof ChipDescriptions !== 'undefined'
+    ? ChipDescriptions
+    : (typeof require !== 'undefined' ? require('./chips.js') : null);
+
 /* ESP32 Reset Reason Codes (from ESP-IDF esp_system.h) */
 const RESET_REASON_MAP = {
     0: { name: 'NO_MEAN', desc: 'No reset reason' },
@@ -120,8 +125,8 @@ class SlipLayer {
 
         if (this.logPackets) {
             const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
-            this.logDebug(`%c${symbol} SLIP ${type}%c ${label} [${data.length} bytes]${truncMsg}`, bgColor, color);
-            lines.forEach(line => this.logDebug('%c' + line, 'font-family: monospace; font-size: 11px; color: #888'));
+            this.logDebug(`${symbol} SLIP ${type} ${label} [${data.length} bytes]${truncMsg}`);
+            lines.forEach(line => this.logDebug(line));
         }
     }
 
@@ -714,7 +719,10 @@ class ESPFlasher {
         this.stubLoaded = false;
         this.responseHandlers = new Map();
         this.chip_magic_addr = 0x40001000;
-        this.chip_descriptions = new ChipDescriptions().chip_descriptions;
+        if (!ChipDescriptionsClass) {
+            throw new Error('ChipDescriptions is not available. Load chips.js before constructing ESPFlasher.');
+        }
+        this.chip_descriptions = new ChipDescriptionsClass().chip_descriptions;
 
         this.buffer = [];
         this.escaping = false;
@@ -831,8 +839,8 @@ class ESPFlasher {
         }
         if (this.logPackets) {
             const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
-            this.logDebug(`%c${arrow} ${direction}%c [${data.length} bytes]${truncMsg}`, bgColor, color);
-            lines.forEach(line => this.logDebug('%c' + line, 'font-family: monospace; font-size: 11px'));
+            this.logDebug(`${arrow} ${direction} [${data.length} bytes]${truncMsg}`);
+            lines.forEach(line => this.logDebug(line));
         }
     }
 
