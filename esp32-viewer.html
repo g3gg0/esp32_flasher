@@ -263,6 +263,44 @@
             box-shadow: inset 0 0 10px rgba(100, 100, 255, 0.2);
         }
 
+        .delete-btn {
+            background: #ff4444;
+            border: none;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            line-height: 1;
+            padding: 0;
+            transition: background 0.2s;
+        }
+
+        .delete-btn:hover {
+            background: #ff6666;
+        }
+
+        .add-btn {
+            background: #44cc44;
+            border: none;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 18px;
+            font-weight: bold;
+            line-height: 1;
+            padding: 0;
+            transition: background 0.2s;
+        }
+
+        .add-btn:hover {
+            background: #66ee66;
+        }
+
         .expandable {
             cursor: pointer;
         }
@@ -4135,6 +4173,7 @@
         }
 
         let currentFATParser = null;
+        let currentFATPartition = null;
         let currentSPIFFSInfo = null;
         let currentSPIFFSPartition = null;
 
@@ -4316,6 +4355,7 @@
 
                     // Store parser instance for file downloads
                     currentFATParser = fatParser;
+                    currentFATPartition = partition;
 
                     let html = '<div class="success" style="margin-bottom: 10px;">FAT filesystem parsed successfully</div>';
 
@@ -4345,10 +4385,10 @@
                     }
 
                     // Files list
-                    html += '<h4 style="margin-top: 15px;">Files (' + countTotalFiles(fatParser.fatInfo.files) + ' total entries)</h4>';
+                    html += '<h4 style="margin-top: 15px;">Files (' + countTotalFiles(fatParser.fatInfo.files) + ' total entries) <button class="add-btn" onclick="addFATFile(\'/\')" title="Add file to root directory">+</button></h4>';
                     if (fatParser.fatInfo.files.length > 0) {
                         html += '<table style="margin-top: 10px;"><thead><tr>';
-                        html += '<th>Path</th><th>Size</th><th>Attributes</th><th>Date</th><th>Time</th><th>Cluster</th>';
+                        html += '<th>Path</th><th>Size</th><th>Attributes</th><th>Date</th><th>Time</th><th>Cluster</th><th>Actions</th>';
                         html += '</tr></thead><tbody>';
 
                         renderFATFiles(fatParser.fatInfo.files, 0).forEach(row => {
@@ -4404,6 +4444,165 @@
             }
         }
 
+        async function deleteFATFile(fileId) {
+            const file = window[fileId];
+            if (!file || !currentFATParser || !currentFATPartition) {
+                alert('File data not available');
+                return;
+            }
+
+            if (!confirm(`Are you sure you want to delete "${file.name}"?\n\nThis will:\n- Clear all file data (write 0xFF)\n- Mark clusters as unused\n- Delete the directory entry`)) {
+                return;
+            }
+
+            // Show loading indicator
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'fat-delete-indicator';
+            loadingDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: white; padding: 20px 40px; border-radius: 8px; z-index: 10000; font-size: 16px;';
+            loadingDiv.textContent = `Deleting ${file.name}...`;
+            document.body.appendChild(loadingDiv);
+
+            try {
+                const result = await currentFATParser.deleteFile(file);
+                
+                if (result.success) {
+                    alert(`File "${file.name}" deleted successfully!\n${result.clustersCleared} clusters cleared.`);
+                    
+                    // Re-parse the partition to refresh the file list
+                    const partitionIdx = parser.partitions.indexOf(currentFATPartition);
+                    if (partitionIdx !== -1) {
+                        parseFATPartition(partitionIdx);
+                    }
+                } else {
+                    alert('Error deleting file: ' + (result.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Delete error:', error);
+                alert('Error deleting file: ' + error.message);
+            } finally {
+                // Remove loading indicator
+                const indicator = document.getElementById('fat-delete-indicator');
+                if (indicator) {
+                    document.body.removeChild(indicator);
+                }
+            }
+        }
+
+        async function addFATFile(dirPath) {
+            if (!currentFATParser || !currentFATPartition) {
+                alert('FAT parser not available');
+                return;
+            }
+
+            // Create modal dialog for file input
+            const modal = document.createElement('div');
+            modal.id = 'add-file-modal';
+            modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 10000; display: flex; align-items: center; justify-content: center;';
+            
+            const dialog = document.createElement('div');
+            dialog.style.cssText = 'background: #2a2b35; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%;';
+            
+            const dirDisplayPath = dirPath || '(root)';
+            dialog.innerHTML = `
+                <h3 style="margin-top: 0;">Add File to ${dirDisplayPath}</h3>
+                <div style="margin: 20px 0;">
+                    <label style="display: block; margin-bottom: 5px;">Filename (8.3 format):</label>
+                    <input type="text" id="add-file-name" placeholder="e.g., config.txt" style="width: 100%; padding: 8px; background: #1e1f29; border: 1px solid #444; color: #e0e0e0; border-radius: 4px;" />
+                    <div style="font-size: 12px; color: #888; margin-top: 5px;">Max 8 characters for name, 3 for extension</div>
+                </div>
+                <div style="margin: 20px 0;">
+                    <label style="display: block; margin-bottom: 5px;">File:</label>
+                    <input type="file" id="add-file-input" style="width: 100%; padding: 8px; background: #1e1f29; border: 1px solid #444; color: #e0e0e0; border-radius: 4px;" />
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button id="add-file-cancel" style="padding: 10px 20px; background: #555; border: none; color: white; border-radius: 4px; cursor: pointer;">Cancel</button>
+                    <button id="add-file-submit" style="padding: 10px 20px; background: #44cc44; border: none; color: white; border-radius: 4px; cursor: pointer;">Add File</button>
+                </div>
+            `;
+            
+            modal.appendChild(dialog);
+            document.body.appendChild(modal);
+
+            // Handle cancel
+            document.getElementById('add-file-cancel').onclick = () => {
+                document.body.removeChild(modal);
+            };
+
+            // Handle submit
+            document.getElementById('add-file-submit').onclick = async () => {
+                const filenameInput = document.getElementById('add-file-name');
+                const fileInput = document.getElementById('add-file-input');
+                
+                let filename = filenameInput.value.trim();
+                const file = fileInput.files[0];
+
+                if (!file) {
+                    alert('Please select a file');
+                    return;
+                }
+
+                // Use uploaded filename if no custom name provided
+                if (!filename) {
+                    filename = file.name;
+                }
+
+                // Construct full path
+                const fullPath = dirPath ? `${dirPath}/${filename}` : filename;
+
+                // Close modal
+                document.body.removeChild(modal);
+
+                // Show loading indicator
+                const loadingDiv = document.createElement('div');
+                loadingDiv.id = 'fat-add-indicator';
+                loadingDiv.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); color: white; padding: 20px 40px; border-radius: 8px; z-index: 10000; font-size: 16px;';
+                loadingDiv.textContent = `Adding ${filename}...`;
+                document.body.appendChild(loadingDiv);
+
+                try {
+                    // Read file data
+                    const arrayBuffer = await file.arrayBuffer();
+                    const data = new Uint8Array(arrayBuffer);
+
+                    // Add file to FAT
+                    const result = await currentFATParser.addFile(fullPath, data);
+
+                    if (result.success) {
+                        alert(`File "${result.filename}" added successfully!\nSize: ${result.size} bytes\nClusters: ${result.clusters}\nStart cluster: 0x${result.startCluster.toString(16).toUpperCase()}`);
+                        
+                        // Re-parse the partition to refresh the file list
+                        const partitionIdx = parser.partitions.indexOf(currentFATPartition);
+                        if (partitionIdx !== -1) {
+                            parseFATPartition(partitionIdx);
+                        }
+                    } else {
+                        alert('Error adding file: ' + (result.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    console.error('Add file error:', error);
+                    alert('Error adding file: ' + error.message);
+                } finally {
+                    // Remove loading indicator
+                    const indicator = document.getElementById('fat-add-indicator');
+                    if (indicator) {
+                        document.body.removeChild(indicator);
+                    }
+                }
+            };
+
+            // Handle ESC key to close modal
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    const modal = document.getElementById('add-file-modal');
+                    if (modal) {
+                        document.body.removeChild(modal);
+                    }
+                    document.removeEventListener('keydown', escHandler);
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+        }
+
         function countTotalFiles(files) {
             let count = files.length;
             files.forEach(file => {
@@ -4447,6 +4646,16 @@
 
                 // Cluster
                 row += `<td class="mono">0x${file.cluster.toString(16).toUpperCase()}</td>`;
+                
+                // Actions (delete/add button)
+                if (!file.isDirectory) {
+                    row += `<td><button class="delete-btn" onclick="event.stopPropagation(); deleteFATFile('${fileId}')" title="Delete file">✕</button></td>`;
+                } else {
+                    // Store directory info for adding files
+                    window[fileId] = file;
+                    row += `<td><button class="add-btn" onclick="event.stopPropagation(); addFATFile('${file.path}')" title="Add file to this directory">+</button></td>`;
+                }
+                
                 row += '</tr>';
 
                 rows.push(row);

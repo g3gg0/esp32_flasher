@@ -889,6 +889,16 @@ class FATParser {
         return translated;
     }
 
+    /*
+     * Read from a logical sector, with wear leveling translation applied
+     * Returns absolute offset in sparseImage for the given logical sector
+     */
+    wlSectorToOffset(wlInfo, logicalSector) {
+        const WL_SECTOR_SIZE = 0x1000;
+        const physicalSector = this.wlTranslateSector(wlInfo, logicalSector);
+        return this.startOffset + physicalSector * WL_SECTOR_SIZE;
+    }
+
     async parse() {
         const WL_SECTOR_SIZE = 0x1000;
         const wlInfo = await this.parseWearLeveling();
@@ -897,7 +907,7 @@ class FATParser {
         }
 
         const sector0Physical = this.wlTranslateSector(wlInfo, 0);
-        const bootSectorOffset = this.startOffset + sector0Physical * WL_SECTOR_SIZE;
+        const bootSectorOffset = this.wlSectorToOffset(wlInfo, 0);
         if (bootSectorOffset + 512 > this.sparseImage.size) {
             return { error: 'Cannot read FAT boot sector' };
         }
@@ -938,13 +948,12 @@ class FATParser {
             volumeLabel += String.fromCharCode(c);
         }
 
-        const rootDirOffset = this.startOffset +
-            this.wlTranslateSector(wlInfo, reservedSectors + numFATs * sectorsPerFAT) * WL_SECTOR_SIZE;
+        const rootDirOffset = this.wlSectorToOffset(wlInfo, reservedSectors + numFATs * sectorsPerFAT);
 
         const files = await this.parseDirectory(wlInfo, rootDirOffset, rootEntryCount,
             bytesPerSector, sectorsPerCluster, reservedSectors, numFATs, sectorsPerFAT, '', true);
 
-        const fatInfo = {
+        this.fatInfo = {
             fatType: fatType,
             volumeLabel: volumeLabel || '(no label)',
             bytesPerSector: bytesPerSector,
@@ -957,8 +966,8 @@ class FATParser {
             files: files,
             wearLeveling: wlInfo
         };
-        this.fatInfo = fatInfo;
-        return fatInfo;
+
+        return this.fatInfo;
     }
 
     async parseDirectory(wlInfo, dirOffset, maxEntries, bytesPerSector, sectorsPerCluster,
@@ -1024,15 +1033,16 @@ class FATParser {
                 attributes: attributes,
                 isDirectory: isDirectory,
                 date: `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`,
-                time: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`
+                time: `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`,
+                directorySector: dirOffset,
+                directoryEntry: i
             };
 
             files.push(fileEntry);
 
             if (isDirectory && cluster >= 2 && cluster < 0xFFF0) {
                 const clusterSector = firstDataSector + (cluster - 2) * sectorsPerCluster;
-                const clusterOffset = this.startOffset +
-                    this.wlTranslateSector(wlInfo, clusterSector) * WL_SECTOR_SIZE;
+                const clusterOffset = this.wlSectorToOffset(wlInfo, clusterSector);
 
                 if (clusterOffset + sectorsPerCluster * WL_SECTOR_SIZE <= this.sparseImage.size) {
                     const subFiles = await this.parseDirectory(wlInfo, clusterOffset, null,
@@ -1055,7 +1065,7 @@ class FATParser {
         if (fatType === 'FAT12') {
             const entryOffset = fatOffset + Math.floor(cluster * 1.5);
             const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
-            const sectorOffset = this.startOffset + this.wlTranslateSector(wlInfo, sector) * WL_SECTOR_SIZE;
+            const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
             const byteOffset = entryOffset % WL_SECTOR_SIZE;
             const val = await this.view.getUint16(sectorOffset + byteOffset, true);
             if (cluster & 1) {
@@ -1066,13 +1076,13 @@ class FATParser {
         } else if (fatType === 'FAT16') {
             const entryOffset = fatOffset + cluster * 2;
             const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
-            const sectorOffset = this.startOffset + this.wlTranslateSector(wlInfo, sector) * WL_SECTOR_SIZE;
+            const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
             const byteOffset = entryOffset % WL_SECTOR_SIZE;
             return await this.view.getUint16(sectorOffset + byteOffset, true);
         } else {
             const entryOffset = fatOffset + cluster * 4;
             const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
-            const sectorOffset = this.startOffset + this.wlTranslateSector(wlInfo, sector) * WL_SECTOR_SIZE;
+            const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
             const byteOffset = entryOffset % WL_SECTOR_SIZE;
             return (await this.view.getUint32(sectorOffset + byteOffset, true)) & 0x0FFFFFFF;
         }
@@ -1100,8 +1110,7 @@ class FATParser {
 
         for (const cluster of clusters) {
             const clusterSector = firstDataSector + (cluster - 2) * fatInfo.sectorsPerCluster;
-            const clusterOffset = this.startOffset +
-                this.wlTranslateSector(wlInfo, clusterSector) * WL_SECTOR_SIZE;
+            const clusterOffset = this.wlSectorToOffset(wlInfo, clusterSector);
 
             const bytesToRead = Math.min(bytesPerCluster, fileEntry.size - bytesRead);
             if (clusterOffset + bytesToRead <= this.sparseImage.size) {
@@ -1113,7 +1122,380 @@ class FATParser {
 
         return new Blob([fileData], { type: 'application/octet-stream' });
     }
+
+    /*
+     * Delete a file by:
+     * 1. Clearing all its clusters with 0xFF
+     * 2. Setting FAT entries to unused (0x0000)
+     * 3. Marking the directory entry as deleted (0xE5)
+     */
+    async deleteFile(fileEntry) {
+        const WL_SECTOR_SIZE = 0x1000;
+        const fatInfo = this.fatInfo;
+        const wlInfo = fatInfo.wearLeveling;
+        const bytesPerCluster = fatInfo.bytesPerSector * fatInfo.sectorsPerCluster;
+        const firstDataSector = fatInfo.reservedSectors + fatInfo.numFATs * fatInfo.sectorsPerFAT +
+            Math.ceil(512 * 32 / fatInfo.bytesPerSector);
+
+        /* Step 1: Get all clusters used by the file */
+        const clusters = [];
+        let currentCluster = fileEntry.cluster;
+        const maxClusters = Math.ceil(fileEntry.size / bytesPerCluster) + 10;
+
+        while (currentCluster >= 2 && currentCluster < 0xFFF0 && clusters.length < maxClusters) {
+            clusters.push(currentCluster);
+            currentCluster = await this.readFATEntry(currentCluster);
+        }
+
+        /* Step 2: Clear all clusters with 0xFF */
+        const clearData = new Uint8Array(WL_SECTOR_SIZE);
+        clearData.fill(0xFF);
+
+        for (const cluster of clusters) {
+            const clusterSector = firstDataSector + (cluster - 2) * fatInfo.sectorsPerCluster;
+            const clusterOffset = this.wlSectorToOffset(wlInfo, clusterSector);
+
+            /* Write 0xFF to each sector in the cluster */
+            for (let i = 0; i < fatInfo.sectorsPerCluster; i++) {
+                const sectorOffset = clusterOffset + i * WL_SECTOR_SIZE;
+                this.sparseImage.write(sectorOffset, clearData);
+            }
+        }
+
+        /* Step 3: Mark FAT entries as unused (0x0000) */
+        for (const cluster of clusters) {
+            const fatOffset = fatInfo.reservedSectors * WL_SECTOR_SIZE;
+            const fatType = fatInfo.fatType;
+
+            if (fatType === 'FAT12') {
+                const entryOffset = fatOffset + Math.floor(cluster * 1.5);
+                const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
+                const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
+                const byteOffset = entryOffset % WL_SECTOR_SIZE;
+
+                /* Read current FAT entry */
+                const val = await this.view.getUint16(sectorOffset + byteOffset, true);
+                let newVal = val;
+
+                if (cluster & 1) {
+                    /* Odd cluster: upper 12 bits */
+                    newVal = (val & 0x0FFF);
+                } else {
+                    /* Even cluster: lower 12 bits */
+                    newVal = (val & 0xF000);
+                }
+
+                /* Write back the modified FAT entry */
+                const writeData = new Uint8Array(2);
+                new DataView(writeData.buffer).setUint16(0, newVal, true);
+                this.sparseImage.write(sectorOffset + byteOffset, writeData);
+
+            } else if (fatType === 'FAT16') {
+                const entryOffset = fatOffset + cluster * 2;
+                const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
+                const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
+                const byteOffset = entryOffset % WL_SECTOR_SIZE;
+
+                const writeData = new Uint8Array(2);
+                writeData.fill(0x00);
+                this.sparseImage.write(sectorOffset + byteOffset, writeData);
+
+            } else {
+                /* FAT32 */
+                const entryOffset = fatOffset + cluster * 4;
+                const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
+                const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
+                const byteOffset = entryOffset % WL_SECTOR_SIZE;
+
+                const writeData = new Uint8Array(4);
+                writeData.fill(0x00);
+                this.sparseImage.write(sectorOffset + byteOffset, writeData);
+            }
+        }
+
+        /* Step 4: Mark directory entry as deleted (0xE5) */
+        if (fileEntry.directorySector !== undefined && fileEntry.directoryEntry !== undefined) {
+            const entryOffset = fileEntry.directorySector + fileEntry.directoryEntry * 32;
+            const deleteMarker = new Uint8Array(1);
+            deleteMarker[0] = 0xE5;
+            this.sparseImage.write(entryOffset, deleteMarker);
+        }
+
+        return { success: true, clustersCleared: clusters.length };
+    }
+
+    /*
+     * Add a file to the FAT filesystem
+     * @param {string} path - Full path including filename (e.g., "dir/subdir/file.txt")
+     * @param {Uint8Array} data - Binary data to write
+     * @returns {Object} - Result with success status and details
+     */
+    async addFile(path, data) {
+        const WL_SECTOR_SIZE = 0x1000;
+        const fatInfo = this.fatInfo;
+        const wlInfo = fatInfo.wearLeveling;
+        const bytesPerCluster = fatInfo.bytesPerSector * fatInfo.sectorsPerCluster;
+        const firstDataSector = fatInfo.reservedSectors + fatInfo.numFATs * fatInfo.sectorsPerFAT +
+            Math.ceil(512 * 32 / fatInfo.bytesPerSector);
+
+        /* Parse path into directory path and filename */
+        const parts = path.split('/').filter(p => p.length > 0);
+        const filename = parts.pop();
+        const dirPath = parts.join('/');
+
+        if (!filename || filename.length > 12) {
+            return { success: false, error: 'Invalid filename (max 8.3 format)' };
+        }
+
+        /* Parse filename into name and extension */
+        const nameParts = filename.split('.');
+        let name = nameParts[0].toUpperCase().padEnd(8, ' ').substring(0, 8);
+        let ext = (nameParts[1] || '').toUpperCase().padEnd(3, ' ').substring(0, 3);
+
+        /* Step 1: Find the target directory */
+        const dirEntry = await this._findDirectory(dirPath);
+        if (!dirEntry.found) {
+            return { success: false, error: `Directory not found: ${dirPath || '(root)'}` };
+        }
+
+        /* Step 2: Find a free directory entry (prioritize deleted entries 0xE5) */
+        const freeEntry = await this._findFreeDirectoryEntry(dirEntry.offset, dirEntry.isRoot, dirEntry.maxEntries);
+        if (!freeEntry) {
+            return { success: false, error: 'No free directory entries available' };
+        }
+
+        /* Step 3: Allocate clusters for the file */
+        const clustersNeeded = Math.ceil(data.length / bytesPerCluster);
+        const allocatedClusters = await this._allocateClusters(clustersNeeded);
+        if (allocatedClusters.length < clustersNeeded) {
+            return { success: false, error: 'Not enough free clusters' };
+        }
+
+        /* Step 4: Write data to allocated clusters */
+        let bytesWritten = 0;
+        for (let i = 0; i < allocatedClusters.length; i++) {
+            const cluster = allocatedClusters[i];
+            const clusterSector = firstDataSector + (cluster - 2) * fatInfo.sectorsPerCluster;
+            const clusterOffset = this.wlSectorToOffset(wlInfo, clusterSector);
+
+            const bytesToWrite = Math.min(bytesPerCluster, data.length - bytesWritten);
+            const clusterData = data.slice(bytesWritten, bytesWritten + bytesToWrite);
+
+            /* Write data to cluster */
+            this.sparseImage.write(clusterOffset, clusterData);
+
+            /* If less than full cluster, fill remainder with 0xFF */
+            if (bytesToWrite < bytesPerCluster) {
+                const fillData = new Uint8Array(bytesPerCluster - bytesToWrite);
+                fillData.fill(0xFF);
+                this.sparseImage.write(clusterOffset + bytesToWrite, fillData);
+            }
+
+            bytesWritten += bytesToWrite;
+        }
+
+        /* Step 5: Update FAT chain */
+        for (let i = 0; i < allocatedClusters.length; i++) {
+            const cluster = allocatedClusters[i];
+            const nextCluster = (i < allocatedClusters.length - 1) ? allocatedClusters[i + 1] : 0xFFFF;
+            await this._writeFATEntry(cluster, nextCluster);
+        }
+
+        /* Step 6: Write directory entry */
+        const now = new Date();
+        const dirEntryData = new Uint8Array(32);
+        
+        /* Filename (8 bytes) + Extension (3 bytes) */
+        for (let i = 0; i < 8; i++) dirEntryData[i] = name.charCodeAt(i);
+        for (let i = 0; i < 3; i++) dirEntryData[8 + i] = ext.charCodeAt(i);
+        
+        /* Attributes (1 byte): 0x20 = Archive */
+        dirEntryData[11] = 0x20;
+        
+        /* Reserved (10 bytes) */
+        for (let i = 12; i < 22; i++) dirEntryData[i] = 0x00;
+        
+        /* Time (2 bytes) */
+        const time = ((now.getHours() & 0x1F) << 11) | 
+                     ((now.getMinutes() & 0x3F) << 5) | 
+                     ((now.getSeconds() / 2) & 0x1F);
+        new DataView(dirEntryData.buffer).setUint16(22, time, true);
+        
+        /* Date (2 bytes) */
+        const date = (((now.getFullYear() - 1980) & 0x7F) << 9) | 
+                     (((now.getMonth() + 1) & 0x0F) << 5) | 
+                     (now.getDate() & 0x1F);
+        new DataView(dirEntryData.buffer).setUint16(24, date, true);
+        
+        /* First cluster (2 bytes) */
+        new DataView(dirEntryData.buffer).setUint16(26, allocatedClusters[0], true);
+        
+        /* File size (4 bytes) */
+        new DataView(dirEntryData.buffer).setUint32(28, data.length, true);
+
+        /* Write directory entry */
+        this.sparseImage.write(freeEntry.offset, dirEntryData);
+
+        return { 
+            success: true, 
+            filename: filename,
+            size: data.length,
+            clusters: allocatedClusters.length,
+            startCluster: allocatedClusters[0]
+        };
+    }
+
+    /* Helper: Find directory by path */
+    async _findDirectory(path) {
+        const WL_SECTOR_SIZE = 0x1000;
+        const fatInfo = this.fatInfo;
+        const wlInfo = fatInfo.wearLeveling;
+        
+        /* Root directory */
+        if (!path || path === '') {
+            const rootDirSector = fatInfo.reservedSectors + fatInfo.numFATs * fatInfo.sectorsPerFAT;
+            const rootDirOffset = this.wlSectorToOffset(wlInfo, rootDirSector);
+            const maxEntries = 512; // Standard for FAT16 root directory
+            
+            return { 
+                found: true, 
+                offset: rootDirOffset, 
+                isRoot: true,
+                maxEntries: maxEntries
+            };
+        }
+
+        /* Navigate to subdirectory */
+        const parts = path.split('/').filter(p => p.length > 0);
+        let currentDir = fatInfo.files;
+        
+        for (const part of parts) {
+            const found = currentDir.find(f => f.isDirectory && f.name.toLowerCase() === part.toLowerCase());
+            if (!found) {
+                return { found: false, error: `Directory not found: ${part}` };
+            }
+            currentDir = found.children || [];
+            
+            /* Get directory cluster offset */
+            if (found.cluster >= 2 && found.cluster < 0xFFF0) {
+                const firstDataSector = fatInfo.reservedSectors + fatInfo.numFATs * fatInfo.sectorsPerFAT +
+                    Math.ceil(512 * 32 / fatInfo.bytesPerSector);
+                const clusterSector = firstDataSector + (found.cluster - 2) * fatInfo.sectorsPerCluster;
+                const clusterOffset = this.wlSectorToOffset(wlInfo, clusterSector);
+                
+                return { 
+                    found: true, 
+                    offset: clusterOffset, 
+                    isRoot: false,
+                    maxEntries: null // Subdirectory size limited by cluster
+                };
+            }
+        }
+        
+        return { found: false, error: 'Invalid directory structure' };
+    }
+
+    /* Helper: Find free directory entry, prioritizing deleted entries */
+    async _findFreeDirectoryEntry(dirOffset, isRoot, maxEntries) {
+        const WL_SECTOR_SIZE = 0x1000;
+        const maxIter = maxEntries || 512;
+        let firstFreeEntry = null;
+
+        for (let i = 0; i < maxIter; i++) {
+            const entryOffset = dirOffset + i * 32;
+            if (entryOffset + 32 > this.sparseImage.size) break;
+            
+            const firstByte = await this.view.getUint8(entryOffset);
+            
+            /* Deleted entry (0xE5) - prioritize this */
+            if (firstByte === 0xE5) {
+                return { offset: entryOffset, index: i, wasDeleted: true };
+            }
+            
+            /* End of directory (0x00) - use this if no deleted entry found */
+            if (firstByte === 0x00) {
+                if (!firstFreeEntry) {
+                    firstFreeEntry = { offset: entryOffset, index: i, wasDeleted: false };
+                }
+                break;
+            }
+        }
+
+        return firstFreeEntry;
+    }
+
+    /* Helper: Allocate free clusters */
+    async _allocateClusters(count) {
+        const WL_SECTOR_SIZE = 0x1000;
+        const fatInfo = this.fatInfo;
+        const wlInfo = fatInfo.wearLeveling;
+        const allocated = [];
+
+        /* Scan FAT for free clusters (value 0x0000) */
+        for (let cluster = 2; cluster < fatInfo.totalClusters && allocated.length < count; cluster++) {
+            const entry = await this.readFATEntry(cluster);
+            if (entry === 0x0000) {
+                allocated.push(cluster);
+            }
+        }
+
+        return allocated;
+    }
+
+    /* Helper: Write FAT entry */
+    async _writeFATEntry(cluster, value) {
+        const WL_SECTOR_SIZE = 0x1000;
+        const fatInfo = this.fatInfo;
+        const wlInfo = fatInfo.wearLeveling;
+        const fatOffset = fatInfo.reservedSectors * WL_SECTOR_SIZE;
+        const fatType = fatInfo.fatType;
+
+        if (fatType === 'FAT12') {
+            const entryOffset = fatOffset + Math.floor(cluster * 1.5);
+            const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
+            const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
+            const byteOffset = entryOffset % WL_SECTOR_SIZE;
+
+            /* Read current value */
+            const currentVal = await this.view.getUint16(sectorOffset + byteOffset, true);
+            let newVal;
+
+            if (cluster & 1) {
+                /* Odd cluster: upper 12 bits */
+                newVal = (currentVal & 0x000F) | ((value & 0x0FFF) << 4);
+            } else {
+                /* Even cluster: lower 12 bits */
+                newVal = (currentVal & 0xF000) | (value & 0x0FFF);
+            }
+
+            const writeData = new Uint8Array(2);
+            new DataView(writeData.buffer).setUint16(0, newVal, true);
+            this.sparseImage.write(sectorOffset + byteOffset, writeData);
+
+        } else if (fatType === 'FAT16') {
+            const entryOffset = fatOffset + cluster * 2;
+            const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
+            const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
+            const byteOffset = entryOffset % WL_SECTOR_SIZE;
+
+            const writeData = new Uint8Array(2);
+            new DataView(writeData.buffer).setUint16(0, value & 0xFFFF, true);
+            this.sparseImage.write(sectorOffset + byteOffset, writeData);
+
+        } else {
+            /* FAT32 */
+            const entryOffset = fatOffset + cluster * 4;
+            const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
+            const sectorOffset = this.wlSectorToOffset(wlInfo, sector);
+            const byteOffset = entryOffset % WL_SECTOR_SIZE;
+
+            const writeData = new Uint8Array(4);
+            new DataView(writeData.buffer).setUint32(0, value & 0x0FFFFFFF, true);
+            this.sparseImage.write(sectorOffset + byteOffset, writeData);
+        }
+    }
 }
+
 
 
 
