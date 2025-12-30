@@ -4134,8 +4134,7 @@
             return item.value;
         }
 
-        let currentFATInfo = null;
-        let currentFATPartition = null;
+        let currentFATParser = null;
         let currentSPIFFSInfo = null;
         let currentSPIFFSPartition = null;
 
@@ -4308,33 +4307,32 @@
             // Use setTimeout to allow UI to update
             setTimeout(async () => {
                 try {
-                    const fatInfo = await parser.parseFATFilesystem(partition);
+                    const fatParser = await parser.parseFATFilesystem(partition);
 
-                    if (fatInfo.error) {
-                        contentDiv.innerHTML = `<div class="error">${fatInfo.error}</div>`;
+                    if (fatParser.fatInfo.error) {
+                        contentDiv.innerHTML = `<div class="error">${fatParser.fatInfo.error}</div>`;
                         return;
                     }
 
-                    // Store for file downloads
-                    currentFATInfo = fatInfo;
-                    currentFATPartition = partition;
+                    // Store parser instance for file downloads
+                    currentFATParser = fatParser;
 
                     let html = '<div class="success" style="margin-bottom: 10px;">FAT filesystem parsed successfully</div>';
 
                     // Filesystem info
                     html += '<h4 style="margin-top: 15px;">Filesystem Information</h4>';
                     html += '<div class="info-grid">';
-                    html += `<div class="info-item"><label>Type:</label><span>${fatInfo.fatType}</span></div>`;
-                    html += `<div class="info-item"><label>Volume Label:</label><span>${fatInfo.volumeLabel}</span></div>`;
-                    html += `<div class="info-item"><label>Bytes/Sector:</label><span>${fatInfo.bytesPerSector}</span></div>`;
-                    html += `<div class="info-item"><label>Sectors/Cluster:</label><span>${fatInfo.sectorsPerCluster}</span></div>`;
-                    html += `<div class="info-item"><label>Total Sectors:</label><span>${fatInfo.totalSectors}</span></div>`;
-                    html += `<div class="info-item"><label>Total Clusters:</label><span>${fatInfo.totalClusters}</span></div>`;
+                    html += `<div class="info-item"><label>Type:</label><span>${fatParser.fatInfo.fatType}</span></div>`;
+                    html += `<div class="info-item"><label>Volume Label:</label><span>${fatParser.fatInfo.volumeLabel}</span></div>`;
+                    html += `<div class="info-item"><label>Bytes/Sector:</label><span>${fatParser.fatInfo.bytesPerSector}</span></div>`;
+                    html += `<div class="info-item"><label>Sectors/Cluster:</label><span>${fatParser.fatInfo.sectorsPerCluster}</span></div>`;
+                    html += `<div class="info-item"><label>Total Sectors:</label><span>${fatParser.fatInfo.totalSectors}</span></div>`;
+                    html += `<div class="info-item"><label>Total Clusters:</label><span>${fatParser.fatInfo.totalClusters}</span></div>`;
                     html += '</div>';
 
                     // Wear leveling info
-                    if (fatInfo.wearLeveling && fatInfo.wearLeveling.wlState) {
-                        const wl = fatInfo.wearLeveling.wlState;
+                    if (fatParser.fatInfo.wearLeveling && fatParser.fatInfo.wearLeveling.wlState) {
+                        const wl = fatParser.fatInfo.wearLeveling.wlState;
                         html += '<h4 style="margin-top: 15px;">Wear Leveling</h4>';
                         html += '<div class="info-grid">';
                         html += `<div class="info-item"><label>Move Count:</label><span>${wl.moveCount}</span></div>`;
@@ -4347,13 +4345,13 @@
                     }
 
                     // Files list
-                    html += '<h4 style="margin-top: 15px;">Files (' + countTotalFiles(fatInfo.files) + ' total entries)</h4>';
-                    if (fatInfo.files.length > 0) {
+                    html += '<h4 style="margin-top: 15px;">Files (' + countTotalFiles(fatParser.fatInfo.files) + ' total entries)</h4>';
+                    if (fatParser.fatInfo.files.length > 0) {
                         html += '<table style="margin-top: 10px;"><thead><tr>';
                         html += '<th>Path</th><th>Size</th><th>Attributes</th><th>Date</th><th>Time</th><th>Cluster</th>';
                         html += '</tr></thead><tbody>';
 
-                        renderFATFiles(fatInfo.files, 0).forEach(row => {
+                        renderFATFiles(fatParser.fatInfo.files, 0).forEach(row => {
                             html += row;
                         });
 
@@ -4372,7 +4370,7 @@
 
         async function downloadFATFile(fileId) {
             const file = window[fileId];
-            if (!file || !currentFATInfo || !currentFATPartition) {
+            if (!file || !currentFATParser) {
                 alert('File data not available');
                 return;
             }
@@ -4385,7 +4383,7 @@
             document.body.appendChild(loadingDiv);
 
             try {
-                const blob = await parser.extractFATFile(currentFATPartition, currentFATInfo, file);
+                const blob = await currentFATParser.extractFile(file);
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
