@@ -4457,10 +4457,6 @@
                 return;
             }
 
-            if (!confirm(`Are you sure you want to delete "${file.name}"?\n\nThis will:\n- Clear all file data (write 0xFF)\n- Mark clusters as unused\n- Delete the directory entry`)) {
-                return;
-            }
-
             // Show loading indicator
             const loadingDiv = document.createElement('div');
             loadingDiv.id = 'fat-delete-indicator';
@@ -4472,7 +4468,7 @@
                 const result = await currentFATParser.deleteFile(file);
                 
                 if (result.success) {
-                    alert(`File "${file.name}" deleted successfully!\n${result.clustersCleared} clusters cleared.`);
+                    console.log(`File "${file.name}" deleted successfully!\n${result.clustersCleared} clusters cleared.`);
                     
                     // Re-parse the partition to refresh the file list
                     const partitionIdx = parser.partitions.indexOf(currentFATPartition);
