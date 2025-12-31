@@ -1742,11 +1742,17 @@ class SpiffsParser {
 }
 
 class OTADataParser {
-    constructor(sparseImage) {
+    constructor(sparseImage, offset, length) {
         if (!sparseImage) {
             throw new Error('OTADataParser requires a SparseImage');
         }
+        if (offset === undefined || length === undefined) {
+            throw new Error('OTADataParser requires offset and length parameters');
+        }
         this.sparseImage = sparseImage;
+        this.offset = offset;
+        this.length = length;
+        this.otaInfo = null;
         
         // CRC32 lookup table for esp_rom_crc32_le
         this.crc32_le_table = new Uint32Array([
@@ -1787,9 +1793,9 @@ class OTADataParser {
     }
     
 
-    async parse(partition) {
+    async initialize() {
         const OTA_DATA_SIZE = 0x1000;  // 4096 bytes (one sector)
-        const data = await this.sparseImage.subarray_async(partition.offset, partition.offset + (OTA_DATA_SIZE * 2));
+        const data = await this.sparseImage.subarray_async(this.offset, this.offset + (OTA_DATA_SIZE * 2));
         
         // ESP32 IDF uses two sectors to store information about which partition is running
         // They are defined as the OTA data partition, two esp_ota_select_entry_t structures
@@ -1853,10 +1859,12 @@ class OTADataParser {
             activeEntry = 1;
         }
 
-        return {
+        this.otaInfo = {
             entries: entries,
             activeEntry: activeEntry
         };
+
+        return this.otaInfo;
     }
 
     getOTAStateName(state) {
@@ -3184,27 +3192,6 @@ class ESP32Parser {
         return result;
     }
 
-    // Parse NVS (Non-Volatile Storage) — returns NVSParser instance
-    async parseNVS(partition) {
-        if (!this.sparseImage) {
-            throw new Error('ESP32Parser has no SparseImage for NVS parsing');
-        }
-        const nvsParser = new NVSParser(this.sparseImage, partition.offset, partition.length);
-        await nvsParser.initialize();
-        return nvsParser;
-    }
-
-    // Parse OTA data partition — delegated to OTADataParser class
-    async parseOTAData(partition) {
-        if (!this.sparseImage) {
-            throw new Error('ESP32Parser has no SparseImage for OTA data parsing');
-        }
-        if (!this._otaDataParser) {
-            this._otaDataParser = new OTADataParser(this.sparseImage);
-        }
-        return await this._otaDataParser.parse(partition);
-    }
-
     // NVS helpers are now encapsulated in NVSParser
 
     // Get chip name from chip ID
@@ -3463,11 +3450,48 @@ class ESP32Parser {
         }
     }
 
-    // Parse FAT filesystem with wear leveling - returns the FATParser instance
+    /**
+     * Parse FAT partition
+     */
     async parseFATFilesystem(partition) {
+        if (!this.sparseImage) {
+            throw new Error('ESP32Parser has no SparseImage');
+        }
         const parser = new FATParser(this.sparseImage, partition.offset, partition.length);
         await parser.initialize();
         return parser;
+    }
+
+    /**
+     * Parse SPIFFS partition
+     */
+    async parseSPIFFS(partition) {
+        if (!this.sparseImage) {
+            throw new Error('ESP32Parser has no SparseImage');
+        }
+        const spiffsParser = new SpiffsParser(this.sparseImage, partition.offset, partition.length);
+        await spiffsParser.initialize();
+        return spiffsParser;
+    }
+
+    // Parse NVS (Non-Volatile Storage) — returns NVSParser instance
+    async parseNVS(partition) {
+        if (!this.sparseImage) {
+            throw new Error('ESP32Parser has no SparseImage');
+        }
+        const nvsParser = new NVSParser(this.sparseImage, partition.offset, partition.length);
+        await nvsParser.initialize();
+        return nvsParser;
+    }
+
+    // Parse OTA data partition — delegated to OTADataParser class
+    async parseOTAData(partition) {
+        if (!this.sparseImage) {
+            throw new Error('ESP32Parser has no SparseImage');
+        }
+        const otaDataParser = new OTADataParser(this.sparseImage, partition.offset, partition.length);
+        await otaDataParser.initialize();
+        return otaDataParser;
     }
 
     // Get partition by label
@@ -3479,16 +3503,6 @@ class ESP32Parser {
     async exportPartitionData(partition) {
         const data = await this.buffer.slice_async(partition.offset, partition.offset + partition.length);
         return new Blob([data], { type: 'application/octet-stream' });
-    }
-
-    /**
-     * Parse SPIFFS partition
-     * SPIFFS (SPI Flash File System) is a file system for embedded devices
-     */
-    async parseSPIFFS(partition) {
-        const spiffsParser = new SpiffsParser(this.sparseImage, partition.offset, partition.length);
-        await spiffsParser.initialize();
-        return spiffsParser;
     }
 
     /**
@@ -3550,7 +3564,7 @@ class ESP32Parser {
         const otaDataPart = this.partitions.find(p => p.type === 1 && p.subType === 0x00);
         if (otaDataPart) {
             try {
-                const otaInfo = await this.parseOTAData(otaDataPart);
+                const otaInfo = (await this.parseOTAData(otaDataPart)).otaInfo;
                 if (otaInfo && Array.isArray(otaInfo.entries) && otaInfo.entries.length === 2) {
                     /* Consider otadata valid if both CRCs are valid OR at least one valid entry exists */
                     const crcAll = otaInfo.entries.every(e => e.crcValid);

@@ -2975,7 +2975,7 @@
             const otaDataPartition = partitions.find(p => p.type === 1 && p.subType === 0x00);
             if (otaDataPartition) {
                 try {
-                    const otaResult = await parser.parseOTAData(otaDataPartition);
+                    const otaResult = (await parser.parseOTAData(otaDataPartition)).otaInfo;
                     if (otaResult.activeEntry !== null) {
                         const active = otaResult.entries[otaResult.activeEntry];
                         // Count OTA partitions
@@ -3911,7 +3911,7 @@
             contentDiv.innerHTML = '<div class="loading">⏳ Parsing OTA data...</div>';
 
             try {
-                const result = await parser.parseOTAData(partition);
+                const result = (await parser.parseOTAData(partition)).otaInfo;
                 console.log('OTA data result:', result);
                 const { entries, activeEntry } = result;
 
