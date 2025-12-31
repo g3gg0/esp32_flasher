@@ -2398,15 +2398,17 @@ class NVSParser {
     }
 
     /**
-     * Delete an item by namespace + key
+     * Delete an item by namespace + key, and also delete the vice versa entry (Blob <-> BlobIndex)
      */
     async deleteItem(namespace, key) {
         const NVS_SECTOR_SIZE = 4096;
         const MAX_ENTRY_COUNT = 126;
+        const BLOB_TYPE = 0x42;
+        const BLOB_INDEX_TYPE = 0x48;
 
         console.log(`[NVS Delete] Starting delete for ${namespace}.${key}`);
         
-        // Build namespace map first
+        /* Build namespace map first */
         const namespaceMap = await this.buildNamespaceMap();
         console.log(`[NVS Delete] Namespace map:`, namespaceMap);
         
@@ -2416,6 +2418,8 @@ class NVSParser {
             throw new Error(`NVS namespace ${namespace} not found`);
         }
         console.log(`[NVS Delete] Target namespace "${namespace}" has index ${nsIndex}`);
+
+        let foundItemType = null;
 
         for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = this.startOffset + sectorOffset;
@@ -2448,13 +2452,14 @@ class NVSParser {
 
                 console.log(`[NVS Delete]   Entry ${entry}: ns=${itemNsIndex}, type=0x${datatype.toString(16)}, span=${span}, key="${itemKey}"`);
 
-                // Skip namespace definitions
+                /* Skip namespace definitions */
                 if (itemNsIndex === 0) {
                     entry += span - 1;
                     continue;
                 }
 
                 if (itemNsIndex === nsIndex && itemKey === key) {
+                    foundItemType = datatype;
                     console.log(`[NVS Delete]   Found target item at entry ${entry}, offset 0x${entryOffset.toString(16)}, span=${span}. Erasing...`);
                     for (let slice = 0; slice < span; slice++) {
                         const sliceOffset = entryOffset + slice * 32;
@@ -2465,15 +2470,69 @@ class NVSParser {
                     }
                     this.sparseImage.write(blockOffset + 32, stateBitmap);
                     console.log(`[NVS Delete]   Erase complete and state bitmap updated for page at 0x${blockOffset.toString(16)}`);
-                    return;
+                    break;
                 }
 
                 entry += span - 1;
             }
+
+            if (foundItemType !== null) break;
         }
 
-        console.log(`[NVS Delete] Item ${namespace}.${key} not found (nsIndex=${nsIndex})`);
-        throw new Error(`NVS item ${namespace}.${key} not found`);
+        if (foundItemType === null) {
+            console.log(`[NVS Delete] Item ${namespace}.${key} not found (nsIndex=${nsIndex})`);
+            throw new Error(`NVS item ${namespace}.${key} not found`);
+        }
+
+        /* If deleting a Blob (0x42), also delete the BlobIndex (0x48) */
+        /* If deleting a BlobIndex (0x48), also delete the Blob chunks (0x42) */
+        if (foundItemType === BLOB_TYPE || foundItemType === BLOB_INDEX_TYPE) {
+            const complementaryType = (foundItemType === BLOB_TYPE) ? BLOB_INDEX_TYPE : BLOB_TYPE;
+            console.log(`[NVS Delete] Item is a Blob${foundItemType === BLOB_TYPE ? 'Index' : ''}, searching for complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry...`);
+
+            for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
+                const blockOffset = this.startOffset + sectorOffset;
+                if (blockOffset + 64 > this.sparseImage.size) break;
+                const state = await this.view.getUint32(blockOffset, true);
+                if (state === 0xFFFFFFFF || state === 0xFFFFFFF0) continue;
+
+                const stateBitmap = new Uint8Array(32);
+                for (let i = 0; i < 32; i++) stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
+
+                for (let entry = 0; entry < MAX_ENTRY_COUNT; entry++) {
+                    const itemState = this.getNVSItemState(stateBitmap, entry);
+                    if (itemState !== 2) continue;
+
+                    const entryOffset = blockOffset + 64 + entry * 32;
+                    if (entryOffset + 32 > this.sparseImage.size) break;
+
+                    const itemNsIndex = await this.view.getUint8(entryOffset);
+                    const datatype = await this.view.getUint8(entryOffset + 1);
+                    const span = await this.view.getUint8(entryOffset + 2);
+                    const itemKey = await this.readString(entryOffset + 8, 16);
+
+                    /* Skip if not the complementary type or wrong namespace/key */
+                    if (datatype !== complementaryType || itemNsIndex !== nsIndex || itemKey !== key) {
+                        entry += span - 1;
+                        continue;
+                    }
+
+                    console.log(`[NVS Delete]   Found complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry at entry ${entry}, offset 0x${entryOffset.toString(16)}, span=${span}. Erasing...`);
+                    for (let slice = 0; slice < span; slice++) {
+                        const sliceOffset = entryOffset + slice * 32;
+                        const erasedEntry = new Uint8Array(32);
+                        erasedEntry.fill(0xFF);
+                        this.sparseImage.write(sliceOffset, erasedEntry);
+                        this.setNVSItemState(stateBitmap, entry + slice, 3);
+                    }
+                    this.sparseImage.write(blockOffset + 32, stateBitmap);
+                    console.log(`[NVS Delete]   Complementary entry erase complete`);
+                    return;
+                }
+            }
+
+            console.log(`[NVS Delete] No complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry found for ${namespace}.${key}`);
+        }
     }
 
     /**
