@@ -470,6 +470,14 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                         WebUSB
                     </label>
                 </div>
+                <div class="input-group" id="baudSelectGroup" style="display: none;">
+                    <label for="baudRateSelect">Baud Rate (advanced):</label>
+                    <select id="baudRateSelect">
+                        <option value="115200">115200</option>
+                        <option value="921600" selected>921600</option>
+                        <option value="1000000">1000000</option>
+                    </select>
+                </div>
                 <div class="button-group">
                     <button id="connectBtn" onclick="connectDevice()">Connect Device</button>
                     <button id="disconnectBtn" onclick="disconnectDevice()" disabled>Disconnect</button>
@@ -630,6 +638,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         let devicePopupTimer = null;
         let devicePopupContent = '';
         let isDebugMode = window.location.hash.includes('debug');
+        let selectedBaudRate = 921600;
 
         // Register presets for each chip type
         const registerPresets = {
@@ -823,12 +832,44 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             }
         }
 
+        function setupAdvancedControls() {
+            const group = document.getElementById('baudSelectGroup');
+            const select = document.getElementById('baudRateSelect');
+
+            if (!group || !select) {
+                return;
+            }
+
+            if (!isDebugMode) {
+                group.style.display = 'none';
+                return;
+            }
+
+            group.style.display = 'block';
+            select.value = selectedBaudRate.toString();
+
+            select.addEventListener('change', () => {
+                const nextBaud = parseInt(select.value, 10);
+                if (!Number.isFinite(nextBaud)) {
+                    return;
+                }
+                selectedBaudRate = nextBaud;
+                if (flasher) {
+                    flasher.initialBaudRate = selectedBaudRate;
+                }
+                log(`Baud rate set to ${selectedBaudRate} (applies to next open)`, 'info');
+            });
+
+            log('Advanced mode enabled: baud selector available', 'info');
+        }
+
         async function connectDevice() {
             try {
                 const connectionType = document.querySelector('input[name="connectionType"]:checked').value;
 
                 log(`Requesting ${connectionType === 'webusb' ? 'WebUSB' : 'Web Serial'} port...`, 'info');
                 flasher = new ESPFlasher();
+                flasher.initialBaudRate = selectedBaudRate;
 
                 if (isDebugMode) {
                     flasher.logPackets = true;
@@ -1312,6 +1353,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             log('ESP32 Flasher Test Suite initialized', 'info');
             log('Supported chips: ESP32, ESP32-S2, ESP32-S3, ESP32-C3, ESP32-C6', 'info');
             updateButtons(false, false, false);
+            setupAdvancedControls();
         };
     </script>
 </body>
