@@ -1151,7 +1151,7 @@
                     <button class="btn" id="closeFileBtn" onclick="closeFile()"
                         style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Close
                         File</button>
-                    <button class="btn" id="importBinBtn" onclick="showImportPopup(0x00000000, deviceFlashSizeBytes, true, () => {})"
+                    <button class="btn" id="importBinBtn" onclick="showImportPopup(0x00000000, deviceFlashSizeBytes, true, async () => { await parseAndDisplay(true); })"
                         style="display: none; background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Import...</button>
                     <button class="btn" id="eraseFlashBtn" onclick="eraseFlash()"
                         style="display: none; background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);">Erase
@@ -2781,15 +2781,7 @@
 
                 // Validate SHA256 (appended) and compute region/full hashes
                 let sha256Validation = null;
-                let sha256Calculated = null;
                 let sha256RegionCalc = null;
-
-                const calcSliceEnd = Math.min(partition.offset + partition.length, parser.sparseImage.size);
-                if (calcSliceEnd > partition.offset) {
-                    const calcData = await parser.sparseImage.slice_async(partition.offset, calcSliceEnd);
-                    const calcHash = await ESP32Parser.calculateSHA256(calcData);
-                    sha256Calculated = ESP32Parser.bytesToHex(calcHash);
-                }
 
                 if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined && image.sha256DataEnd > image.sha256DataStart) {
                     console.log(`Bootloader SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
@@ -2865,37 +2857,32 @@
 
                     html += '<h4 style="margin-top: 15px;">Validation</h4>';
                     html += '<div class="info-grid">';
-                    const checksumDisplay = checksumMismatch ? 
-                        `<span class="mono" style="color: #e88888;">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ✗</span><span style="color: #888; margin-left: 10px;"> (Expected: 0x${calculatedChecksum.toString(16).toUpperCase().padStart(2, '0')})` :
-                        `<span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ✓</span>`;
-                    html += `<div class="info-item"><label>Checksum:</label>${checksumDisplay}</div>`;
+                    
+                    /* Checksum display */
+                    const checksumColor = checksumMismatch ? '#e88888' : '#6ec589';
+                    const checksumIcon = checksumMismatch ? '✗' : '✓';
+                    html += `<div class="info-item"><label>Checksum:</label><span class="mono" style="color: ${checksumColor};">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ${checksumIcon}</span></div>`;
+                    if (checksumMismatch && calculatedChecksum !== null) {
+                        html += `<div class="info-item"><label>Checksum (calculated):</label><span class="mono">0x${calculatedChecksum.toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
+                    }
                     html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
 
+                    /* SHA256 display */
                     const sha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
-                    const validIcon = sha256Validation && sha256Validation.valid ?
-                        '<span style="color: #6ec589; font-size: 1.2em;" title="Hash verified over header..checksum region">✓</span>' :
-                        sha256Validation && sha256Validation.valid === false ?
-                            '<span style="color: #e88888; font-size: 1.2em;" title="' + sha256Validation.reason + '">✗</span>' :
-                            '<span style="color: #9a9a9a; font-size: 1.2em;" title="Validating...">⏳</span>';
+                    const sha256Valid = sha256Validation && sha256Validation.valid === true;
+                    const sha256Invalid = sha256Validation && sha256Validation.valid === false;
+                    const sha256Color = sha256Valid ? '#6ec589' : sha256Invalid ? '#e88888' : '#9a9a9a';
+                    const sha256Icon = sha256Valid ? '✓' : sha256Invalid ? '✗' : '⏳';
 
                     if (image.sha256) {
-                        /* Only show Image SHA256 if it differs from Region SHA256 */
-                        if (!sha256Match) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Image SHA256 (appended):</label><span class="mono">${image.sha256} ${validIcon}</span></div>`;
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256:</label><span class="mono" style="color: ${sha256Color};">${image.sha256} ${sha256Icon}</span></div>`;
+                        if (sha256Invalid && sha256RegionCalc) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256 (calculated):</label><span class="mono">${sha256RegionCalc}</span></div>`;
                         }
-                    }
-                    if (sha256RegionCalc) {
-                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Region SHA256:</label><span class="mono">${sha256RegionCalc} ${validIcon}</span></div>`;
                     }
                     if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
                         const regionLen = image.sha256DataEnd - image.sha256DataStart;
                         html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
-                    }
-                    if (sha256Calculated) {
-                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Calculated SHA256 (full bootloader region):</label><span class="mono">${sha256Calculated}</span></div>`;
-                        if (image.sha256 && sha256Validation && sha256Validation.valid === false && sha256Validation.calculated) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Expected vs Calc (region):</label><span class="mono" style="color: #e88888;">${sha256Validation.expected} ≠ ${sha256Validation.calculated}</span></div>`;
-                        }
                     }
 
                     html += '</div>';
@@ -2918,7 +2905,7 @@
                     html += '<button class="replace-btn" onclick="replaceBootloader()">Replace</button>';
                     html += '<button class="replace-btn" onclick="clearBootloader()">Clear</button>';
                     if (checksumMismatch) {
-                        html += '<button class="btn" style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); cursor: pointer;" onclick="fixChecksums(\'bootloader\')">Fix Checksums</button>';
+                        html += '<button class="btn" style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);" onclick="fixChecksums(\'bootloader\')">Fix Checksums</button>';
                     }
                     html += '</div>';
                 }
@@ -3077,7 +3064,7 @@
                     html += `<div class="detail-item">
                         <button class="btn" onclick="event.stopPropagation(); parseImagePartitionInline(${idx})">Parse Image</button>
                         <button class="btn" onclick="event.stopPropagation(); downloadOTAImage(${idx})">Save OTA Image</button>
-                        <button class="btn" id="fix_check_${idx}" style="display: none; background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); cursor: pointer; margin-left: 8px;" onclick="event.stopPropagation(); (async () => { await fixChecksums('ota', ${part.offset}, ${part.length}); parseImagePartitionInline(${idx}); })();">Fix Checksums</button>
+                        <button class="btn" id="fix_check_${idx}" style="display: none; background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); cursor: pointer;" onclick="event.stopPropagation(); (async () => { await fixChecksums('ota', ${part.offset}, ${part.length}); parseImagePartitionInline(${idx}); })();">Fix Checksums</button>
                         </div>`;
                 } else if (part.subType === 0x81) { // FAT
                     html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseFATPartition(${idx})">Parse FAT</button></div>`;
@@ -3099,25 +3086,53 @@
         }
 
         function replacePartition(idx) {
-            replaceTargetPartition = idx;
-            const input = document.getElementById('partitionFileInput');
-            if (!input) {
-                alert('Partition file input not found.');
+            if (!parser || !parser.partitions || !parser.partitions[idx]) {
+                alert('Partition not found.');
                 return;
             }
-            input.value = '';
-            input.click();
+            const part = parser.partitions[idx];
+            const start = part.offset;
+            const length = part.length;
+
+            showImportPopup(start, length, false, async () => {
+                try {
+                    console.log(`Replaced partition ${idx}, refreshing view...`);
+                    if (!deviceMode) {
+                        part.sha1 = await parser.computePartitionSHA1(part);
+                    }
+                    await displayPartitions();
+                    const parsedContent = document.getElementById('parsed-content-' + idx);
+                    if (parsedContent) {
+                        parsedContent.innerHTML = '';
+                    }
+                    const rawTab = document.querySelector('.tab.active');
+                    if (rawTab && rawTab.textContent.toLowerCase().includes('raw')) {
+                        await updateHexView();
+                    }
+                    await updateMemoryMap();
+                } catch (err) {
+                    console.error('Post-import refresh error:', err);
+                }
+            });
         }
 
         function replaceBootloader() {
-            replaceTargetPartition = -1;
-            const input = document.getElementById('partitionFileInput');
-            if (!input) {
-                alert('Partition file input not found.');
+            if (!parser || !bootloaderInfo || bootloaderInfo.bootloaderStart === undefined || bootloaderInfo.bootloaderEnd === undefined) {
+                alert('Bootloader not parsed correctly. Cannot replace bootloader.');
                 return;
             }
-            input.value = '';
-            input.click();
+
+            const start = bootloaderInfo.bootloaderStart;
+            const length = bootloaderInfo.bootloaderEnd - bootloaderInfo.bootloaderStart;
+
+            showImportPopup(start, length, false, async () => {
+                try {
+                    await parseBootloader();
+                    updateMemoryMap();
+                } catch (err) {
+                    console.error('Post-import bootloader refresh error:', err);
+                }
+            });
         }
 
         async function clearBootloader() {
@@ -3446,6 +3461,10 @@
         let importIsJson = false;
         let importJsonData = null;
         let importBaseUrl = null; // For resolving relative paths in JSON manifests
+        let importRangeStart = 0;
+        let importRangeLength = 0;
+        let importAddressEditable = true;
+        let importCallback = null;
 
         function switchImportTab(tab) {
             const tabs = document.querySelectorAll('.import-tab');
@@ -3654,8 +3673,20 @@
             }
         }
 
-        function showImportPopup() {
+        function showImportPopup(startAddr = 0, length = deviceFlashSizeBytes, addressEditable = true, onImported = null) {
+            importRangeStart = startAddr;
+            importRangeLength = length;
+            importAddressEditable = !!addressEditable;
+            importCallback = onImported;
+
+            console.log(`Showing import popup: start=0x${startAddr.toString(16)}, length=${length}, editable=${importAddressEditable}, callback=${importCallback ? 'yes' : 'no'}`);
+
             const popup = document.getElementById('importPopup');
+            const addressInput = document.getElementById('importAddress');
+            if (addressInput) {
+                addressInput.value = '0x' + importRangeStart.toString(16).toUpperCase();
+                addressInput.parentElement.style.display = importAddressEditable ? 'block' : 'none';
+            }
             if (popup) {
                 popup.style.display = 'flex';
                 updateImportPreview();
@@ -3671,6 +3702,10 @@
             importIsJson = false;
             importJsonData = null;
             importBaseUrl = null;
+            importRangeStart = 0;
+            importRangeLength = 0;
+            importAddressEditable = true;
+            importCallback = null;
             const fileNameSpan = document.getElementById('importFileName');
             if (fileNameSpan) fileNameSpan.textContent = 'None';
             const applyBtn = document.getElementById('importApplyBtn');
@@ -3682,6 +3717,15 @@
             const eraseOption = document.getElementById('importEraseOption');
             if (eraseOption) {
                 eraseOption.style.display = 'none';
+            }
+            /* Reset file inputs to allow re-selecting the same file */
+            const importFileInput = document.getElementById('importFileInput');
+            if (importFileInput) {
+                importFileInput.value = '';
+            }
+            const importUrlInput = document.getElementById('importUrlInput');
+            if (importUrlInput) {
+                importUrlInput.value = '';
             }
         }
 
@@ -3696,7 +3740,15 @@
                 return;
             }
 
-            const addressStr = addressInput.value.trim();
+            const allowedStart = importRangeStart;
+            const allowedEnd = importRangeStart + importRangeLength;
+
+            let addressStr = addressInput.value.trim();
+            if (!importAddressEditable) {
+                addressStr = '0x' + allowedStart.toString(16).toUpperCase();
+                addressInput.value = addressStr;
+            }
+
             let address;
             try {
                 address = parseInt(addressStr, 16);
@@ -3718,10 +3770,14 @@
             html += `Size: <strong>${formatBytes(fileSize)}</strong> (${fileSize} bytes)<br>`;
             html += `Start: <strong>0x${address.toString(16).toUpperCase()}</strong><br>`;
             html += `End: <strong>0x${endAddress.toString(16).toUpperCase()}</strong><br>`;
+            html += `Allowed: <strong>0x${allowedStart.toString(16).toUpperCase()} - 0x${allowedEnd.toString(16).toUpperCase()}</strong><br>`;
 
             // Check if it fits in device flash
             if (endAddress > deviceSize) {
                 html += `<br><span style="color: #ff6b6b;">⚠️ Warning: File extends beyond device flash size (0x${deviceSize.toString(16).toUpperCase()})</span>`;
+                if (applyBtn) applyBtn.disabled = true;
+            } else if (address < allowedStart || endAddress > allowedEnd) {
+                html += `<br><span style="color: #ff6b6b;">⚠️ Warning: File exceeds allowed range</span>`;
                 if (applyBtn) applyBtn.disabled = true;
             } else {
                 // Check which partitions will be affected
@@ -3773,6 +3829,9 @@
                     setDeviceStatus('Downloading and importing manifest files...', 'loading');
 
                     let importCount = 0;
+                    const rangeStart = importRangeStart;
+                    const rangeEnd = importRangeStart + importRangeLength;
+                    const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
                     for (const entry of importJsonData.flashEntries) {
                         let url = entry.url || entry.path;
 
@@ -3796,6 +3855,15 @@
                         const arrayBuffer = await response.arrayBuffer();
                         const data = new Uint8Array(arrayBuffer);
 
+                        const entryStart = entry.address >>> 0;
+                        const entryEnd = entryStart + data.length;
+                        if (entryEnd > deviceSize) {
+                            throw new Error(`Entry at 0x${entryStart.toString(16).toUpperCase()} exceeds device size 0x${deviceSize.toString(16).toUpperCase()}`);
+                        }
+                        if (entryStart < rangeStart || entryEnd > rangeEnd) {
+                            throw new Error(`Entry at 0x${entryStart.toString(16).toUpperCase()} exceeds allowed range 0x${rangeStart.toString(16).toUpperCase()} - 0x${rangeEnd.toString(16).toUpperCase()}`);
+                        }
+
                         // Write data to sparse image
                         await parser.sparseImage.write(entry.address, data);
 
@@ -3805,13 +3873,13 @@
 
                     const didErase = shouldEraseFlash;
                     const eraseMsg = didErase ? ' (flash erased and rebuilt)' : '';
-                    setDeviceStatus(`Imported ${importCount} files from manifest${eraseMsg}. Re-analyzing firmware...`, 'loading');
+                    setDeviceStatus(`Imported ${importCount} files from manifest${eraseMsg}.`, 'success');
+
+                    if (importCallback) {
+                        await importCallback();
+                    }
+
                     hideImportPopup();
-
-                    // Re-analyze the firmware after import (this will update partitions and memory map)
-                    await parseAndDisplay(true);
-
-                    setDeviceStatus(`Imported ${importCount} files from manifest. Use "Write to Device" to flash.`, 'success');
                 } catch (error) {
                     console.error('Manifest import error:', error);
 
@@ -3838,8 +3906,11 @@
 
             // Handle single binary file
             if (!importFile) {
+                console.error('No import file selected');
                 return;
             }
+
+            console.log(`Importing file ${importFile.name}`);
 
             const addressInput = document.getElementById('importAddress');
             const addressStr = addressInput.value.trim();
@@ -3857,9 +3928,16 @@
             const fileSize = importFile.size;
             const endAddress = address + fileSize;
             const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
+            const rangeStart = importRangeStart;
+            const rangeEnd = importRangeStart + importRangeLength;
 
             if (endAddress > deviceSize) {
                 alert(`File extends beyond device flash size (0x${deviceSize.toString(16).toUpperCase()})`);
+                return;
+            }
+
+            if (address < rangeStart || endAddress > rangeEnd) {
+                alert(`File exceeds allowed range 0x${rangeStart.toString(16).toUpperCase()} - 0x${rangeEnd.toString(16).toUpperCase()}`);
                 return;
             }
 
@@ -3870,14 +3948,11 @@
                 // Write data to sparse image
                 await parser.sparseImage.write(address, data);
 
-                hideImportPopup();
-                updateMemoryMap();
-
-                setDeviceStatus(`Imported ${formatBytes(fileSize)} at 0x${address.toString(16).toUpperCase()}. Re-analyzing firmware...`, 'loading');
-
-                // Re-analyze the firmware after import
-                await parseAndDisplay(true);
                 setDeviceStatus(`Imported ${formatBytes(fileSize)} at 0x${address.toString(16).toUpperCase()}. Use "Write to Device" to flash.`, 'success');
+                if (importCallback) {
+                    await importCallback();
+                }
+                hideImportPopup();
             } catch (error) {
                 console.error('Import error:', error);
                 alert('Error importing file: ' + error.message);
@@ -4756,17 +4831,9 @@
                 try {
                     const image = await parser.parseImage(partition.offset, partition.length);
 
-                    // Validate SHA256 (appended) and compute region/full hashes
+                    // Validate SHA256 (appended) and compute region hash
                     let sha256Validation = null;
-                    let sha256Calculated = null;
                     let sha256RegionCalc = null;
-
-                    const calcSliceEnd = Math.min(partition.offset + partition.length, parser.sparseImage.size);
-                    if (calcSliceEnd > partition.offset) {
-                        const calcData = await parser.sparseImage.slice_async(partition.offset, calcSliceEnd);
-                        const calcHash = await ESP32Parser.calculateSHA256(calcData);
-                        sha256Calculated = ESP32Parser.bytesToHex(calcHash);
-                    }
 
                     if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined && image.sha256DataEnd > image.sha256DataStart) {
                         console.log(`Image SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
@@ -4788,8 +4855,6 @@
                     if (image.error) {
                         html = `<div class="error">${image.error}</div>`;
                     } else {
-                        html = `<div class="success" style="display: flex; align-items: center; gap: 10px;">Firmware image parsed successfully`;
-                        
                         /* Check if OTA app checksum needs fixing */
                         let otaCheckNeedsFix = false;
                         try {
@@ -4803,8 +4868,6 @@
                         } catch (e) {
                             console.warn('Could not check OTA checksum:', e.message);
                         }
-                        
-                        html += `</div>`;
 
                         html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
                         html += '<div class="info-grid">';
@@ -4866,34 +4929,31 @@
                             console.warn('Could not calculate OTA checksum:', e.message);
                         }
                         
-                        const otaChecksumDisplay = otaChecksumMismatch ? 
-                            `<span class="mono" style="color: #e88888;">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ✗</span><span style="color: #888; margin-left: 10px;"> (Expected: 0x${otaCalculatedChecksum.toString(16).toUpperCase().padStart(2, '0')})` :
-                            `<span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ✓</span>`;
-                        html += `<div class="info-item"><label>Checksum:</label>${otaChecksumDisplay}</div>`;
-                        html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
-                        if (image.sha256) {
-                            const validIcon = sha256Validation && sha256Validation.valid ?
-                                '<span style="color: #6ec589; font-size: 1.2em;" title="Hash verified over header..checksum region">✓</span>' :
-                                sha256Validation && sha256Validation.valid === false ?
-                                    '<span style="color: #e88888; font-size: 1.2em;" title="' + sha256Validation.reason + '">✗</span>' :
-                                    '<span style="color: #9a9a9a; font-size: 1.2em;" title="Validating...">⏳</span>';
-                            /* Only show Image SHA256 if it differs from Region SHA256 */
-                            const sha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
-                            if (!sha256Match) {
-                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Image SHA256 (appended):</label><span class="mono">${image.sha256} ${validIcon}</span></div>`;
-                            }
+                        /* Checksum display */
+                        const otaChecksumColor = otaChecksumMismatch ? '#e88888' : '#6ec589';
+                        const otaChecksumIcon = otaChecksumMismatch ? '✗' : '✓';
+                        html += `<div class="info-item"><label>Checksum:</label><span class="mono" style="color: ${otaChecksumColor};">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ${otaChecksumIcon}</span></div>`;
+                        if (otaChecksumMismatch && otaCalculatedChecksum !== null) {
+                            html += `<div class="info-item"><label>Checksum (calculated):</label><span class="mono">0x${otaCalculatedChecksum.toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
                         }
-                        if (sha256RegionCalc) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Region SHA256:</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                        html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
+                        
+                        /* SHA256 display */
+                        const otaSha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
+                        const otaSha256Valid = sha256Validation && sha256Validation.valid === true;
+                        const otaSha256Invalid = sha256Validation && sha256Validation.valid === false;
+                        const otaSha256Color = otaSha256Valid ? '#6ec589' : otaSha256Invalid ? '#e88888' : '#9a9a9a';
+                        const otaSha256Icon = otaSha256Valid ? '✓' : otaSha256Invalid ? '✗' : '⏳';
+                        
+                        if (image.sha256) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256:</label><span class="mono" style="color: ${otaSha256Color};">${image.sha256} ${otaSha256Icon}</span></div>`;
+                            if (otaSha256Invalid && sha256RegionCalc) {
+                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256 (calculated):</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                            }
                         }
                         if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
                             const regionLen = image.sha256DataEnd - image.sha256DataStart;
                             html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
-                        }
-                        if (sha256Calculated) {
-                            if (image.sha256 && sha256Validation && sha256Validation.valid === false && sha256Validation.calculated) {
-                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Expected vs Calc (region):</label><span class="mono" style="color: #e88888;">${sha256Validation.expected} ≠ ${sha256Validation.calculated}</span></div>`;
-                            }
                         }
                         html += '</div>';
 
