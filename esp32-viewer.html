@@ -1151,7 +1151,7 @@
                     <button class="btn" id="closeFileBtn" onclick="closeFile()"
                         style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Close
                         File</button>
-                    <button class="btn" id="importBinBtn" onclick="showImportPopup()"
+                    <button class="btn" id="importBinBtn" onclick="showImportPopup(0x00000000, deviceFlashSizeBytes, true, () => {})"
                         style="display: none; background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Import...</button>
                     <button class="btn" id="eraseFlashBtn" onclick="eraseFlash()"
                         style="display: none; background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);">Erase
@@ -2852,9 +2852,23 @@
                         html += '</div>';
                     }
 
+                    /* Calculate expected checksum */
+                    let calculatedChecksum = null;
+                    let checksumMismatch = false;
+                    try {
+                        const checksumInfo = await parser.calculateImageChecksum(image.offset);
+                        calculatedChecksum = checksumInfo.checksum;
+                        checksumMismatch = (checksumInfo.checksum !== image.checksum);
+                    } catch (e) {
+                        console.warn('Could not calculate checksum:', e.message);
+                    }
+
                     html += '<h4 style="margin-top: 15px;">Validation</h4>';
                     html += '<div class="info-grid">';
-                    html += `<div class="info-item"><label>Checksum:</label><span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
+                    const checksumDisplay = checksumMismatch ? 
+                        `<span class="mono" style="color: #e88888;">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ✗</span><span style="color: #888; margin-left: 10px;"> (Expected: 0x${calculatedChecksum.toString(16).toUpperCase().padStart(2, '0')})` :
+                        `<span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ✓</span>`;
+                    html += `<div class="info-item"><label>Checksum:</label>${checksumDisplay}</div>`;
                     html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
 
                     const sha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
@@ -2903,6 +2917,9 @@
                     html += '<button class="download-btn" onclick="downloadPartition(-1)">Download</button>';
                     html += '<button class="replace-btn" onclick="replaceBootloader()">Replace</button>';
                     html += '<button class="replace-btn" onclick="clearBootloader()">Clear</button>';
+                    if (checksumMismatch) {
+                        html += '<button class="btn" style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); cursor: pointer;" onclick="fixChecksums(\'bootloader\')">Fix Checksums</button>';
+                    }
                     html += '</div>';
                 }
 
@@ -3057,7 +3074,11 @@
                 } else if (part.subType === 0x00 && part.type === 1) { // OTA data
                     html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseOTADataPartition(${idx})">Parse OTA Data</button></div>`;
                 } else if (part.type === 0) { // APP
-                    html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseImagePartitionInline(${idx})">Parse Image</button></div>`;
+                    html += `<div class="detail-item">
+                        <button class="btn" onclick="event.stopPropagation(); parseImagePartitionInline(${idx})">Parse Image</button>
+                        <button class="btn" onclick="event.stopPropagation(); downloadOTAImage(${idx})">Save OTA Image</button>
+                        <button class="btn" id="fix_check_${idx}" style="display: none; background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); cursor: pointer; margin-left: 8px;" onclick="event.stopPropagation(); (async () => { await fixChecksums('ota', ${part.offset}, ${part.length}); parseImagePartitionInline(${idx}); })();">Fix Checksums</button>
+                        </div>`;
                 } else if (part.subType === 0x81) { // FAT
                     html += `<div class="detail-item"><button class="btn" onclick="event.stopPropagation(); parseFATPartition(${idx})">Parse FAT</button></div>`;
                 } else if (part.subType === 0x82) { // SPIFFS
@@ -3133,6 +3154,58 @@
             } catch (err) {
                 console.error('Error clearing bootloader:', err);
                 alert('Error clearing bootloader: ' + err.message);
+            }
+        }
+
+        async function fixChecksums(imageType = null, otaOffset = null, otaLength = null) {
+            if (!parser) {
+                setDeviceStatus('No firmware file loaded', 'error');
+                return;
+            }
+
+            try {
+                setDeviceStatus('Fixing checksums...', 'info');
+                const result = await parser.fixAllChecksums(imageType, otaOffset, otaLength);
+
+                let statusParts = [];
+                
+                if (result.bootloader) {
+                    if (result.bootloader.fixed) {
+                        const fixes = [];
+                        if (result.bootloader.checksumFixed) {
+                            fixes.push(`checksum fixed`);
+                        }
+                        if (result.bootloader.sha256Fixed) {
+                            fixes.push(`SHA256 fixed`);
+                        }
+                        statusParts.push(`Bootloader: ${fixes.join(', ')}`);
+                    }
+                }
+                if (result.otaApp) {
+                    if (result.otaApp.fixed) {
+                        const fixes = [];
+                        if (result.otaApp.checksumFixed) {
+                            fixes.push(`checksum fixed`);
+                        }
+                        if (result.otaApp.sha256Fixed) {
+                            fixes.push(`SHA256 fixed`);
+                        }
+                        statusParts.push(`OTA app: ${fixes.join(', ')}`);
+                    }
+                }
+
+                updateMemoryMap();
+                await parseBootloader();
+                
+                if (statusParts.length > 0) {
+                    setDeviceStatus(statusParts.join(' | '), 'success');
+                } else {
+                    setDeviceStatus('Already valid, no fixes needed', 'success');
+                }
+            } catch (err) {
+                console.error('Error fixing checksums:', err);
+                setDeviceStatus('Error fixing checksums: ' + err.message, 'error');
+                setDeviceStatus('Failed to fix checksums', 'error');
             }
         }
 
@@ -4715,9 +4788,23 @@
                     if (image.error) {
                         html = `<div class="error">${image.error}</div>`;
                     } else {
-                        html = `<div class="success" style="display: flex; align-items: center; gap: 10px;">Firmware image parsed successfully
-                            <button class="download-btn" style="margin-left: 8px;" onclick="event.stopPropagation(); downloadOTAImage(${idx})">Save OTA Image</button>
-                        </div>`;
+                        html = `<div class="success" style="display: flex; align-items: center; gap: 10px;">Firmware image parsed successfully`;
+                        
+                        /* Check if OTA app checksum needs fixing */
+                        let otaCheckNeedsFix = false;
+                        try {
+                            const checksumInfo = await parser.calculateImageChecksum(partition.offset);
+                            if (checksumInfo.checksum !== image.checksum) {
+                                otaCheckNeedsFix = true;
+                                
+                                const button = document.getElementById(`fix_check_${idx}`);
+                                button.style.display = 'inline-block';
+                            }
+                        } catch (e) {
+                            console.warn('Could not check OTA checksum:', e.message);
+                        }
+                        
+                        html += `</div>`;
 
                         html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
                         html += '<div class="info-grid">';
@@ -4767,7 +4854,22 @@
 
                         html += '<h4 style="margin-top: 15px;">Validation</h4>';
                         html += '<div class="info-grid">';
-                        html += `<div class="info-item"><label>Checksum:</label><span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
+                        
+                        /* Calculate expected checksum for OTA app */
+                        let otaChecksumMismatch = false;
+                        let otaCalculatedChecksum = null;
+                        try {
+                            const checksumInfo = await parser.calculateImageChecksum(partition.offset);
+                            otaCalculatedChecksum = checksumInfo.checksum;
+                            otaChecksumMismatch = (checksumInfo.checksum !== image.checksum);
+                        } catch (e) {
+                            console.warn('Could not calculate OTA checksum:', e.message);
+                        }
+                        
+                        const otaChecksumDisplay = otaChecksumMismatch ? 
+                            `<span class="mono" style="color: #e88888;">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ✗</span><span style="color: #888; margin-left: 10px;"> (Expected: 0x${otaCalculatedChecksum.toString(16).toUpperCase().padStart(2, '0')})` :
+                            `<span class="mono">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ✓</span>`;
+                        html += `<div class="info-item"><label>Checksum:</label>${otaChecksumDisplay}</div>`;
                         html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
                         if (image.sha256) {
                             const validIcon = sha256Validation && sha256Validation.valid ?

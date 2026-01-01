@@ -3026,6 +3026,333 @@ class ESP32Parser {
         return new Uint8Array(hashBuffer);
     }
 
+    /* Calculate correct bootloader/image checksum */
+    async calculateImageChecksum(imageOffset) {
+        /* Read image header to find checksum location */
+        const magic = await this.view.getUint8(imageOffset);
+        if (magic !== 0xE9) {
+            throw new Error('Invalid image magic');
+        }
+
+        const segmentCount = await this.view.getUint8(imageOffset + 1);
+
+        /* Parse segments and calculate checksum ONLY over segment data payloads */
+        /* Headers are NOT included in checksum (but are included in SHA256) */
+        let currentOffset = imageOffset + 24;
+        let checksum = 0xEF;
+        
+        for (let i = 0; i < segmentCount; i++) {
+            const segLength = await this.view.getUint32(currentOffset + 4, true);
+            currentOffset += 8; // Skip segment header (not included in checksum)
+            
+            // Fetch the entire segment data at once for performance
+            const segmentData = await this.sparseImage.slice_async(currentOffset, currentOffset + segLength);
+            
+            // XOR all bytes of this segment's data
+            for (let j = 0; j < segmentData.length; j++) {
+                checksum ^= segmentData[j];
+            }
+            
+            currentOffset += segLength;
+        }
+
+        /* Pad until checksum sits at offset % 16 == 15 */
+        while ((currentOffset % 16) !== 15) {
+            currentOffset++;
+        }
+
+        const checksumPosition = currentOffset;
+
+        return {
+            checksum: checksum & 0xFF,
+            checksumOffset: checksumPosition,
+            checksumOffsetAbsolute: checksumPosition
+        };
+    }
+
+    /* Calculate and fix appended SHA256 hash for an image */
+    async calculateAndFixImageSHA256(imageOffset) {
+        const magic = await this.view.getUint8(imageOffset);
+        if (magic !== 0xE9) {
+            throw new Error('Invalid image magic');
+        }
+
+        const segmentCount = await this.view.getUint8(imageOffset + 1);
+        const hasHash = (await this.view.getUint8(imageOffset + 23)) === 1;
+
+        if (!hasHash) {
+            return {
+                hasHash: false,
+                reason: 'Image does not have appended hash'
+            };
+        }
+
+        /* Parse segments to find checksum offset */
+        let currentOffset = imageOffset + 24;
+        for (let i = 0; i < segmentCount; i++) {
+            const segLength = await this.view.getUint32(currentOffset + 4, true);
+            currentOffset += 8 + segLength;
+        }
+
+        /* Pad until checksum sits at offset % 16 == 15 */
+        while ((currentOffset % 16) !== 15) {
+            currentOffset++;
+        }
+
+        /* Hash region is from image start to checksum offset (inclusive) */
+        const hashRegionEnd = currentOffset + 1;
+        const hashRegionData = await this.sparseImage.slice_async(imageOffset, hashRegionEnd);
+
+        /* Calculate SHA256 of the region */
+        const sha256Bytes = await ESP32Parser.calculateSHA256(hashRegionData);
+        const newSha256Hex = ESP32Parser.bytesToHex(sha256Bytes);
+
+        /* SHA256 is stored 32 bytes after the checksum */
+        const sha256StorageOffset = currentOffset + 1;
+        
+        /* Read the stored SHA256 to compare */
+        let storedSha256Hex = '';
+        if (sha256StorageOffset + 32 <= this.sparseImage.size) {
+            const storedSha256Bytes = new Uint8Array(32);
+            for (let i = 0; i < 32; i++) {
+                storedSha256Bytes[i] = await this.view.getUint8(sha256StorageOffset + i);
+            }
+            storedSha256Hex = ESP32Parser.bytesToHex(storedSha256Bytes);
+        }
+
+        /* Check if SHA256 needs updating */
+        if (storedSha256Hex.toLowerCase() !== newSha256Hex.toLowerCase()) {
+            /* Write the new SHA256 */
+            const sha256BytesToWrite = new Uint8Array(32);
+            for (let i = 0; i < 32; i++) {
+                sha256BytesToWrite[i] = sha256Bytes[i];
+            }
+            this.sparseImage.write(sha256StorageOffset, sha256BytesToWrite);
+
+            return {
+                hasHash: true,
+                fixed: true,
+                oldSHA256: storedSha256Hex,
+                newSHA256: newSha256Hex,
+                offset: sha256StorageOffset
+            };
+        } else {
+            return {
+                hasHash: true,
+                fixed: false,
+                reason: 'SHA256 already valid',
+                sha256: storedSha256Hex
+            };
+        }
+    }
+
+    /* Fix checksums for bootloader and OTA app images */
+    /* fixType: 'bootloader', 'ota', or null for both */
+    /* otaOffset, otaLength: optional partition info when fixing specific OTA app */
+    async fixAllChecksums(fixType = null, otaOffset = null, otaLength = null) {
+        const results = {
+            bootloader: null,
+            otaApp: null,
+            errors: []
+        };
+
+        try {
+            /* Fix bootloader if requested */
+            if (!fixType || fixType === 'bootloader') {
+                /* Try bootloader at 0x0 */
+                try {
+                    const bl0 = await this.parseImage(0x0, 0x10000);
+                    if (bl0 && bl0.magic === 0xE9 && !bl0.error) {
+                        const checksumInfo = await this.calculateImageChecksum(0x0);
+                        let checksumFixed = false;
+                        if (checksumInfo.checksum !== bl0.checksum) {
+                            const checksumByte = new Uint8Array(1);
+                            checksumByte[0] = checksumInfo.checksum;
+                            this.sparseImage.write(checksumInfo.checksumOffsetAbsolute, checksumByte);
+                            checksumFixed = true;
+                        }
+
+                        /* Also try to fix SHA256 if present */
+                        let sha256Fixed = false;
+                        let sha256OldValue = null;
+                        let sha256NewValue = null;
+                        try {
+                            const sha256Info = await this.calculateAndFixImageSHA256(0x0);
+                            if (sha256Info.hasHash && sha256Info.fixed) {
+                                sha256Fixed = true;
+                                sha256OldValue = sha256Info.oldSHA256;
+                                sha256NewValue = sha256Info.newSHA256;
+                            }
+                        } catch (e) {
+                            /* SHA256 fix not critical */
+                        }
+
+                        if (checksumFixed || sha256Fixed) {
+                            results.bootloader = {
+                                offset: 0x0,
+                                checksumFixed: checksumFixed,
+                                oldChecksum: checksumFixed ? bl0.checksum : null,
+                                newChecksum: checksumFixed ? checksumInfo.checksum : null,
+                                sha256Fixed: sha256Fixed,
+                                oldSHA256: sha256OldValue,
+                                newSHA256: sha256NewValue,
+                                fixed: true
+                            };
+                        } else {
+                            results.bootloader = {
+                                offset: 0x0,
+                                checksum: bl0.checksum,
+                                fixed: false,
+                                reason: 'Already valid'
+                            };
+                        }
+                    }
+                } catch (e) {
+                    /* No bootloader at 0x0, try 0x1000 */
+                }
+
+                if (!results.bootloader) {
+                    try {
+                        const bl1 = await this.parseImage(0x1000, 0x10000);
+                        if (bl1 && bl1.magic === 0xE9 && !bl1.error) {
+                            const checksumInfo = await this.calculateImageChecksum(0x1000);
+                            let checksumFixed = false;
+                            if (checksumInfo.checksum !== bl1.checksum) {
+                                const checksumByte = new Uint8Array(1);
+                                checksumByte[0] = checksumInfo.checksum;
+                                this.sparseImage.write(checksumInfo.checksumOffsetAbsolute, checksumByte);
+                                checksumFixed = true;
+                            }
+
+                            /* Also try to fix SHA256 if present */
+                            let sha256Fixed = false;
+                            let sha256OldValue = null;
+                            let sha256NewValue = null;
+                            try {
+                                const sha256Info = await this.calculateAndFixImageSHA256(0x1000);
+                                if (sha256Info.hasHash && sha256Info.fixed) {
+                                    sha256Fixed = true;
+                                    sha256OldValue = sha256Info.oldSHA256;
+                                    sha256NewValue = sha256Info.newSHA256;
+                                }
+                            } catch (e) {
+                                /* SHA256 fix not critical */
+                            }
+
+                            if (checksumFixed || sha256Fixed) {
+                                results.bootloader = {
+                                    offset: 0x1000,
+                                    checksumFixed: checksumFixed,
+                                    oldChecksum: checksumFixed ? bl1.checksum : null,
+                                    newChecksum: checksumFixed ? checksumInfo.checksum : null,
+                                    sha256Fixed: sha256Fixed,
+                                    oldSHA256: sha256OldValue,
+                                    newSHA256: sha256NewValue,
+                                    fixed: true
+                                };
+                            } else {
+                                results.bootloader = {
+                                    offset: 0x1000,
+                                    checksum: bl1.checksum,
+                                    fixed: false,
+                                    reason: 'Already valid'
+                                };
+                            }
+                        }
+                    } catch (e) {
+                        results.errors.push('No bootloader found at 0x0 or 0x1000');
+                    }
+                }
+            }
+
+            /* Fix OTA app if requested */
+            if (!fixType || fixType === 'ota') {
+                try {
+                    let otaPartition = null;
+                    
+                    /* If OTA offset/length provided, use them directly */
+                    if (otaOffset !== null && otaLength !== null) {
+                        otaPartition = {
+                            offset: otaOffset,
+                            length: otaLength,
+                            label: 'OTA App'
+                        };
+                    } else {
+                        /* Try to find OTA partition from partition table */
+                        const validationResult = await this.isValidImage();
+                        if (validationResult.bootOtaPartitionIndex !== null && this.partitions && this.partitions.length > 0) {
+                            otaPartition = this.partitions[validationResult.bootOtaPartitionIndex];
+                        }
+                    }
+                    
+                    if (otaPartition) {
+                        const otaImage = await this.parseImage(otaPartition.offset, otaPartition.length);
+                        if (otaImage && otaImage.magic === 0xE9 && !otaImage.error) {
+                            const checksumInfo = await this.calculateImageChecksum(otaPartition.offset);
+                            let checksumFixed = false;
+                            let sha256Fixed = false;
+                            let oldChecksum = otaImage.checksum;
+                            let newChecksum = checksumInfo.checksum;
+                            let oldSHA256 = null;
+                            let newSHA256 = null;
+                            
+                            if (checksumInfo.checksum !== otaImage.checksum) {
+                                const checksumByte = new Uint8Array(1);
+                                checksumByte[0] = checksumInfo.checksum;
+                                this.sparseImage.write(checksumInfo.checksumOffsetAbsolute, checksumByte);
+                                checksumFixed = true;
+                            }
+                            
+                            /* Fix SHA256 if appended */
+                            try {
+                                const sha256Info = await this.calculateAndFixImageSHA256(otaPartition.offset);
+                                if (sha256Info.hasHash) {
+                                    if (sha256Info.fixed) {
+                                        sha256Fixed = true;
+                                        oldSHA256 = sha256Info.oldSHA256;
+                                        newSHA256 = sha256Info.newSHA256;
+                                    }
+                                }
+                            } catch (sha256Error) {
+                                /* Non-critical: continue even if SHA256 fixing fails */
+                            }
+                            
+                            if (checksumFixed || sha256Fixed) {
+                                results.otaApp = {
+                                    partition: otaPartition.label,
+                                    offset: otaPartition.offset,
+                                    checksumFixed: checksumFixed,
+                                    oldChecksum: oldChecksum,
+                                    newChecksum: newChecksum,
+                                    sha256Fixed: sha256Fixed,
+                                    oldSHA256: oldSHA256,
+                                    newSHA256: newSHA256,
+                                    fixed: true
+                                };
+                            } else {
+                                results.otaApp = {
+                                    partition: otaPartition.label,
+                                    offset: otaPartition.offset,
+                                    checksum: otaImage.checksum,
+                                    fixed: false,
+                                    reason: 'Already valid'
+                                };
+                            }
+                        }
+                    } else if (!otaOffset && !otaLength) {
+                        results.errors.push('OTA partition not found in partition table');
+                    }
+                } catch (e) {
+                    results.errors.push('Could not fix OTA app: ' + e.message);
+                }
+            }
+        } catch (e) {
+            results.errors.push('Error during checksum fix: ' + e.message);
+        }
+
+        return results;
+    }
+
     // Quick check if partition has valid ESP32 image magic
     async hasValidImageMagic(partition) {
         if (partition.offset >= this.sparseImage.size) {
