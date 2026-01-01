@@ -3027,7 +3027,7 @@ class ESP32Parser {
     }
 
     /* Calculate correct bootloader/image checksum */
-    async calculateImageChecksum(imageOffset) {
+    async calculateImageChecksum(imageOffset, imageLength = null) {
         /* Read image header to find checksum location */
         const magic = await this.view.getUint8(imageOffset);
         if (magic !== 0xE9) {
@@ -3041,16 +3041,41 @@ class ESP32Parser {
         let currentOffset = imageOffset + 24;
         let checksum = 0xEF;
         
+        const MAX_CHUNK_SIZE = 1024 * 1024; // 1 MB chunks to avoid allocation failures
+        const maxOffset = imageLength !== null ? imageOffset + imageLength : this.sparseImage.size;
+        
         for (let i = 0; i < segmentCount; i++) {
+            // Check if we've hit erased flash (segment header would be 0xFFFFFFFF)
+            const segLoadAddr = await this.view.getUint32(currentOffset, true);
             const segLength = await this.view.getUint32(currentOffset + 4, true);
+            
+            // Detect erased/invalid flash: length 0xFFFFFFFF or unreasonably large
+            if (segLength === 0xFFFFFFFF || segLength > 0x1000000) {
+                throw new Error(`Segment ${i} has invalid length (0x${segLength.toString(16)}) - image may be corrupted or truncated`);
+            }
+            
             currentOffset += 8; // Skip segment header (not included in checksum)
             
-            // Fetch the entire segment data at once for performance
-            const segmentData = await this.sparseImage.slice_async(currentOffset, currentOffset + segLength);
+            // Validate segment is within partition/flash bounds
+            if (currentOffset + segLength > maxOffset) {
+                throw new Error(`Segment ${i} extends beyond image bounds (offset: 0x${currentOffset.toString(16)}, length: ${segLength}, max: 0x${maxOffset.toString(16)})`);
+            }
             
-            // XOR all bytes of this segment's data
-            for (let j = 0; j < segmentData.length; j++) {
-                checksum ^= segmentData[j];
+            // Process segment in chunks to avoid memory allocation failures
+            let segmentOffset = currentOffset;
+            let remaining = segLength;
+            
+            while (remaining > 0) {
+                const chunkSize = Math.min(remaining, MAX_CHUNK_SIZE);
+                const segmentChunk = await this.sparseImage.slice_async(segmentOffset, segmentOffset + chunkSize);
+                
+                // XOR all bytes of this chunk
+                for (let j = 0; j < segmentChunk.length; j++) {
+                    checksum ^= segmentChunk[j];
+                }
+                
+                segmentOffset += chunkSize;
+                remaining -= chunkSize;
             }
             
             currentOffset += segLength;
@@ -3101,7 +3126,30 @@ class ESP32Parser {
 
         /* Hash region is from image start to checksum offset (inclusive) */
         const hashRegionEnd = currentOffset + 1;
-        const hashRegionData = await this.sparseImage.slice_async(imageOffset, hashRegionEnd);
+        const hashRegionLength = hashRegionEnd - imageOffset;
+        
+        /* Process in chunks to avoid allocation failures on large images */
+        const MAX_CHUNK = 1024 * 1024; // 1 MB
+        let hashRegionData;
+        
+        if (hashRegionLength <= MAX_CHUNK) {
+            hashRegionData = await this.sparseImage.slice_async(imageOffset, hashRegionEnd);
+        } else {
+            hashRegionData = new Uint8Array(hashRegionLength);
+            let offset = 0;
+            let remaining = hashRegionLength;
+            
+            while (remaining > 0) {
+                const chunkSize = Math.min(remaining, MAX_CHUNK);
+                const chunk = await this.sparseImage.slice_async(
+                    imageOffset + offset,
+                    imageOffset + offset + chunkSize
+                );
+                hashRegionData.set(chunk, offset);
+                offset += chunkSize;
+                remaining -= chunkSize;
+            }
+        }
 
         /* Calculate SHA256 of the region */
         const sha256Bytes = await ESP32Parser.calculateSHA256(hashRegionData);
@@ -3163,7 +3211,7 @@ class ESP32Parser {
                 try {
                     const bl0 = await this.parseImage(0x0, 0x10000);
                     if (bl0 && bl0.magic === 0xE9 && !bl0.error) {
-                        const checksumInfo = await this.calculateImageChecksum(0x0);
+                        const checksumInfo = await this.calculateImageChecksum(0x0, 0x10000);
                         let checksumFixed = false;
                         if (checksumInfo.checksum !== bl0.checksum) {
                             const checksumByte = new Uint8Array(1);
@@ -3215,7 +3263,7 @@ class ESP32Parser {
                     try {
                         const bl1 = await this.parseImage(0x1000, 0x10000);
                         if (bl1 && bl1.magic === 0xE9 && !bl1.error) {
-                            const checksumInfo = await this.calculateImageChecksum(0x1000);
+                            const checksumInfo = await this.calculateImageChecksum(0x1000, 0x10000);
                             let checksumFixed = false;
                             if (checksumInfo.checksum !== bl1.checksum) {
                                 const checksumByte = new Uint8Array(1);
@@ -3288,7 +3336,7 @@ class ESP32Parser {
                     if (otaPartition) {
                         const otaImage = await this.parseImage(otaPartition.offset, otaPartition.length);
                         if (otaImage && otaImage.magic === 0xE9 && !otaImage.error) {
-                            const checksumInfo = await this.calculateImageChecksum(otaPartition.offset);
+                            const checksumInfo = await this.calculateImageChecksum(otaPartition.offset, otaPartition.length);
                             let checksumFixed = false;
                             let sha256Fixed = false;
                             let oldChecksum = otaImage.checksum;
@@ -3712,6 +3760,27 @@ class ESP32Parser {
 
             const loadAddress = await this.view.getUint32(currentOffset, true);
             const segLength = await this.view.getUint32(currentOffset + 4, true);
+
+            // Detect erased/invalid flash: length 0xFFFFFFFF or unreasonably large
+            if (segLength === 0xFFFFFFFF || segLength > 0x1000000) {
+                image.error = `Segment ${i} has invalid length (0x${segLength.toString(16)})`;
+                break;
+            }
+
+            // Check if segment extends beyond partition bounds
+            const maxOffset = length !== null ? offset + length : this.sparseImage.size;
+            if (currentOffset + 8 + segLength > maxOffset) {
+                // Add the faulty segment to show where parsing failed
+                image.segmentList.push({
+                    loadAddress: loadAddress,
+                    length: segLength,
+                    offset: currentOffset + 8,
+                    truncated: true,
+                    error: 'Extends beyond image bounds'
+                });
+                image.error = `Segment ${i} extends beyond image bounds (offset: 0x${(currentOffset + 8).toString(16)}, length: ${segLength}, max: 0x${maxOffset.toString(16)})`;
+                break;
+            }
 
             image.segmentList.push({
                 loadAddress: loadAddress,

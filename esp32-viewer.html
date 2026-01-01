@@ -1129,6 +1129,17 @@
                         style="background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);"
                         onclick="toggleDeviceSession()">Connect to ESP32</button>
                 </div>
+                <div id="advancedBaudGroup" style="display:none; margin-top:10px; text-align:center;">
+                    <label for="advancedBaudSelect" style="font-size:0.9em; color:#a0a0a0;">Baud Rate (advanced):</label>
+                    <div style="margin-top:6px;">
+                        <select id="advancedBaudSelect"
+                            style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
+                            <option value="115200">115200</option>
+                            <option value="921600" selected>921600</option>
+                            <option value="1000000">1000000</option>
+                        </select>
+                    </div>
+                </div>
                 <input type="file" id="fileInput" class="file-input" accept=".bin">
             </div>
 
@@ -1151,7 +1162,8 @@
                     <button class="btn" id="closeFileBtn" onclick="closeFile()"
                         style="background: linear-gradient(135deg, #b71c1c 0%, #ef5350 100%); display: none;">Close
                         File</button>
-                    <button class="btn" id="importBinBtn" onclick="showImportPopup(0x00000000, deviceFlashSizeBytes, true, async () => { await parseAndDisplay(true); })"
+                    <button class="btn" id="importBinBtn"
+                        onclick="showImportPopup(0x00000000, deviceFlashSizeBytes, true, async () => { await parseAndDisplay(true); })"
                         style="display: none; background: linear-gradient(135deg, #4d8f52 0%, #2e7d32 100%);">Import...</button>
                     <button class="btn" id="eraseFlashBtn" onclick="eraseFlash()"
                         style="display: none; background: linear-gradient(135deg, #e67e22 0%, #d35400 100%);">Erase
@@ -1272,6 +1284,8 @@
         let bootloaderInfo = null;
         let partitionTableOffset = null;
         let isDebugMode = window.location.hash.includes('debug');
+        let isAdvancedMode = window.location.hash.includes('advanced');
+        let selectedBaudRate = 921600;
 
         /* Performance tracking for read/write operations */
         let readStartTime = null;
@@ -1504,6 +1518,7 @@
             try {
                 setDeviceStatus('Requesting serial port...', 'loading');
                 deviceFlasher = new ESPFlasher();
+                deviceFlasher.initialBaudRate = selectedBaudRate;
                 deviceFlasher.logError = (msg) => { console.error('Flasher:', msg); };
 
                 if (isDebugMode) {
@@ -2136,6 +2151,37 @@
             }
         }
 
+        function setupAdvancedControls() {
+            const group = document.getElementById('advancedBaudGroup');
+            const select = document.getElementById('advancedBaudSelect');
+
+            if (!group || !select) {
+                return;
+            }
+
+            if (!isAdvancedMode) {
+                group.style.display = 'none';
+                return;
+            }
+
+            group.style.display = 'block';
+            select.value = selectedBaudRate.toString();
+
+            select.addEventListener('change', () => {
+                const nextBaud = parseInt(select.value, 10);
+                if (!Number.isFinite(nextBaud)) {
+                    return;
+                }
+                selectedBaudRate = nextBaud;
+                if (deviceFlasher) {
+                    deviceFlasher.initialBaudRate = selectedBaudRate;
+                }
+                setDeviceStatus(`Baud set to ${selectedBaudRate} (advanced)`, 'info');
+            });
+
+            setDeviceStatus('Advanced baud selector enabled (#advanced).', 'info');
+        }
+
         function showDevicePopup(message, state = null) {
             const popup = document.getElementById('devicePopup');
             if (!popup) {
@@ -2469,6 +2515,7 @@
             try {
                 setDeviceStatus('Requesting serial port...', 'loading');
                 deviceFlasher = new ESPFlasher();
+                deviceFlasher.initialBaudRate = selectedBaudRate;
                 await deviceFlasher.openPort();
                 setDeviceStatus('Connected. You may Hard Reset, then Sync.', 'success');
                 setDeviceButtons({ connected: true });
@@ -2557,6 +2604,8 @@
         // File drop handling
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
+
+        setupAdvancedControls();
 
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -2800,115 +2849,115 @@
                 let html = '';
 
                 if (image.error) {
-                    html = `<div class="error">${image.error}</div>`;
-                } else {
-                    //html = '<div class="success">Bootloader parsed successfully</div>';
+                    html += `<div class="error" style="margin-bottom: 15px;"><strong>⚠️ Parsing Error:</strong> ${image.error}</div>`;
+                }
 
-                    html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
+                //html += '<div class="success">Bootloader parsed successfully</div>';
+
+                html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
+                html += '<div class="info-grid">';
+                html += `<div class="info-item"><label>Flash Offset:</label><span class="mono">0x${offset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
+                html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
+                html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
+                html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
+                html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
+                html += '</div>';
+
+                html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
+                html += '<div class="info-grid">';
+                html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
+                html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
+                html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
+                html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
+                html += '</div>';
+
+                // App Description (if found)
+                if (image.appDesc && image.appDesc.found) {
+                    html += '<h4 style="margin-top: 15px;">Application Description</h4>';
                     html += '<div class="info-grid">';
-                    html += `<div class="info-item"><label>Flash Offset:</label><span class="mono">0x${offset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
-                    html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
-                    html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
-                    html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
-                    html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
-                    html += '</div>';
-
-                    html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
-                    html += '<div class="info-grid">';
-                    html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
-                    html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
-                    html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
-                    html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
-                    html += '</div>';
-
-                    // App Description (if found)
-                    if (image.appDesc && image.appDesc.found) {
-                        html += '<h4 style="margin-top: 15px;">Application Description</h4>';
-                        html += '<div class="info-grid">';
-                        if (image.appDesc.projectName) {
-                            html += `<div class="info-item"><label>Project Name:</label><span>${image.appDesc.projectName}</span></div>`;
-                        }
-                        if (image.appDesc.version) {
-                            html += `<div class="info-item"><label>Version:</label><span>${image.appDesc.version}</span></div>`;
-                        }
-                        if (image.appDesc.idfVer) {
-                            html += `<div class="info-item"><label>ESP-IDF Version:</label><span>${image.appDesc.idfVer}</span></div>`;
-                        }
-                        html += `<div class="info-item"><label>Secure Version:</label><span>${image.appDesc.secureVersion}</span></div>`;
-                        if (image.appDesc.date && image.appDesc.time) {
-                            html += `<div class="info-item"><label>Build Date/Time:</label><span>${image.appDesc.date} ${image.appDesc.time}</span></div>`;
-                        }
-                        if (image.appDesc.appElfSha256) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>App ELF SHA256:</label><span class="mono" title="Reference only - ELF file not available for validation">${image.appDesc.appElfSha256} <span style="color: #9a9a9a;">ℹ️</span></span></div>`;
-                        }
-                        html += '</div>';
+                    if (image.appDesc.projectName) {
+                        html += `<div class="info-item"><label>Project Name:</label><span>${image.appDesc.projectName}</span></div>`;
                     }
-
-                    /* Calculate expected checksum */
-                    let calculatedChecksum = null;
-                    let checksumMismatch = false;
-                    try {
-                        const checksumInfo = await parser.calculateImageChecksum(image.offset);
-                        calculatedChecksum = checksumInfo.checksum;
-                        checksumMismatch = (checksumInfo.checksum !== image.checksum);
-                    } catch (e) {
-                        console.warn('Could not calculate checksum:', e.message);
+                    if (image.appDesc.version) {
+                        html += `<div class="info-item"><label>Version:</label><span>${image.appDesc.version}</span></div>`;
                     }
-
-                    html += '<h4 style="margin-top: 15px;">Validation</h4>';
-                    html += '<div class="info-grid">';
-                    
-                    /* Checksum display */
-                    const checksumColor = checksumMismatch ? '#e88888' : '#6ec589';
-                    const checksumIcon = checksumMismatch ? '✗' : '✓';
-                    html += `<div class="info-item"><label>Checksum:</label><span class="mono" style="color: ${checksumColor};">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ${checksumIcon}</span></div>`;
-                    if (checksumMismatch && calculatedChecksum !== null) {
-                        html += `<div class="info-item"><label>Checksum (calculated):</label><span class="mono">0x${calculatedChecksum.toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
+                    if (image.appDesc.idfVer) {
+                        html += `<div class="info-item"><label>ESP-IDF Version:</label><span>${image.appDesc.idfVer}</span></div>`;
                     }
-                    html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
-
-                    /* SHA256 display */
-                    const sha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
-                    const sha256Valid = sha256Validation && sha256Validation.valid === true;
-                    const sha256Invalid = sha256Validation && sha256Validation.valid === false;
-                    const sha256Color = sha256Valid ? '#6ec589' : sha256Invalid ? '#e88888' : '#9a9a9a';
-                    const sha256Icon = sha256Valid ? '✓' : sha256Invalid ? '✗' : '⏳';
-
-                    if (image.sha256) {
-                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256:</label><span class="mono" style="color: ${sha256Color};">${image.sha256} ${sha256Icon}</span></div>`;
-                        if (sha256Invalid && sha256RegionCalc) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256 (calculated):</label><span class="mono">${sha256RegionCalc}</span></div>`;
-                        }
+                    html += `<div class="info-item"><label>Secure Version:</label><span>${image.appDesc.secureVersion}</span></div>`;
+                    if (image.appDesc.date && image.appDesc.time) {
+                        html += `<div class="info-item"><label>Build Date/Time:</label><span>${image.appDesc.date} ${image.appDesc.time}</span></div>`;
                     }
-                    if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
-                        const regionLen = image.sha256DataEnd - image.sha256DataStart;
-                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
-                    }
-
-                    html += '</div>';
-                    html += '<h4 style="margin-top: 15px;">Segments</h4>';
-                    html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
-                    image.segmentList.forEach((seg, sidx) => {
-                        html += '<tr>';
-                        html += `<td>${sidx}</td>`;
-                        html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
-                        html += `<td>${formatBytes(seg.length)}</td>`;
-                        html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
-                        html += '</tr>';
-                    });
-                    html += '</tbody></table>';
-
-                    html += '<h4 style="margin-top: 15px;">Actions</h4>';
-                    html += '<div style="display: flex; gap: 10px; flex-wrap: wrap;">';
-                    html += '<button class="hex-btn" onclick="viewPartitionHex(-1)">Hex View</button>';
-                    html += '<button class="download-btn" onclick="downloadPartition(-1)">Download</button>';
-                    html += '<button class="replace-btn" onclick="replaceBootloader()">Replace</button>';
-                    html += '<button class="replace-btn" onclick="clearBootloader()">Clear</button>';
-                    if (checksumMismatch) {
-                        html += '<button class="btn" style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);" onclick="fixChecksums(\'bootloader\')">Fix Checksums</button>';
+                    if (image.appDesc.appElfSha256) {
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>App ELF SHA256:</label><span class="mono" title="Reference only - ELF file not available for validation">${image.appDesc.appElfSha256} <span style="color: #9a9a9a;">ℹ️</span></span></div>`;
                     }
                     html += '</div>';
                 }
+
+                /* Calculate expected checksum */
+                let calculatedChecksum = null;
+                let checksumMismatch = false;
+                try {
+                    const checksumInfo = await parser.calculateImageChecksum(image.offset);
+                    calculatedChecksum = checksumInfo.checksum;
+                    checksumMismatch = (checksumInfo.checksum !== image.checksum);
+                } catch (e) {
+                    console.warn('Could not calculate checksum:', e.message);
+                }
+
+                html += '<h4 style="margin-top: 15px;">Validation</h4>';
+                html += '<div class="info-grid">';
+
+                /* Checksum display */
+                const checksumColor = checksumMismatch ? '#e88888' : '#6ec589';
+                const checksumIcon = checksumMismatch ? '✗' : '✓';
+                html += `<div class="info-item"><label>Checksum:</label><span class="mono" style="color: ${checksumColor};">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ${checksumIcon}</span></div>`;
+                if (checksumMismatch && calculatedChecksum !== null) {
+                    html += `<div class="info-item"><label>Checksum (calculated):</label><span class="mono">0x${calculatedChecksum.toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
+                }
+                html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
+
+                /* SHA256 display */
+                const sha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
+                const sha256Valid = sha256Validation && sha256Validation.valid === true;
+                const sha256Invalid = sha256Validation && sha256Validation.valid === false;
+                const sha256Color = sha256Valid ? '#6ec589' : sha256Invalid ? '#e88888' : '#9a9a9a';
+                const sha256Icon = sha256Valid ? '✓' : sha256Invalid ? '✗' : '⏳';
+
+                if (image.sha256) {
+                    html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256:</label><span class="mono" style="color: ${sha256Color};">${image.sha256} ${sha256Icon}</span></div>`;
+                    if (sha256Invalid && sha256RegionCalc) {
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256 (calculated):</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                    }
+                }
+                if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
+                    const regionLen = image.sha256DataEnd - image.sha256DataStart;
+                    html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
+                }
+
+                html += '</div>';
+                html += '<h4 style="margin-top: 15px;">Segments</h4>';
+                html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
+                image.segmentList.forEach((seg, sidx) => {
+                    html += '<tr>';
+                    html += `<td>${sidx}</td>`;
+                    html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
+                    html += `<td>${formatBytes(seg.length)}</td>`;
+                    html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+
+                html += '<h4 style="margin-top: 15px;">Actions</h4>';
+                html += '<div style="display: flex; gap: 10px; flex-wrap: wrap;">';
+                html += '<button class="hex-btn" onclick="viewPartitionHex(-1)">Hex View</button>';
+                html += '<button class="download-btn" onclick="downloadPartition(-1)">Download</button>';
+                html += '<button class="replace-btn" onclick="replaceBootloader()">Replace</button>';
+                html += '<button class="replace-btn" onclick="clearBootloader()">Clear</button>';
+                if (checksumMismatch) {
+                    html += '<button class="btn" style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);" onclick="fixChecksums(\'bootloader\')">Fix Checksums</button>';
+                }
+                html += '</div>';
 
                 contentDiv.innerHTML = html;
 
@@ -3063,7 +3112,7 @@
                 } else if (part.type === 0) { // APP
                     html += `<div class="detail-item">
                         <button class="btn" onclick="event.stopPropagation(); parseImagePartitionInline(${idx})">Parse Image</button>
-                        <button class="btn" onclick="event.stopPropagation(); downloadOTAImage(${idx})">Save OTA Image</button>
+                        <button class="btn" id="save_ota_${idx}" onclick="event.stopPropagation(); downloadOTAImage(${idx})">Save OTA Image</button>
                         <button class="btn" id="fix_check_${idx}" style="display: none; background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); cursor: pointer;" onclick="event.stopPropagation(); (async () => { await fixChecksums('ota', ${part.offset}, ${part.length}); parseImagePartitionInline(${idx}); })();">Fix Checksums</button>
                         </div>`;
                 } else if (part.subType === 0x81) { // FAT
@@ -3183,7 +3232,7 @@
                 const result = await parser.fixAllChecksums(imageType, otaOffset, otaLength);
 
                 let statusParts = [];
-                
+
                 if (result.bootloader) {
                     if (result.bootloader.fixed) {
                         const fixes = [];
@@ -3211,7 +3260,7 @@
 
                 updateMemoryMap();
                 await parseBootloader();
-                
+
                 if (statusParts.length > 0) {
                     setDeviceStatus(statusParts.join(' | '), 'success');
                 } else {
@@ -4614,10 +4663,10 @@
 
             try {
                 const result = await currentFATParser.deleteFile(file);
-                
+
                 if (result.success) {
                     console.log(`File "${file.name}" deleted successfully!\n${result.clustersCleared} clusters cleared.`);
-                    
+
                     // Re-parse the partition to refresh the file list
                     const partitionIdx = parser.partitions.indexOf(currentFATPartition);
                     if (partitionIdx !== -1) {
@@ -4648,10 +4697,10 @@
             const modal = document.createElement('div');
             modal.id = 'add-file-modal';
             modal.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 10000; display: flex; align-items: center; justify-content: center;';
-            
+
             const dialog = document.createElement('div');
             dialog.style.cssText = 'background: #2a2b35; padding: 30px; border-radius: 8px; max-width: 500px; width: 90%;';
-            
+
             const dirDisplayPath = dirPath || '(root)';
             dialog.innerHTML = `
                 <h3 style="margin-top: 0;">Add File to ${dirDisplayPath}</h3>
@@ -4669,7 +4718,7 @@
                     <button id="add-file-submit" style="padding: 10px 20px; background: #44cc44; border: none; color: white; border-radius: 4px; cursor: pointer;">Add File</button>
                 </div>
             `;
-            
+
             modal.appendChild(dialog);
             document.body.appendChild(modal);
 
@@ -4682,7 +4731,7 @@
             document.getElementById('add-file-submit').onclick = async () => {
                 const filenameInput = document.getElementById('add-file-name');
                 const fileInput = document.getElementById('add-file-input');
-                
+
                 let filename = filenameInput.value.trim();
                 const file = fileInput.files[0];
 
@@ -4719,7 +4768,7 @@
 
                     if (result.success) {
                         alert(`File "${result.filename}" added successfully!\nSize: ${result.size} bytes\nClusters: ${result.clusters}\nStart cluster: 0x${result.startCluster.toString(16).toUpperCase()}`);
-                        
+
                         // Re-parse the partition to refresh the file list
                         const partitionIdx = parser.partitions.indexOf(currentFATPartition);
                         if (partitionIdx !== -1) {
@@ -4796,7 +4845,7 @@
 
                 // Cluster
                 row += `<td class="mono">0x${file.cluster.toString(16).toUpperCase()}</td>`;
-                
+
                 // Actions (delete/add button)
                 if (!file.isDirectory) {
                     row += `<td><button class="delete-btn" onclick="event.stopPropagation(); deleteFATFile('${fileId}')" title="Delete file">✕</button></td>`;
@@ -4805,7 +4854,7 @@
                     window[fileId] = file;
                     row += `<td><button class="add-btn" onclick="event.stopPropagation(); addFATFile('${file.path}')" title="Add file to this directory">+</button></td>`;
                 }
-                
+
                 row += '</tr>';
 
                 rows.push(row);
@@ -4837,9 +4886,36 @@
 
                     if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined && image.sha256DataEnd > image.sha256DataStart) {
                         console.log(`Image SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
-                        const regionData = await parser.sparseImage.slice_async(image.sha256DataStart, image.sha256DataEnd);
-                        const regionHash = await ESP32Parser.calculateSHA256(regionData);
-                        sha256RegionCalc = ESP32Parser.bytesToHex(regionHash);
+
+                        // Process in chunks to avoid allocation failures on large images
+                        const MAX_CHUNK = 1024 * 1024; // 1 MB
+                        const regionLength = image.sha256DataEnd - image.sha256DataStart;
+
+                        if (regionLength <= MAX_CHUNK) {
+                            // Small enough to process at once
+                            const regionData = await parser.sparseImage.slice_async(image.sha256DataStart, image.sha256DataEnd);
+                            const regionHash = await ESP32Parser.calculateSHA256(regionData);
+                            sha256RegionCalc = ESP32Parser.bytesToHex(regionHash);
+                        } else {
+                            // Process in chunks using streaming hash
+                            const hashBuffer = new Uint8Array(regionLength);
+                            let offset = 0;
+                            let remaining = regionLength;
+
+                            while (remaining > 0) {
+                                const chunkSize = Math.min(remaining, MAX_CHUNK);
+                                const chunk = await parser.sparseImage.slice_async(
+                                    image.sha256DataStart + offset,
+                                    image.sha256DataStart + offset + chunkSize
+                                );
+                                hashBuffer.set(chunk, offset);
+                                offset += chunkSize;
+                                remaining -= chunkSize;
+                            }
+
+                            const regionHash = await ESP32Parser.calculateSHA256(hashBuffer);
+                            sha256RegionCalc = ESP32Parser.bytesToHex(regionHash);
+                        }
                     }
 
                     if (image.sha256) {
@@ -4853,124 +4929,134 @@
                     let html = '';
 
                     if (image.error) {
-                        html = `<div class="error">${image.error}</div>`;
-                    } else {
-                        /* Check if OTA app checksum needs fixing */
-                        let otaCheckNeedsFix = false;
-                        try {
-                            const checksumInfo = await parser.calculateImageChecksum(partition.offset);
-                            if (checksumInfo.checksum !== image.checksum) {
-                                otaCheckNeedsFix = true;
-                                
-                                const button = document.getElementById(`fix_check_${idx}`);
-                                button.style.display = 'inline-block';
-                            }
-                        } catch (e) {
-                            console.warn('Could not check OTA checksum:', e.message);
-                        }
-
-                        html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
-                        html += '<div class="info-grid">';
-                        html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
-                        html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
-                        html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
-                        html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
-                        html += '</div>';
-
-                        html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
-                        html += '<div class="info-grid">';
-                        html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
-                        html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
-                        html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
-                        html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
-                        html += '</div>';
-
-                        html += '<h4 style="margin-top: 15px;">Chip Revision</h4>';
-                        html += '<div class="info-grid">';
-                        html += `<div class="info-item"><label>Min Chip Rev:</label><span>v${image.minChipRevMajor}.${image.minChipRevMinor} (${image.minChipRevFull})</span></div>`;
-                        html += `<div class="info-item"><label>Max Chip Rev:</label><span>v${image.maxChipRevMajor}.${image.maxChipRevMinor} (${image.maxChipRevFull})</span></div>`;
-                        html += `<div class="info-item"><label>Legacy Min Rev:</label><span>${image.minChipRev}</span></div>`;
-                        html += '</div>';
-
-                        // App Description (if found)
-                        if (image.appDesc && image.appDesc.found) {
-                            html += '<h4 style="margin-top: 15px;">Application Description</h4>';
-                            html += '<div class="info-grid">';
-                            if (image.appDesc.projectName) {
-                                html += `<div class="info-item"><label>Project Name:</label><span>${image.appDesc.projectName}</span></div>`;
-                            }
-                            if (image.appDesc.version) {
-                                html += `<div class="info-item"><label>Version:</label><span>${image.appDesc.version}</span></div>`;
-                            }
-                            if (image.appDesc.idfVer) {
-                                html += `<div class="info-item"><label>ESP-IDF Version:</label><span>${image.appDesc.idfVer}</span></div>`;
-                            }
-                            html += `<div class="info-item"><label>Secure Version:</label><span>${image.appDesc.secureVersion}</span></div>`;
-                            if (image.appDesc.date && image.appDesc.time) {
-                                html += `<div class="info-item"><label>Build Date/Time:</label><span>${image.appDesc.date} ${image.appDesc.time}</span></div>`;
-                            }
-                            if (image.appDesc.appElfSha256) {
-                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>App ELF SHA256:</label><span class="mono" title="Reference only - ELF file not available for validation">${image.appDesc.appElfSha256} <span style="color: #9a9a9a;">ℹ️</span></span></div>`;
-                            }
-                            html += '</div>';
-                        }
-
-                        html += '<h4 style="margin-top: 15px;">Validation</h4>';
-                        html += '<div class="info-grid">';
-                        
-                        /* Calculate expected checksum for OTA app */
-                        let otaChecksumMismatch = false;
-                        let otaCalculatedChecksum = null;
-                        try {
-                            const checksumInfo = await parser.calculateImageChecksum(partition.offset);
-                            otaCalculatedChecksum = checksumInfo.checksum;
-                            otaChecksumMismatch = (checksumInfo.checksum !== image.checksum);
-                        } catch (e) {
-                            console.warn('Could not calculate OTA checksum:', e.message);
-                        }
-                        
-                        /* Checksum display */
-                        const otaChecksumColor = otaChecksumMismatch ? '#e88888' : '#6ec589';
-                        const otaChecksumIcon = otaChecksumMismatch ? '✗' : '✓';
-                        html += `<div class="info-item"><label>Checksum:</label><span class="mono" style="color: ${otaChecksumColor};">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ${otaChecksumIcon}</span></div>`;
-                        if (otaChecksumMismatch && otaCalculatedChecksum !== null) {
-                            html += `<div class="info-item"><label>Checksum (calculated):</label><span class="mono">0x${otaCalculatedChecksum.toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
-                        }
-                        html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
-                        
-                        /* SHA256 display */
-                        const otaSha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
-                        const otaSha256Valid = sha256Validation && sha256Validation.valid === true;
-                        const otaSha256Invalid = sha256Validation && sha256Validation.valid === false;
-                        const otaSha256Color = otaSha256Valid ? '#6ec589' : otaSha256Invalid ? '#e88888' : '#9a9a9a';
-                        const otaSha256Icon = otaSha256Valid ? '✓' : otaSha256Invalid ? '✗' : '⏳';
-                        
-                        if (image.sha256) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256:</label><span class="mono" style="color: ${otaSha256Color};">${image.sha256} ${otaSha256Icon}</span></div>`;
-                            if (otaSha256Invalid && sha256RegionCalc) {
-                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256 (calculated):</label><span class="mono">${sha256RegionCalc}</span></div>`;
-                            }
-                        }
-                        if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
-                            const regionLen = image.sha256DataEnd - image.sha256DataStart;
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
-                        }
-                        html += '</div>';
-
-                        html += '<h4 style="margin-top: 15px;">Segments</h4>';
-                        html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
-                        image.segmentList.forEach((seg, sidx) => {
-                            html += '<tr>';
-                            html += `<td>${sidx}</td>`;
-                            html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
-                            html += `<td>${formatBytes(seg.length)}</td>`;
-                            html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
-                            html += '</tr>';
-                        });
-                        html += '</tbody></table>';
+                        html += `<div class="error" style="margin-bottom: 15px;"><strong>⚠️ Parsing Error:</strong> ${image.error}</div>`;
                     }
 
+                    /* Check if OTA app checksum needs fixing */
+                    let otaCheckNeedsFix = false;
+                    try {
+                        const checksumInfo = await parser.calculateImageChecksum(partition.offset, partition.length);
+                        if (checksumInfo.checksum !== image.checksum) {
+                            otaCheckNeedsFix = true;
+
+                            const button = document.getElementById(`fix_check_${idx}`);
+                            button.style.display = 'inline-block';
+                        }
+                    } catch (e) {
+                        console.warn('Could not check OTA checksum:', e.message);
+                    }
+
+                    html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
+                    html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
+                    html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
+                    html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
+                    html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
+                    html += '</div>';
+
+                    html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
+                    html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
+                    html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
+                    html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
+                    html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
+                    html += '</div>';
+
+                    html += '<h4 style="margin-top: 15px;">Chip Revision</h4>';
+                    html += '<div class="info-grid">';
+                    html += `<div class="info-item"><label>Min Chip Rev:</label><span>v${image.minChipRevMajor}.${image.minChipRevMinor} (${image.minChipRevFull})</span></div>`;
+                    html += `<div class="info-item"><label>Max Chip Rev:</label><span>v${image.maxChipRevMajor}.${image.maxChipRevMinor} (${image.maxChipRevFull})</span></div>`;
+                    html += `<div class="info-item"><label>Legacy Min Rev:</label><span>${image.minChipRev}</span></div>`;
+                    html += '</div>';
+
+                    // App Description (if found)
+                    if (image.appDesc && image.appDesc.found) {
+                        html += '<h4 style="margin-top: 15px;">Application Description</h4>';
+                        html += '<div class="info-grid">';
+                        if (image.appDesc.projectName) {
+                            html += `<div class="info-item"><label>Project Name:</label><span>${image.appDesc.projectName}</span></div>`;
+                        }
+                        if (image.appDesc.version) {
+                            html += `<div class="info-item"><label>Version:</label><span>${image.appDesc.version}</span></div>`;
+                        }
+                        if (image.appDesc.idfVer) {
+                            html += `<div class="info-item"><label>ESP-IDF Version:</label><span>${image.appDesc.idfVer}</span></div>`;
+                        }
+                        html += `<div class="info-item"><label>Secure Version:</label><span>${image.appDesc.secureVersion}</span></div>`;
+                        if (image.appDesc.date && image.appDesc.time) {
+                            html += `<div class="info-item"><label>Build Date/Time:</label><span>${image.appDesc.date} ${image.appDesc.time}</span></div>`;
+                        }
+                        if (image.appDesc.appElfSha256) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>App ELF SHA256:</label><span class="mono" title="Reference only - ELF file not available for validation">${image.appDesc.appElfSha256} <span style="color: #9a9a9a;">ℹ️</span></span></div>`;
+                        }
+                        html += '</div>';
+                    }
+
+                    html += '<h4 style="margin-top: 15px;">Validation</h4>';
+                    html += '<div class="info-grid">';
+
+                    /* Calculate expected checksum for OTA app */
+                    let otaChecksumMismatch = false;
+                    let otaCalculatedChecksum = null;
+                    try {
+                        const checksumInfo = await parser.calculateImageChecksum(partition.offset, partition.length);
+                        otaCalculatedChecksum = checksumInfo.checksum;
+                        otaChecksumMismatch = (checksumInfo.checksum !== image.checksum);
+                    } catch (e) {
+                        console.warn('Could not calculate OTA checksum:', e.message);
+                    }
+
+                    /* Checksum display */
+                    const otaChecksumColor = otaChecksumMismatch ? '#e88888' : '#6ec589';
+                    const otaChecksumIcon = otaChecksumMismatch ? '✗' : '✓';
+                    html += `<div class="info-item"><label>Checksum:</label><span class="mono" style="color: ${otaChecksumColor};">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ${otaChecksumIcon}</span></div>`;
+                    if (otaChecksumMismatch && otaCalculatedChecksum !== null) {
+                        html += `<div class="info-item"><label>Checksum (calculated):</label><span class="mono">0x${otaCalculatedChecksum.toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
+                    }
+                    html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
+
+                    /* SHA256 display */
+                    const otaSha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
+                    const otaSha256Valid = sha256Validation && sha256Validation.valid === true;
+                    const otaSha256Invalid = sha256Validation && sha256Validation.valid === false;
+                    const otaSha256Color = otaSha256Valid ? '#6ec589' : otaSha256Invalid ? '#e88888' : '#9a9a9a';
+                    const otaSha256Icon = otaSha256Valid ? '✓' : otaSha256Invalid ? '✗' : '⏳';
+
+                    if (image.sha256) {
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256:</label><span class="mono" style="color: ${otaSha256Color};">${image.sha256} ${otaSha256Icon}</span></div>`;
+                        if (otaSha256Invalid && sha256RegionCalc) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256 (calculated):</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                        }
+                    }
+                    if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
+                        const regionLen = image.sha256DataEnd - image.sha256DataStart;
+                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
+                    }
+                    html += '</div>';
+
+                    html += '<h4 style="margin-top: 15px;">Segments</h4>';
+                    html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
+                    image.segmentList.forEach((seg, sidx) => {
+                        html += '<tr>';
+                        html += `<td>${sidx}</td>`;
+                        html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
+                        html += `<td>${formatBytes(seg.length)}</td>`;
+                        html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
+                        html += '</tr>';
+                    });
+                    html += '</tbody></table>';
+
+
                     contentDiv.innerHTML = html;
+
+                    // Update the Save OTA Image button to show actual size
+                    if (image.sha256DataEnd !== undefined) {
+                        const imageSize = image.sha256DataEnd - partition.offset;
+                        const saveButton = document.getElementById(`save_ota_${idx}`);
+                        if (saveButton) {
+                            saveButton.textContent = `Save OTA Image (${formatBytes(imageSize)})`;
+                        }
+                    }
                 } catch (error) {
                     console.error('Image parsing error:', error);
                     contentDiv.innerHTML = `<div class="error">Error parsing image: ${error.message}</div>`;
@@ -5100,8 +5186,8 @@
                 }
 
                 const actualLength = Math.min(length, totalLen - offset);
-                if (actualLength > 0x10000) {
-                    rawContent.innerHTML = '<div class="error">Length too large. Maximum is 0x10000 (64KB)</div>';
+                if (actualLength > 0x100000) {
+                    rawContent.innerHTML = '<div class="error">Length too large. Maximum is 0x100000 (1MB)</div>';
                     return;
                 }
 
@@ -5521,7 +5607,7 @@
                     alert('No NVS partition loaded.');
                     return;
                 }
-                
+
                 await currentNVSParser.addItem(namespace, key, type, value);
 
                 closeNVSAddDialog();
@@ -5619,7 +5705,7 @@
                     alert('No NVS partition loaded.');
                     return;
                 }
-                
+
                 await currentNVSParser.addNamespace(namespaceName);
                 console.log(`Added namespace: ${namespaceName}`);
 
