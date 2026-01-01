@@ -2781,9 +2781,9 @@
 
         async function parseAndDisplay(focusBootloader = false) {
             // Parse bootloader first to detect partition table offset
-            bootloaderInfo = await parseBootloader(0x0000);
+            bootloaderInfo = await parseBootloader(0x1000);
             if (!bootloaderInfo || bootloaderInfo.error) {
-                bootloaderInfo = await parseBootloader(0x1000);
+                bootloaderInfo = await parseBootloader(0x0000);
             }
             console.log("Bootloader parsed:", bootloaderInfo);
 
@@ -2819,14 +2819,30 @@
 
         async function parseBootloader(offset = 0x0000) {
             const contentDiv = document.getElementById('bootloaderContent');
-            // We don't know the partition table offset yet, so use a reasonable max search size
-            const maxBootloaderLength = 0x10000; // 64KB should be more than enough for any bootloader
+            const maxBootloaderLength = parser.sparseImage.length - offset;
             const partition = { offset: offset, length: maxBootloaderLength, label: 'bootloader' };
 
             contentDiv.innerHTML = '<div class="loading">⏳ Parsing bootloader...</div>';
 
             try {
                 const image = await parser.parseImage(partition.offset, partition.length);
+
+                const fmtHex = (val, width = 0) => Number.isFinite(val) ? '0x' + val.toString(16).toUpperCase().padStart(width, '0') : 'n/a';
+                const fmtText = (val, fallback = 'n/a') => (val !== undefined && val !== null && val !== '') ? val : fallback;
+
+                const magicValid = image && !image.error && image.magic === 0xE9;
+                if (!magicValid) {
+                    const msg = fmtText(image.error, `Invalid magic or non-bootloader image: ${image.error}`);
+                    const minimalHtml = `<div class="error" style="margin-bottom: 15px;"><strong>⚠️ Not a bootloader at ${fmtHex(offset, 4)}</strong><br>${msg}</div>`;
+                    contentDiv.innerHTML = minimalHtml;
+
+                    /* Provide reasonable start/end markers so callers can continue */
+                    image.bootloaderStart = partition.offset;
+                    image.bootloaderEnd = Number.isFinite(image.endOffset)
+                        ? image.endOffset
+                        : partition.offset + (image.length || 0);
+                    return image;
+                }
 
                 // Validate SHA256 (appended) and compute region/full hashes
                 let sha256Validation = null;
@@ -2856,19 +2872,19 @@
 
                 html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
                 html += '<div class="info-grid">';
-                html += `<div class="info-item"><label>Flash Offset:</label><span class="mono">0x${offset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
-                html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
-                html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
-                html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
-                html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
+                html += `<div class="info-item"><label>Flash Offset:</label><span class="mono">${fmtHex(offset, 4)}</span></div>`;
+                html += `<div class="info-item"><label>Magic:</label><span class="mono">${fmtHex(image.magic, 2)}</span></div>`;
+                html += `<div class="info-item"><label>Segment Count:</label><span>${fmtText(image.segmentCount)}</span></div>`;
+                html += `<div class="info-item"><label>Entry Address:</label><span class="mono">${fmtHex(image.entryAddr, 8)}</span></div>`;
+                html += `<div class="info-item"><label>Chip:</label><span>${fmtText(image.chipName, 'Unknown')} (${fmtHex(image.chipId, 4)})</span></div>`;
                 html += '</div>';
 
                 html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
                 html += '<div class="info-grid">';
-                html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
-                html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
-                html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
-                html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
+                html += `<div class="info-item"><label>SPI Mode:</label><span>${fmtText(image.spiModeName, 'Unknown')} (${fmtText(image.spiMode, 'n/a')})</span></div>`;
+                html += `<div class="info-item"><label>SPI Speed:</label><span>${fmtText(image.spiSpeedName, 'Unknown')}</span></div>`;
+                html += `<div class="info-item"><label>Flash Size:</label><span>${fmtText(image.spiSizeName, 'Unknown')}</span></div>`;
+                html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : fmtHex(image.wpPin, 2)}</span></div>`;
                 html += '</div>';
 
                 // App Description (if found)
@@ -2938,12 +2954,13 @@
                 html += '</div>';
                 html += '<h4 style="margin-top: 15px;">Segments</h4>';
                 html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
-                image.segmentList.forEach((seg, sidx) => {
+                const segments = Array.isArray(image.segmentList) ? image.segmentList : [];
+                segments.forEach((seg, sidx) => {
                     html += '<tr>';
                     html += `<td>${sidx}</td>`;
-                    html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
-                    html += `<td>${formatBytes(seg.length)}</td>`;
-                    html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
+                    html += `<td class="mono">${fmtHex(seg.loadAddress, 8)}</td>`;
+                    html += `<td>${formatBytes(seg.length || 0)}</td>`;
+                    html += `<td class="mono">${fmtHex(seg.offset)}</td>`;
                     html += '</tr>';
                 });
                 html += '</tbody></table>';
@@ -2962,7 +2979,7 @@
                 contentDiv.innerHTML = html;
 
                 // Find bootloader end (where 0xFF padding starts)
-                let bootloaderEnd = image.endOffset || 0;
+                let bootloaderEnd = Number.isFinite(image.endOffset) ? image.endOffset : 0;
                 // Scan forward from endOffset to find where 0xFF padding begins
                 // Limit scan to actual file size
                 const actualSize = parser.sparseImage.size;
