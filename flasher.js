@@ -24,6 +24,16 @@ const ERASE_REGION = 0xd1;
 const READ_FLASH = 0xd2;
 const RUN_USER_CODE = 0xd3;
 
+/**
+ * IMPORTANT: For browser usage, chips.js must be loaded BEFORE flasher.js
+ * Example HTML:
+ *   <script src="chips.js"></script>
+ *   <script src="flasher.js"></script>
+ * 
+ * This will make ChipDescriptions available globally for flasher.js to use.
+ * For Node.js, flasher.js will automatically require('./chips.js')
+ */
+
 /* Resolve ChipDescriptions for both browser and Node environments */
 const ChipDescriptionsClass = typeof ChipDescriptions !== 'undefined'
     ? ChipDescriptions
@@ -83,8 +93,8 @@ class SlipLayer {
         this.escaping = false;
         this.verbose = true;
         this.logPackets = false;
-        this.logDebug = () => { };
-        this.logError = () => { };
+        this.logDebug = (msg) => { };
+        this.logError = (msg) => { };
     }
 
     /**
@@ -719,9 +729,6 @@ class ESPFlasher {
         this.stubLoaded = false;
         this.responseHandlers = new Map();
         this.chip_magic_addr = 0x40001000;
-        if (!ChipDescriptionsClass) {
-            throw new Error('ChipDescriptions is not available. Load chips.js before constructing ESPFlasher.');
-        }
         this.chip_descriptions = new ChipDescriptionsClass().chip_descriptions;
 
         this.buffer = [];
@@ -1191,7 +1198,7 @@ class ESPFlasher {
      * @async
      * @private
      */
-    async _executeCommandUnlocked(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
+    async _executeCommandUnlocked(packet, callback, rawDataCallback, timeout = 500, hasTimeoutCbr = null) {
         if (!this.port || !this.port.writable) {
             throw new Error("Port is not writable.");
         }
@@ -1225,11 +1232,11 @@ class ESPFlasher {
                 if (callback) { return callback(resolve, reject, response); }
             });
 
-            if (default_callback) {
+            if (rawDataCallback) {
                 this.responseHandlers.set(-1, async (response) => {
                     /* Clear timeout as soon as we hand raw data to caller */
                     try { clearTimeout(timeoutHandle); } catch (e) { }
-                    return default_callback(resolve, reject, response);
+                    return rawDataCallback(resolve, reject, response);
                 });
             }
 
@@ -1255,6 +1262,7 @@ class ESPFlasher {
             }
         });
     }
+
 
     /**
      * Disconnect from serial port
@@ -1902,6 +1910,7 @@ class ESPFlasher {
 
      */
     async readFlashPlain(address, length = 0x1000, progressCallback) {
+        //console.log(`[ReadFlashPlain] START: addr=0x${address.toString(16)}, len=0x${length.toString(16)}`);
 
         const performRead = async (cbr) => {
             let blockSize = 0x1000;
@@ -1909,16 +1918,17 @@ class ESPFlasher {
             if (blockSize > length) {
                 blockSize = length;
             }
+            const packets = length / blockSize;
+
             let packet = 0;
-            let maxInFlight = 64;
+            let maxInFlight = blockSize * 2;
+            if (maxInFlight > length) {
+                maxInFlight = length;
+            }
+            let nextAckThreshold = maxInFlight;
 
             var data = new Uint8Array(0);
             var lastDataTime = Date.now();
-            const packets = length / blockSize;
-
-            if (packets > maxInFlight) {
-                maxInFlight = packets;
-            }
 
             /* Timing measurements */
             const readStartTime = Date.now();
@@ -1926,7 +1936,9 @@ class ESPFlasher {
             let lastPacketTime = readStartTime;
             let totalBytesReceived = 0;
 
-            //console.log("Starting ReadFlash:", { address, length, sectorSize: blockSize, packets, ackMax: maxInFlight });
+            if(this.devMode) {
+                console.log(`[ReadFlashPlain] Starting ReadFlash:`, { address: `0x${address.toString(16)}`, length, sectorSize: blockSize, packets, maxInFlight: maxInFlight });
+            }
 
             return this.executeCommand(
                 this.buildCommandPacketU32(READ_FLASH, address, length, blockSize, maxInFlight),
@@ -1998,25 +2010,37 @@ class ESPFlasher {
                             cbr(data.length, length);
                         }
 
-                        /* Prepare response */
-                        var resp = new Uint8Array(4);
-                        resp[0] = (data.length >> 0) & 0xFF;
-                        resp[1] = (data.length >> 8) & 0xFF;
-                        resp[2] = (data.length >> 16) & 0xFF;
-                        resp[3] = (data.length >> 24) & 0xFF;
-
-                        /* Encode and write response */
-                        const slipFrame = this.slipLayer.encode(resp);
-                        this.logSerialData(slipFrame, 'TX');
-                        await this._writeFrame(slipFrame);
                         packet++;
+
+                        /* Prepare response */
+                        if (data.length >= nextAckThreshold) {
+                            var resp = new Uint8Array(4);
+                            resp[0] = (data.length >> 0) & 0xFF;
+                            resp[1] = (data.length >> 8) & 0xFF;
+                            resp[2] = (data.length >> 16) & 0xFF;
+                            resp[3] = (data.length >> 24) & 0xFF;
+
+                            nextAckThreshold += maxInFlight;
+                            if (nextAckThreshold > length) {
+                                nextAckThreshold = length;
+                            }
+
+                            /* Encode and write response */
+                            const slipFrame = this.slipLayer.encode(resp);
+                            this.logSerialData(slipFrame, 'TX');
+                            await this._writeFrame(slipFrame);
+                        }
                     }
                 },
                 1000 * packets,
                 /* Timeout condition: if the last raw data callback was more than a second ago */
                 () => {
                     const timeSinceLastData = Date.now() - lastDataTime;
-                    return timeSinceLastData > 1000;
+                    const hasTimedOut = timeSinceLastData > 1000;
+                    if (hasTimedOut) {
+                        console.log(`[ReadFlashPlain] TIMEOUT CHECK: timeSinceLastData=${timeSinceLastData}ms, triggering timeout`);
+                    }
+                    return hasTimedOut;
                 }
             );
         };
@@ -2428,7 +2452,6 @@ class ESPFlasher {
      * @param {Object} pkt - Parsed packet
      */
     dumpPacket(pkt) {
-
         if (!this.devMode) {
             return;
         }
@@ -2474,7 +2497,6 @@ class ESPFlasher {
         var pkt = this.parsePacket(packet);
 
         if (pkt && pkt.dir === 0x01) {
-
             this.dumpPacket(pkt);
             /* Call response handler if registered */
             if (this.responseHandlers.has(pkt.command)) {
@@ -2487,6 +2509,8 @@ class ESPFlasher {
             if (this.responseHandlers.has(-1)) {
                 var handler = this.responseHandlers.get(-1);
                 await handler(packet);
+            } else {
+                console.log(`[processPacket] No raw data handler (-1) registered`);
             }
         }
     }

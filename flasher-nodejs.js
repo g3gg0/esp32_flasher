@@ -48,17 +48,36 @@ class RawFDSerialPort extends EventEmitter {
     async open(options = {}) {
         const baudRate = options.baudRate || 115200;
         const { execSync } = require('child_process');
-        
+        const path = require('path');
+
         try {
-            execSync(`stty -F ${this.portPath} ${baudRate} raw -echo -echoe -echok -ixoff -ixon -ixany -crtscts cs8 -parenb -cstopb min 0 time 0`, { stdio: 'ignore' });
-        } catch (e) {}
-        
+            /*
+             * Use Python script to configure serial port for raw binary mode.
+             * This is more reliable than stty for disabling terminal processing
+             * of control characters like 0x16 (SYN/CTRL-V).
+             */
+            const scriptPath = path.join(__dirname, 'configure-serial.py');
+            execSync(`python3 ${scriptPath} ${this.portPath} ${baudRate}`, { stdio: 'pipe' });
+            console.log(`[RawFDSerialPort] Port configured for raw binary mode (no terminal processing)`);
+        } catch (e) {
+            console.warn(`[RawFDSerialPort] Configuration script failed:`, e.message);
+            console.warn(`[RawFDSerialPort] Attempting fallback stty configuration...`);
+            try {
+                execSync(`stty -F ${this.portPath} ${baudRate} raw -echo -echoe -echok -ixoff -ixon -ixany -crtscts cs8 -parenb -cstopb min 0 time 0`, { stdio: 'ignore' });
+                console.log(`[RawFDSerialPort] Fallback stty configuration applied`);
+            } catch (e2) {
+                console.warn(`[RawFDSerialPort] Both configuration methods failed`);
+            }
+        }
+
         try {
             const flags = fs.constants.O_RDWR | fs.constants.O_NOCTTY | fs.constants.O_NONBLOCK;
             this.fd = fs.openSync(this.portPath, flags);
             this.isOpen = true;
-            
-            try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); } catch (_) {}
+
+            console.log(`[RawFDSerialPort] Port opened: ${this.portPath}, fd=${this.fd}`);
+
+            try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); } catch (_) { }
             this._startPolling();
         } catch (error) {
             throw new Error(`Failed to open ${this.portPath}: ${error.message}`);
@@ -79,7 +98,8 @@ class RawFDSerialPort extends EventEmitter {
     }
 
     _startPolling() {
-        const readBuffer = Buffer.alloc(4096);
+        const readBuffer = Buffer.alloc(65536); /* Large 64KB buffer to drain quickly */
+        console.log(`[RawFDSerialPort] Starting poll loop for ${this.portPath} with ${readBuffer.length} byte buffer`);
         this.pollInterval = setInterval(() => {
             if (!this.isOpen || !this.fd) {
                 if (this.pollInterval) {
@@ -88,22 +108,62 @@ class RawFDSerialPort extends EventEmitter {
                 }
                 return;
             }
-            
+
+            /* Read in a loop to drain all available data immediately */
+            let totalRead = 0;
             try {
-                const bytesRead = fs.readSync(this.fd, readBuffer, 0, readBuffer.length);
-                if (bytesRead > 0) {
-                    this.emit('data', Buffer.from(readBuffer.slice(0, bytesRead)));
+                while (true) {
+                    const bytesRead = fs.readSync(this.fd, readBuffer, 0, readBuffer.length);
+                    this.logSerialData(readBuffer.slice(0, bytesRead), 'RX', true);
+                    if (bytesRead > 0) {
+                        totalRead += bytesRead;
+                        this.emit('data', Buffer.from(readBuffer.slice(0, bytesRead)));
+                    } else {
+                        break; /* No more data available */
+                    }
                 }
             } catch (error) {
                 if (error.code !== 'EAGAIN' && error.code !== 'EWOULDBLOCK' && this.isOpen) {
+                    console.error(`[RawFDSerialPort] Read error:`, error);
                     this.emit('error', error);
                 }
             }
         }, 1);
     }
 
+    logSerialData(data, type, dir) {
+        return;
+        const symbol = dir ? '▶' : '◀';
+
+        const maxBytes = 8192;
+        const bytesToShow = Math.min(data.length, maxBytes);
+        const truncated = data.length > maxBytes;
+
+        let hexStr = '';
+        let asciiStr = '';
+        let lines = [];
+
+        for (let i = 0; i < bytesToShow; i++) {
+            const byte = data[i];
+            hexStr += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
+            asciiStr += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : '.';
+
+            if ((i + 1) % 16 === 0 || i === bytesToShow - 1) {
+                const hexPadding = ' '.repeat(Math.max(0, (16 - ((i % 16) + 1)) * 3));
+                lines.push(`    ${hexStr}${hexPadding} | ${asciiStr}`);
+                hexStr = '';
+                asciiStr = '';
+            }
+        }
+
+        const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
+        console.debug(`${symbol} RAW ${type} [${data.length} bytes]${truncMsg}`);
+        lines.forEach(line => console.debug(line));
+    }
+
     write(data, callback) {
         if (!this.isOpen) {
+            console.error('[RawFDSerialPort] Write failed: port is not open');
             if (callback) callback(new Error('Port is not open'));
             return;
         }
@@ -114,15 +174,18 @@ class RawFDSerialPort extends EventEmitter {
             try {
                 bytesWritten = fs.writeSync(this.fd, data);
             } catch (err) {
+                console.error(`[RawFDSerialPort] Write error (will retry):`, err.code);
                 if (err.code === 'EIO' || err.code === 'EAGAIN' || err.code === 'EWOULDBLOCK') {
-                    try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2); } catch (_) {}
+                    try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2); } catch (_) { }
                     bytesWritten = fs.writeSync(this.fd, data);
+                    console.log(`[RawFDSerialPort] Retry succeeded: wrote ${bytesWritten} bytes`);
                 } else {
                     throw err;
                 }
             }
             if (callback) setImmediate(() => callback(null, bytesWritten));
         } catch (error) {
+            console.error('[RawFDSerialPort] Write failed:', error);
             if (callback) callback(error);
             else this.emit('error', error);
         }
@@ -130,27 +193,27 @@ class RawFDSerialPort extends EventEmitter {
 
     async setSignals(signals) {
         if (!this.isOpen || !this.fd) return Promise.resolve();
-        
+
         try {
             const path = require('path');
             const { execSync } = require('child_process');
             const scriptPath = path.join(__dirname, 'set-signals.py');
             let args = [];
-            
+
             if (signals.dataTerminalReady !== undefined) {
                 args.push(`dtr=${signals.dataTerminalReady ? 1 : 0}`);
             }
             if (signals.requestToSend !== undefined) {
                 args.push(`rts=${signals.requestToSend ? 1 : 0}`);
             }
-            
+
             if (args.length > 0) {
                 execSync(`python3 ${scriptPath} ${this.portPath} ${args.join(' ')}`, { stdio: 'ignore' });
             }
         } catch (e) {
             /* Silently fail - some systems may not support signal control */
         }
-        
+
         return Promise.resolve();
     }
 
@@ -237,7 +300,7 @@ class NodeSerialPort {
     _triggerEvent(event) {
         if (this.eventListeners[event]) {
             this.eventListeners[event].forEach(callback => {
-                try { callback({ target: this }); } catch (e) {}
+                try { callback({ target: this }); } catch (e) { }
             });
         }
     }
@@ -252,16 +315,17 @@ class NodeSerialReader {
         this.canceled = false;
         this.dataQueue = [];
         this.readResolvers = [];
-        
+
         this.serialPort.on('data', (chunk) => {
             if (this.canceled) return;
             this.dataQueue.push(new Uint8Array(chunk));
             while (this.readResolvers.length > 0 && this.dataQueue.length > 0) {
                 const resolver = this.readResolvers.shift();
-                resolver({ value: this.dataQueue.shift(), done: false });
+                const data = this.dataQueue.shift();
+                resolver({ value: data, done: false });
             }
         });
-        
+
         this.serialPort.on('close', () => {
             while (this.readResolvers.length > 0) {
                 this.readResolvers.shift()({ value: undefined, done: true });
@@ -270,9 +334,12 @@ class NodeSerialReader {
     }
 
     async read() {
-        if (this.canceled) return { value: undefined, done: true };
+        if (this.canceled) {
+            return { value: undefined, done: true };
+        }
         if (this.dataQueue.length > 0) {
-            return { value: this.dataQueue.shift(), done: false };
+            const data = this.dataQueue.shift();
+            return { value: data, done: false };
         }
         return new Promise((resolve) => {
             this.readResolvers.push(resolve);
@@ -286,7 +353,7 @@ class NodeSerialReader {
         }
     }
 
-    releaseLock() {}
+    releaseLock() { }
 }
 
 /*
@@ -313,15 +380,15 @@ class NodeSerialWriter {
         this.closed = true;
     }
 
-    releaseLock() {}
+    releaseLock() { }
 }
 
 /* Install navigator.serial polyfill */
 if (!global.navigator) global.navigator = {};
 if (!global.navigator.serial) {
     global.navigator.serial = {
-        addEventListener: () => {},
-        removeEventListener: () => {}
+        addEventListener: () => { },
+        removeEventListener: () => { }
     };
 }
 
@@ -335,6 +402,7 @@ function createNodeESPFlasher(ESPFlasherClass) {
             this.portPath = null;
             this.isNodeJS = true;
             this.initialBaudRate = 115200;
+            this.logPackets = false;
         }
 
         async openPortByPath(portPath, baudRate = null) {

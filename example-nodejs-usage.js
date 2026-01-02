@@ -22,10 +22,6 @@ const path = require('path');
 /* First, set up the Web Serial polyfill and Node.js compatibility */
 require('./flasher-nodejs.js');
 
-/* Load chips.js (chip definitions) */
-const ChipDescriptions = require('./chips.js');
-global.ChipDescriptions = ChipDescriptions;
-
 /* Load parser.js (ESP32 firmware parser) */
 const ESP32Parser = require('./esp32-parser.js');
 

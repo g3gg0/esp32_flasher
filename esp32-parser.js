@@ -1091,6 +1091,33 @@ class FATParser {
     }
 
     /*
+     * Find a file entry by its full path
+     * @param {string} targetPath - Full path to search for (e.g., "CERT/CA.DER")
+     * @returns {Object|null} - File entry if found, null otherwise
+     */
+    findFileByPath(targetPath) {
+        if (!this.fatInfo || !this.fatInfo.files) {
+            return null;
+        }
+
+        const searchRecursive = (files, path) => {
+            if (!files) return null;
+            for (const file of files) {
+                if (file.path === path) {
+                    return file;
+                }
+                if (file.children) {
+                    const found = searchRecursive(file.children, path);
+                    if (found) return found;
+                }
+            }
+            return null;
+        };
+
+        return searchRecursive(this.fatInfo.files, targetPath);
+    }
+
+    /*
      * Delete a file by:
      * 1. Clearing all its clusters with 0xFF
      * 2. Setting FAT entries to unused (0x0000)

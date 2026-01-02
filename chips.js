@@ -148,3 +148,10 @@ class ChipDescriptions {
     }
 };
 
+/* CommonJS export for Node.js */
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = ChipDescriptions;
+}
+
+/* For browser environments, ChipDescriptions is already available globally from this script */
+
