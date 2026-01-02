@@ -26,9 +26,6 @@ const RUN_USER_CODE = 0xd3;
 
 /**
  * IMPORTANT: For browser usage, chips.js must be loaded BEFORE flasher.js
- * Example HTML:
- *   <script src="chips.js"></script>
- *   <script src="flasher.js"></script>
  * 
  * This will make ChipDescriptions available globally for flasher.js to use.
  * For Node.js, flasher.js will automatically require('./chips.js')

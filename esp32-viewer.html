@@ -1401,7 +1401,6 @@
                         console.log(`Prepare: processing range 0x${blockStart.toString(16)} - 0x${blockEnd.toString(16)}`);
                     }
 
-                    /* Build aligned blocks: prefer writeBuffer-only materialization; otherwise read via sparse image */
                     const blockMap = new Map(); /* blockAddr -> blockData */
 
                     for (let blockAddr = blockStart; blockAddr < blockEnd; blockAddr += 0x1000) {
@@ -1416,6 +1415,11 @@
                             if (overlapStart < overlapEnd) {
                                 overlaps.push({ start: overlapStart, end: overlapEnd, seg });
                             }
+                        }
+
+                        /* Skip blocks with no write data at all */
+                        if (overlaps.length === 0) {
+                            continue;
                         }
 
                         overlaps.sort((a, b) => a.start - b.start);
@@ -1446,6 +1450,7 @@
                                 blockData.set(ov.seg.data.slice(srcOff, srcOff + len), dstOff);
                             }
                         } else {
+                            /* Need to read existing data for missing parts */
                             blockData = await sparseImage.slice_async(blockAddr, blockEndAddr);
                         }
 
