@@ -58,7 +58,6 @@ class RawFDSerialPort extends EventEmitter {
              */
             const scriptPath = path.join(__dirname, 'configure-serial.py');
             execSync(`python3 ${scriptPath} ${this.portPath} ${baudRate}`, { stdio: 'pipe' });
-            console.log(`[RawFDSerialPort] Port configured for raw binary mode (no terminal processing)`);
         } catch (e) {
             console.warn(`[RawFDSerialPort] Configuration script failed:`, e.message);
             console.warn(`[RawFDSerialPort] Attempting fallback stty configuration...`);
@@ -74,8 +73,6 @@ class RawFDSerialPort extends EventEmitter {
             const flags = fs.constants.O_RDWR | fs.constants.O_NOCTTY | fs.constants.O_NONBLOCK;
             this.fd = fs.openSync(this.portPath, flags);
             this.isOpen = true;
-
-            console.log(`[RawFDSerialPort] Port opened: ${this.portPath}, fd=${this.fd}`);
 
             try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10); } catch (_) { }
             this._startPolling();
@@ -99,7 +96,7 @@ class RawFDSerialPort extends EventEmitter {
 
     _startPolling() {
         const readBuffer = Buffer.alloc(65536); /* Large 64KB buffer to drain quickly */
-        console.log(`[RawFDSerialPort] Starting poll loop for ${this.portPath} with ${readBuffer.length} byte buffer`);
+
         this.pollInterval = setInterval(() => {
             if (!this.isOpen || !this.fd) {
                 if (this.pollInterval) {

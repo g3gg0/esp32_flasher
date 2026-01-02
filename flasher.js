@@ -2509,8 +2509,6 @@ class ESPFlasher {
             if (this.responseHandlers.has(-1)) {
                 var handler = this.responseHandlers.get(-1);
                 await handler(packet);
-            } else {
-                console.log(`[processPacket] No raw data handler (-1) registered`);
             }
         }
     }
