@@ -736,8 +736,9 @@ class ESPFlasher {
         this.consoleBuffer = '';
         this._preSyncState = 'idle';
 
-        this.logDebug = () => { };
-        this.logError = () => { };
+        this.logMessage = (msg) => { };
+        this.logDebug = (msg) => { };
+        this.logError = (msg) => { };
         this.reader = null;
 
 
@@ -790,6 +791,7 @@ class ESPFlasher {
     async _writeFrame(frame) {
         this._writeChain = this._writeChain.then(async () => {
             const writer = await this._ensureWriter();
+            this.logSerialData(frame, true);
             await writer.write(frame);
         });
         return this._writeChain;
@@ -809,16 +811,13 @@ class ESPFlasher {
     /**
      * Format bytes as colored hex dump for console
      * @param {Uint8Array} data - Data to format
-     * @param {string} direction - 'TX' or 'RX'
+     * @param {string} isTx - 'TX' or 'RX'
      * @param {number} maxBytes - Maximum bytes to show (default: 256)
      */
-    logSerialData(data, direction, maxBytes = 256) {
+    logSerialData(data, isTx, maxBytes = 256) {
         if (!this.logPackets) return;
 
-        const isTX = direction === 'TX';
-        const color = isTX ? 'color: #4CAF50; font-weight: bold' : 'color: #2196F3; font-weight: bold';
-        const bgColor = isTX ? 'background: #1b5e20; color: #fff' : 'background: #0d47a1; color: #fff';
-        const arrow = isTX ? '→' : '←';
+        const arrow = isTx ? '→' : '←';
 
         const bytesToShow = Math.min(data.length, maxBytes);
         const truncated = data.length > maxBytes;
@@ -843,7 +842,7 @@ class ESPFlasher {
         }
         if (this.logPackets) {
             const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
-            this.logDebug(`${arrow} ${direction} [${data.length} bytes]${truncMsg}`);
+            this.logDebug(`${arrow} ${isTx} [${data.length} bytes]${truncMsg}`);
             lines.forEach(line => this.logDebug(line));
         }
     }
@@ -936,31 +935,35 @@ class ESPFlasher {
             /* Set up reading from the port */
             this.reader = this.port.readable.getReader();
 
-            try {
-                while (true) {
-                    const { value, done } = await this.reader.read();
-                    if (done) {
-                        this.logDebug('Reader has been canceled');
-                        break;
-                    }
-                    if (value) {
-                        this.logSerialData(value, 'RX');
-                        this.parseResetMessages(value);
-                        const packets = this.slipLayer.decode(value);
-                        for (let packet of packets) {
-                            await this.processPacket(packet);
-                        }
-                    }
+            this.startRxLoop();
+        });
+    }
+
+    async startRxLoop() {
+        try {
+            while (true) {
+                const { value, done } = await this.reader.read();
+                if (done) {
+                    this.logDebug('Reader has been canceled');
+                    break;
                 }
-            } catch (err) {
-                // Handle cancellation
-            } finally {
-                if (this.reader) {
-                    this.reader.releaseLock();
-                    this.reader = null;
+                if (value) {
+                    this.logSerialData(value, false);
+                    this.parseResetMessages(value);
+                    const packets = this.slipLayer.decode(value);
+                    for (let packet of packets) {
+                        await this.processPacket(packet);
+                    }
                 }
             }
-        });
+        } catch (err) {
+            // Handle cancellation
+        } finally {
+            if (this.reader) {
+                this.reader.releaseLock();
+                this.reader = null;
+            }
+        }
     }
 
     /**
@@ -1006,31 +1009,7 @@ class ESPFlasher {
         /* Restart RX loop (do not re-register global listeners to avoid duplicates) */
         this.reader = this.port.readable.getReader();
 
-        (async () => {
-            try {
-                while (true) {
-                    const { value, done } = await this.reader.read();
-                    if (done) {
-                        break;
-                    }
-                    if (value) {
-                        this.logSerialData(value, 'RX');
-                        this.parseResetMessages(value);
-                        const packets = this.slipLayer.decode(value);
-                        for (let packet of packets) {
-                            await this.processPacket(packet);
-                        }
-                    }
-                }
-            } catch (err) {
-                /* Reader loop terminated */
-            } finally {
-                if (this.reader) {
-                    try { this.reader.releaseLock(); } catch (e) { }
-                    this.reader = null;
-                }
-            }
-        })();
+        this.startRxLoop();
     }
 
     parseResetMessages(data) {
@@ -1250,9 +1229,7 @@ class ESPFlasher {
 
             /* Send the packet with proper error handling */
             try {
-                const slipFrame = this.slipLayer.encode(packet.payload);
-                this.logSerialData(slipFrame, 'TX');
-                await this._writeFrame(slipFrame);
+                await this._writeFrame(this.slipLayer.encode(packet.payload));
             } catch (error) {
                 clearTimeout(timeoutHandle);
                 reject(error);
@@ -1769,7 +1746,7 @@ class ESPFlasher {
 
         if (totalReads > 0) {
             const averageTime = totalTime / totalReads;
-            this.logDebug(`Average read time: ${averageTime.toFixed(2)} ms over ${totalReads} reads.`);
+            this.logMessage(`Average read time: ${averageTime.toFixed(2)} ms over ${totalReads} reads.`);
         }
 
         return true;
@@ -1881,7 +1858,7 @@ class ESPFlasher {
      * Read data from flash memory
      * @async
      * @param {number} address - Source flash address
-     * @param {number} [length=0x1000] - Number of bytes to read
+     * @param {number} [totalLength=0x1000] - Number of bytes to read
      * @param {Function} [progressCallback] - Callback(bytesRead, totalBytes)
      * @returns {Promise<Uint8Array>} Read data (MD5 verified)
      * @throws {Error} If read fails or MD5 mismatch
@@ -1906,24 +1883,14 @@ class ESPFlasher {
         [01:06:29] [DEBUG]   Packets received: 64
 
      */
-    async readFlashPlain(address, length = 0x1000, progressCallback) {
-        //console.log(`[ReadFlashPlain] START: addr=0x${address.toString(16)}, len=0x${length.toString(16)}`);
-
+    async readFlashPlain(address, totalLength = 0x1000, progressCallback) {
         const performRead = async (cbr) => {
-            let blockSize = 0x1000;
-
-            if (blockSize > length) {
-                blockSize = length;
-            }
-            const packets = length / blockSize;
+            let blockSize = Math.min(totalLength, 0x1000);
+            let maxInFlight = Math.min(totalLength, blockSize * 2);
+            const packetCount = totalLength / blockSize;
 
             let packet = 0;
-            let maxInFlight = blockSize * 2;
-            if (maxInFlight > length) {
-                maxInFlight = length;
-            }
-            let nextAckThreshold = maxInFlight;
-
+            let lastAckedLength = 0;
             var data = new Uint8Array(0);
             var lastDataTime = Date.now();
 
@@ -1933,12 +1900,12 @@ class ESPFlasher {
             let lastPacketTime = readStartTime;
             let totalBytesReceived = 0;
 
-            if(this.devMode) {
-                console.log(`[ReadFlashPlain] Starting ReadFlash:`, { address: `0x${address.toString(16)}`, length, sectorSize: blockSize, packets, maxInFlight: maxInFlight });
+            if (this.devMode) {
+                console.log(`[ReadFlashPlain] Starting ReadFlash:`, { address: `0x${address.toString(16)}`, length: totalLength, sectorSize: blockSize, packets: packetCount, maxInFlight: maxInFlight });
             }
 
             return this.executeCommand(
-                this.buildCommandPacketU32(READ_FLASH, address, length, blockSize, maxInFlight),
+                this.buildCommandPacketU32(READ_FLASH, address, totalLength, blockSize, maxInFlight),
                 async () => {
                     packet = 0;
                 },
@@ -1946,7 +1913,7 @@ class ESPFlasher {
                     const currentTime = Date.now();
                     lastDataTime = currentTime;
 
-                    if (data.length == length) {
+                    if (data.length == totalLength) {
                         if (rawData.length == 16) {
                             /* Calculate MD5 of received data */
                             const calculatedMD5 = this.calculateMD5(data);
@@ -2001,35 +1968,31 @@ class ESPFlasher {
                         newData.set(data);
                         newData.set(rawData, data.length);
                         data = newData;
-
-                        /* Call progress callback */
-                        if (cbr) {
-                            cbr(data.length, length);
-                        }
-
                         packet++;
 
                         /* Prepare response */
-                        if (data.length >= nextAckThreshold) {
+                        if (data.length >= (lastAckedLength + maxInFlight) || (data.length >= totalLength)) {
+
+                            /* Encode and write response */
                             var resp = new Uint8Array(4);
                             resp[0] = (data.length >> 0) & 0xFF;
                             resp[1] = (data.length >> 8) & 0xFF;
                             resp[2] = (data.length >> 16) & 0xFF;
                             resp[3] = (data.length >> 24) & 0xFF;
 
-                            nextAckThreshold += maxInFlight;
-                            if (nextAckThreshold > length) {
-                                nextAckThreshold = length;
-                            }
+                            await this._writeFrame(this.slipLayer.encode(resp));
 
-                            /* Encode and write response */
-                            const slipFrame = this.slipLayer.encode(resp);
-                            this.logSerialData(slipFrame, 'TX');
-                            await this._writeFrame(slipFrame);
+                            /* move last acked length further */
+                            lastAckedLength = Math.min(lastAckedLength + maxInFlight, totalLength);
+                        }
+
+                        /* Call progress callback */
+                        if (cbr) {
+                            cbr(data.length, totalLength);
                         }
                     }
                 },
-                1000 * packets,
+                1000 * packetCount,
                 /* Timeout condition: if the last raw data callback was more than a second ago */
                 () => {
                     const timeSinceLastData = Date.now() - lastDataTime;
