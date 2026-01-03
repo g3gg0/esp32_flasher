@@ -640,6 +640,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         let devicePopupContent = '';
         let isDebugMode = window.location.hash.includes('debug');
         let selectedBaudRate = 921600;
+        let readStartTime = null;
+        let writeStartTime = null;
 
         // Register presets for each chip type
         const registerPresets = {
@@ -1105,15 +1107,28 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
                 const progressBar = document.getElementById('flashProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
+                writeStartTime = Date.now();
 
                 await flasher.writeFlash(address, data, (offset, total, status) => {
                     const percent = Math.round((offset / total) * 100);
+                    let text = `${percent}% (${status})`;
+
+                    /* Calculate speed if operation has been running > 1 second */
+                    if (writeStartTime) {
+                        const elapsedMs = Date.now() - writeStartTime;
+                        if (elapsedMs > 1000 && offset > 0) {
+                            const speedBytesPerSec = (offset / elapsedMs) * 1000;
+                            const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
+                            text += ` - ${speedKiBPerSec} KiB/s`;
+                        }
+                    }
                     progressBar.style.width = percent + '%';
-                    progressBar.textContent = percent + `% (${status})`;
+                    progressBar.textContent = text;
                 });
 
                 progressBar.style.width = '100%';
                 progressBar.textContent = '100%';
+                writeStartTime = null;
                 log('Flash write completed successfully!', 'info');
                 updateStatus('Connected & Synced', 'connected');
 
@@ -1162,13 +1177,25 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
                 const progressBar = document.getElementById('flashProgress');
                 progressBar.style.transition = 'none'; // Disable smooth transition
+                readStartTime = Date.now();
 
                 // Use readFlash which handles MD5 verification
                 const allData = await flasher.readFlash(address, totalSize, (offset, size, status) => {
                     // Update progress
                     const percent = Math.round((offset / size) * 100);
+                    let text = `${percent}% (${status})`;
+
+                    /* Calculate speed if operation has been running > 1 second */
+                    if (readStartTime) {
+                        const elapsedMs = Date.now() - readStartTime;
+                        if (elapsedMs > 1000 && offset > 0) {
+                            const speedBytesPerSec = (offset / elapsedMs) * 1000;
+                            const speedKiBPerSec = Math.round(speedBytesPerSec / 1024);
+                            text += ` - ${speedKiBPerSec} KiB/s`;
+                        }
+                    }
                     progressBar.style.width = percent + '%';
-                    progressBar.textContent = `${percent}% (${status})`;
+                    progressBar.textContent = text;
 
                     if (offset % (0x1000 * 10) === 0) {
                         log(`Read ${offset} / ${size} bytes (${percent}%)`, 'debug');
@@ -1177,6 +1204,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
                 progressBar.style.width = '100%';
                 progressBar.textContent = '100% - Verified ✓';
+                readStartTime = null;
 
                 // Download the data as a binary file
                 const blob = new Blob([allData], { type: 'application/octet-stream' });

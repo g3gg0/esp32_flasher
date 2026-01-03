@@ -1130,7 +1130,8 @@
                         onclick="toggleDeviceSession()">Connect to ESP32</button>
                 </div>
                 <div id="advancedBaudGroup" style="display:none; margin-top:10px; text-align:center;">
-                    <label for="advancedBaudSelect" style="font-size:0.9em; color:#a0a0a0;">Baud Rate (advanced):</label>
+                    <label for="advancedBaudSelect" style="font-size:0.9em; color:#a0a0a0;">Baud Rate
+                        (advanced):</label>
                     <div style="margin-top:6px;">
                         <select id="advancedBaudSelect"
                             style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
@@ -1144,16 +1145,17 @@
             </div>
 
             <div class="file-info" id="fileInfo">
-                <h3>🎯 Target Information</h3>
+                <h3 ondblclick="toggleTargetActions()" style="cursor: pointer;"
+                    title="Double-click to toggle advanced actions">🎯 Target Information</h3>
                 <div class="info-grid" id="fileInfoGrid">
                 </div>
                 <div id="targetActions" style="display:none; margin-top:12px;">
-                    <div class="button-group" style="flex-wrap:wrap; gap:8px;display: none;">
+                    <div id="targetActionsButtons" class="button-group" style="display:none; flex-wrap:wrap; gap:8px;">
                         <button class="btn" id="targetResetBtn" onclick="deviceHardReset()" disabled>Reset</button>
                         <button class="btn" id="targetSyncBtn" onclick="deviceSync()" disabled>Sync</button>
                         <button class="btn" id="targetStubBtn" onclick="deviceLoadStub()" disabled>Download
                             Stub</button>
-                        <button class="btn" id="targetFetchBtn" onclick="deviceFetch()" disabled>Refresh</button>
+                        <button class="btn" id="targetFetchBtn" onclick="deviceRefresh()" disabled>Refresh</button>
                     </div>
                 </div>
                 <div class="button-group" style="display: flex; flex-wrap:wrap; gap:8px;">
@@ -1271,7 +1273,6 @@
 
         let deviceFlasher = null;
         let deviceMode = false;
-        let deviceSparse = null;
         let deviceMac = null;
         let devicePopupTimer = null;
         let devicePopupContent = '';
@@ -1300,213 +1301,6 @@
         const SPEED_CHECK_DELAY = 5000; /* 1 second before checking speed */
         const WARNING_MIN_DISPLAY_TIME = 10000; /* Keep warning visible for at least 10 seconds */
 
-        function buildDeviceSparse(totalSize, logReads = false) {
-            return new SparseImage(totalSize,
-                async (readAddr, readLen) => {
-                    const addr = readAddr & ~0x0FFF;
-                    const maxChunk = 0x00800000;
-                    const desired = Math.min(readLen, maxChunk);
-                    let len = (desired + 0x1000) & ~0x0FFF;
-
-                    /* Ensure we don't read beyond configured flash size */
-                    if (addr >= totalSize) {
-                        throw new Error(`Read address 0x${addr.toString(16)} exceeds flash size 0x${totalSize.toString(16)}`);
-                    }
-                    len = Math.min(len, totalSize - addr);
-                    if (len <= 0) {
-                        throw new Error(`Invalid read length at address 0x${addr.toString(16)}`);
-                    }
-
-                    if (logReads) {
-                        console.log('  Reading', `0x${addr.toString(16)}`, len);
-                    }
-                    const overlayWasVisible = isFetchOverlayVisible();
-                    fetchOverlayActiveReads++;
-                    if (!overlayWasVisible) {
-                        showFetchOverlay(fetchOverlayReason || 'Reading flash from ESP32...');
-                    }
-                    const readTotal = len;
-                    try {
-                        updateFetchOverlayProgress(addr, 0, readTotal);
-                        const ret = await deviceFlasher.readFlashPlain(addr, len, (bytesRead, totalBytes) => {
-                            const effectiveTotal = totalBytes || readTotal;
-                            updateFetchOverlayProgress(addr + bytesRead, bytesRead, effectiveTotal);
-                        });
-                        deviceReadProgressDone += ret.byteLength;
-                        updateFetchOverlayProgress(addr + ret.byteLength, readTotal, readTotal);
-                        const chunk = { address: addr, data: ret };
-                        if (logReads) {
-                            console.log('  Got', `0x${addr.toString(16)}`, ret.byteLength, chunk);
-                        }
-                        /* Update memory map after successful read */
-                        setTimeout(() => updateMemoryMap(), 100);
-                        return chunk;
-                    } catch (readError) {
-                        console.error('Device read error:', readError);
-                        throw readError;
-                    } finally {
-                        fetchOverlayActiveReads = Math.max(0, fetchOverlayActiveReads - 1);
-                        if (!overlayWasVisible && fetchOverlayActiveReads === 0) {
-                            hideFetchOverlay();
-                        }
-                    }
-                },
-                async (writeAddr, writeData) => {
-                    /* Write callback for flushing changes to device */
-                    if (logReads) {
-                        console.log('  Writing', `0x${writeAddr.toString(16)}`, writeData.length, 'bytes');
-                    }
-                    if (writeAddr % 0x1000 !== 0) {
-                        throw new Error(`Write address 0x${writeAddr.toString(16)} is not aligned to 0x1000 bytes`);
-                    }
-                    if (writeData.length % 0x1000 !== 0) {
-                        throw new Error(`Write data length ${writeData.length} is not aligned to 0x1000 bytes`);
-                    }
-                    try {
-                        await deviceFlasher.writeFlash(writeAddr, writeData, (offset, total, status) => {
-                            updateWriteOverlayProgress(writeAddr + offset, offset, total);
-                        });
-                        if (logReads) {
-                            console.log('  Wrote', `0x${writeAddr.toString(16)}`, writeData.length, 'bytes');
-                        }
-                    } catch (writeError) {
-                        console.error('Device write error:', writeError);
-                        throw writeError;
-                    }
-                },
-                async (sparseImage) => {
-                    /* Flush prepare callback: combine cached and write data into 0x1000-byte blocks */
-                    if (logReads) {
-                        console.log('Flush prepare: consolidating write buffer into 4KB-aligned blocks');
-                    }
-
-                    if (sparseImage.writeBuffer.length === 0) return;
-
-                    /* Get the range we need to cover */
-                    let minAddr = Infinity;
-                    let maxAddr = 0;
-
-                    for (const seg of sparseImage.writeBuffer) {
-                        minAddr = Math.min(minAddr, seg.address);
-                        maxAddr = Math.max(maxAddr, seg.address + seg.data.length);
-                    }
-
-                    if (minAddr === Infinity) return; /* Nothing to do */
-
-                    /* Align to 0x1000 byte boundaries */
-                    const blockStart = minAddr & ~0x0FFF;
-                    const blockEnd = (maxAddr + 0x0FFF) & ~0x0FFF;
-
-                    if (logReads) {
-                        console.log(`Prepare: processing range 0x${blockStart.toString(16)} - 0x${blockEnd.toString(16)}`);
-                    }
-
-                    const blockMap = new Map(); /* blockAddr -> blockData */
-
-                    for (let blockAddr = blockStart; blockAddr < blockEnd; blockAddr += 0x1000) {
-                        const blockEndAddr = blockAddr + 0x1000;
-
-                        const overlaps = [];
-                        for (const seg of sparseImage.writeBuffer) {
-                            const segStart = seg.address;
-                            const segEnd = seg.address + seg.data.length;
-                            const overlapStart = Math.max(blockAddr, segStart);
-                            const overlapEnd = Math.min(blockEndAddr, segEnd);
-                            if (overlapStart < overlapEnd) {
-                                overlaps.push({ start: overlapStart, end: overlapEnd, seg });
-                            }
-                        }
-
-                        /* Skip blocks with no write data at all */
-                        if (overlaps.length === 0) {
-                            continue;
-                        }
-
-                        overlaps.sort((a, b) => a.start - b.start);
-
-                        let coveredCursor = blockAddr;
-                        for (const ov of overlaps) {
-                            if (ov.start > coveredCursor) {
-                                break;
-                            }
-                            if (ov.end > coveredCursor) {
-                                coveredCursor = ov.end;
-                            }
-                            if (coveredCursor >= blockEndAddr) {
-                                break;
-                            }
-                        }
-
-                        const fullyCovered = coveredCursor >= blockEndAddr;
-                        let blockData;
-
-                        if (fullyCovered) {
-                            blockData = new Uint8Array(0x1000);
-                            blockData.fill(0xFF);
-                            for (const ov of overlaps) {
-                                const srcOff = ov.start - ov.seg.address;
-                                const dstOff = ov.start - blockAddr;
-                                const len = ov.end - ov.start;
-                                blockData.set(ov.seg.data.slice(srcOff, srcOff + len), dstOff);
-                            }
-                        } else {
-                            /* Need to read existing data for missing parts */
-                            blockData = await sparseImage.slice_async(blockAddr, blockEndAddr);
-                        }
-
-                        blockMap.set(blockAddr, blockData);
-                    }
-
-                    /* Merge touching/consecutive blocks */
-                    const mergedBlocks = [];
-                    const blockAddrs = Array.from(blockMap.keys()).sort((a, b) => a - b);
-
-                    let currentStart = null;
-                    let currentData = null;
-
-                    for (const blockAddr of blockAddrs) {
-                        if (currentStart === null) {
-                            /* Start new merged block */
-                            currentStart = blockAddr;
-                            currentData = new Uint8Array(blockMap.get(blockAddr));
-                        } else if (currentStart + currentData.length === blockAddr) {
-                            /* Consecutive block: merge it */
-                            const mergedData = new Uint8Array(currentData.length + 0x1000);
-                            mergedData.set(currentData, 0);
-                            mergedData.set(blockMap.get(blockAddr), currentData.length);
-                            currentData = mergedData;
-                        } else {
-                            /* Gap detected: save current merged block and start new one */
-                            mergedBlocks.push({ address: currentStart, data: currentData });
-                            if (logReads) {
-                                console.log(`  Merged block at 0x${currentStart.toString(16)}, size: ${currentData.length} bytes`);
-                            }
-                            currentStart = blockAddr;
-                            currentData = new Uint8Array(blockMap.get(blockAddr));
-                        }
-                    }
-
-                    /* Add final merged block */
-                    if (currentStart !== null) {
-                        mergedBlocks.push({ address: currentStart, data: currentData });
-                        if (logReads) {
-                            console.log(`  Merged block at 0x${currentStart.toString(16)}, size: ${currentData.length} bytes`);
-                        }
-                    }
-
-                    /* Replace write buffer with merged blocks */
-                    sparseImage.writeBuffer = mergedBlocks;
-
-                    if (logReads) {
-                        console.log(`Flush prepare complete: ${mergedBlocks.length} blocks aligned and ready`);
-                    }
-
-                    /* Update memory map after prepare */
-                    setTimeout(() => updateMemoryMap(), 100);
-                }
-            );
-        }
-
         async function openFlasherMenu() {
             await toggleDeviceSession();
         }
@@ -1522,14 +1316,14 @@
 
             try {
                 setDeviceStatus('Requesting serial port...', 'loading');
-                deviceFlasher = new ESPFlasher();
-                deviceFlasher.initialBaudRate = selectedBaudRate;
-                deviceFlasher.logError = (msg) => { console.error('Flasher:', msg); };
-
-                if (isDebugMode) {
-                    deviceFlasher.logDebug = (msg) => { console.log('Flasher:', msg); };
-                    deviceFlasher.logPackets = true;
-                }
+                deviceFlasher = new ESPFlasher({
+                    initialBaudRate: selectedBaudRate,
+                    logMessage: (msg) => console.log('[Flasher]', msg),
+                    logWarning: (msg) => console.warn('[Flasher WARNING]', msg),
+                    logError: (msg) => console.error('[Flasher ERROR]', msg),
+                    logDebug: (msg) => { isDebugMode ?? console.log('[Flasher DEBUG]', msg); },
+                    logPackets: isDebugMode,
+                });
 
                 /* Set up callback for unexpected device disconnection */
                 deviceFlasher.disconnected = () => {
@@ -1610,15 +1404,68 @@
                 deviceReadProgressTotal = deviceFlashSizeBytes;
                 deviceReadProgressDone = 0;
                 const totalSize = deviceFlashSizeBytes;
-                deviceSparse = buildDeviceSparse(totalSize, false);
 
-                parser = new ESP32Parser(deviceSparse);
+                parser = new ESP32Parser(deviceFlasher, {
+                    sizeHint: totalSize,
+                    logMessage: (msg) => console.log('[Parser]', msg),
+                    logWarning: (msg) => console.warn('[Parser WARNING]', msg),
+                    logError: (msg) => console.error('[Parser ERROR]', msg),
+                    logDebug: (msg) => { },
+                    preReadCommandCbr: (addr, len) => {
+                        deviceReadProgressDone = 0;
+                        deviceReadProgressTotal = len;
+                        fetchOverlayActiveReads++;
+                        if (!isFetchOverlayVisible()) {
+                            showFetchOverlay(fetchOverlayReason || 'Reading flash from ESP32...');
+                        }
+                    },
+                    readBlockCbr: (addr, len, bytesRead, totalBytes) => {
+                        deviceReadProgressDone = bytesRead;
+                        const now = Date.now();
+                        if (now - lastProgressUpdateTime >= UPDATE_THROTTLE_MS) {
+                            lastProgressUpdateTime = now;
+                            updateFetchOverlayProgress(addr + deviceReadProgressDone, deviceReadProgressDone, deviceReadProgressTotal);
+                        }
+                    },
+                    postReadCommandCbr: (addr, len) => {
+                        const now = Date.now();
+                        if (now - lastProgressUpdateTime >= UPDATE_THROTTLE_MS) {
+                            lastProgressUpdateTime = now;
+                            updateFetchOverlayProgress(addr + len, deviceReadProgressDone, deviceReadProgressTotal);
+                        }
+                        if (--fetchOverlayActiveReads === 0) {
+                            hideFetchOverlay();
+                        }
+                    },
+                    preWriteCommandCbr: (addr, len) => {
+                        showWriteOverlay('Writing to device...');
+                    },
+                    writeBlockCbr: (addr, len, bytesWritten, totalBytes, status) => {
+                        updateWriteOverlayProgress(addr + bytesWritten, bytesWritten, totalBytes, status);
+                    },
+                    postWriteCommandCbr: (addr, len) => {
+                        hideWriteOverlay();
+                        updateMemoryMap();
+                    }
+                });
                 displaySourceInfo({
                     name: 'ESP32 Device',
                     size: totalSize,
                     type: `device/${deviceFlasher.current_chip || 'esp32'}`,
                     lastModified: Date.now()
                 });
+
+                parser.logMessage = (msg) => {
+                    console.log('Parser:', msg);
+                };
+                parser.logError = (msg) => {
+                    console.error('Parser:', msg);
+                };
+                if (isDebugMode) {
+                    parser.logDebug = (msg) => {
+                        console.log('Parser:', msg);
+                    };
+                }
 
                 await parseAndDisplay(true);
                 setDeviceStatus('Connected to ' + deviceFlasher.current_chip + '. Firmware loaded and parsed.', 'success');
@@ -1632,7 +1479,7 @@
                     try {
                         deviceFlasher.disconnect();
                     } catch (disconnectError) {
-                        console.warn('Error during disconnect:', disconnectError);
+                        //console.warn('Error during disconnect:', disconnectError);
                     }
                 }
                 setDeviceStatus('Connection failed: ' + e.message, 'error');
@@ -1720,7 +1567,6 @@
         function clearDeviceState() {
             /* Clear all device information and reset to disconnected state */
             deviceFlasher = null;
-            deviceSparse = null;
             deviceMode = false;
             deviceMac = null;
             parser = null;
@@ -1777,7 +1623,7 @@
         /**
          * Update memory map visualization
          */
-        function updateMemoryMap() {
+        async function updateMemoryMap() {
             if (!parser) return;
 
             const container = document.getElementById('memoryMapContainer');
@@ -2115,6 +1961,14 @@
             }
         }
 
+        function toggleTargetActions() {
+            const targetActions = document.getElementById('targetActionsButtons');
+            if (targetActions) {
+                const isVisible = targetActions.style.display !== 'none';
+                targetActions.style.display = isVisible ? 'none' : 'block';
+            }
+        }
+
         function setDeviceButtons({ connected = false, synced = false, stub = false }) {
             const targetActions = document.getElementById('targetActions');
             if (targetActions) {
@@ -2235,9 +2089,8 @@
         function showFetchOverlay(text) {
             const overlay = document.getElementById('fetchOverlay');
             const label = document.getElementById('fetchOverlayText');
-            if (label) {
-                label.textContent = text || fetchOverlayReason || 'Fetching firmware...';
-            }
+
+            setFetchOverlayReason(text);
             if (overlay) {
                 overlay.style.display = 'flex';
             }
@@ -2262,15 +2115,24 @@
 
         let lastProgressPercent = -1;
         let pendingProgressUpdate = null;
+        let lastProgressUpdateTime = 0;
+        let lastMemoryMapUpdateTime = 0;
+        const UPDATE_THROTTLE_MS = 50;
 
-        function updateFetchOverlayProgress(address, bytesRead, totalBytes) {
+        async function updateFetchOverlayProgress(address, bytesRead, totalBytes) {
             const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesRead / totalBytes) * 100)) : 0;
 
             /* Skip update if percentage hasn't changed (reduces redundant DOM updates) */
             if (pct === lastProgressPercent && pct !== 0 && pct !== 100) {
                 return;
             }
+
+            /* Reset speed calculation if progress went backwards (new read started) */
+            if (pct < lastProgressPercent) {
+                readStartTime = Date.now();
+            }
             lastProgressPercent = pct;
+
 
             /* Defer DOM update to next animation frame to avoid blocking WebUSB loop */
             if (pendingProgressUpdate) {
@@ -2357,7 +2219,7 @@
             writeWarningShownTime = null;
         }
 
-        function updateWriteOverlayProgress(address, bytesWritten, totalBytes) {
+        function updateWriteOverlayProgress(address, bytesWritten, totalBytes, statusText = '') {
             const label = document.getElementById('writeOverlayText');
             if (!label) {
                 return;
@@ -2367,7 +2229,7 @@
             const kbTotal = Math.round(totalBytes / 1024);
             const pct = totalBytes > 0 ? Math.min(100, Math.round((bytesWritten / totalBytes) * 100)) : 0;
 
-            let text = `Writing 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbWritten} / ${kbTotal} KB)`;
+            let text = `${statusText} 0x${address.toString(16).toUpperCase()} (${pct}% – ${kbWritten} / ${kbTotal} KB)`;
             let addWarning = false;
 
             /* Calculate speed if operation has been running > 1 second */
@@ -2519,8 +2381,14 @@
         async function deviceConnect() {
             try {
                 setDeviceStatus('Requesting serial port...', 'loading');
-                deviceFlasher = new ESPFlasher();
-                deviceFlasher.initialBaudRate = selectedBaudRate;
+                deviceFlasher = new ESPFlasher({
+                    initialBaudRate: selectedBaudRate,
+                    logMessage: (msg) => console.log('[Flasher]', msg),
+                    logWarning: (msg) => console.warn('[Flasher WARNING]', msg),
+                    logError: (msg) => console.error('[Flasher ERROR]', msg),
+                    logDebug: (msg) => { isDebugMode ?? console.log('[Flasher DEBUG]', msg); },
+                    logPackets: isDebugMode,
+                });
                 await deviceFlasher.openPort();
                 setDeviceStatus('Connected. You may Hard Reset, then Sync.', 'success');
                 setDeviceButtons({ connected: true });
@@ -2574,7 +2442,7 @@
             }
         }
 
-        async function deviceFetch() {
+        async function deviceRefresh() {
             if (!deviceFlasher) return;
             try {
                 deviceMode = true;
@@ -2584,9 +2452,8 @@
                 deviceReadProgressTotal = deviceFlashSizeBytes;
                 deviceReadProgressDone = 0;
                 const totalSize = deviceFlashSizeBytes;
-                deviceSparse = buildDeviceSparse(totalSize, false);
 
-                parser = new ESP32Parser(deviceSparse);
+                await parser.sparseImage.clear();
 
                 /* Fake file info for UI */
                 displaySourceInfo({
@@ -2656,7 +2523,13 @@
             reader.onload = (e) => {
                 try {
                     const sparse = SparseImage.fromBuffer(e.target.result);
-                    parser = new ESP32Parser(sparse);
+                    parser = new ESP32Parser(sparse, {
+                        sizeHint: sparse.size,
+                        logMessage: (msg) => console.log('[Parser]', msg),
+                        logWarning: (msg) => console.warn('[Parser WARNING]', msg),
+                        logError: (msg) => console.error('[Parser ERROR]', msg),
+                        logDebug: (msg) => { },
+                    });
                     displaySourceInfo(file);
                     parseAndDisplay(true).then(() => {
                         updateMemoryMap();
@@ -2774,7 +2647,7 @@
             deviceMode = true;
 
             deviceFlashSizeBytes = sizeBytes;
-            deviceSparse.size = sizeBytes;
+            parser.sparseImage.size = sizeBytes;
 
             displaySourceInfo({
                 name: 'ESP32 Device',
@@ -4952,122 +4825,122 @@
 
                     if (image.error) {
                         html += `<div class="error" style="margin-bottom: 15px;"><strong>⚠️ Parsing Error:</strong> ${image.error}</div>`;
-                    }
+                    } else {
 
-                    /* Check if OTA app checksum needs fixing */
-                    let otaCheckNeedsFix = false;
-                    try {
-                        const checksumInfo = await parser.calculateImageChecksum(partition.offset, partition.length);
-                        if (checksumInfo.checksum !== image.checksum) {
-                            otaCheckNeedsFix = true;
+                        /* Check if OTA app checksum needs fixing */
+                        let otaCheckNeedsFix = false;
+                        try {
+                            const checksumInfo = await parser.calculateImageChecksum(partition.offset, partition.length);
+                            if (checksumInfo.checksum !== image.checksum) {
+                                otaCheckNeedsFix = true;
 
-                            const button = document.getElementById(`fix_check_${idx}`);
-                            button.style.display = 'inline-block';
+                                const button = document.getElementById(`fix_check_${idx}`);
+                                button.style.display = 'inline-block';
+                            }
+                        } catch (e) {
+                            console.warn('Could not check OTA checksum:', e.message);
                         }
-                    } catch (e) {
-                        console.warn('Could not check OTA checksum:', e.message);
-                    }
 
-                    html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
-                    html += '<div class="info-grid">';
-                    html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
-                    html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
-                    html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
-                    html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
-                    html += '</div>';
-
-                    html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
-                    html += '<div class="info-grid">';
-                    html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
-                    html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
-                    html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
-                    html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
-                    html += '</div>';
-
-                    html += '<h4 style="margin-top: 15px;">Chip Revision</h4>';
-                    html += '<div class="info-grid">';
-                    html += `<div class="info-item"><label>Min Chip Rev:</label><span>v${image.minChipRevMajor}.${image.minChipRevMinor} (${image.minChipRevFull})</span></div>`;
-                    html += `<div class="info-item"><label>Max Chip Rev:</label><span>v${image.maxChipRevMajor}.${image.maxChipRevMinor} (${image.maxChipRevFull})</span></div>`;
-                    html += `<div class="info-item"><label>Legacy Min Rev:</label><span>${image.minChipRev}</span></div>`;
-                    html += '</div>';
-
-                    // App Description (if found)
-                    if (image.appDesc && image.appDesc.found) {
-                        html += '<h4 style="margin-top: 15px;">Application Description</h4>';
+                        html += '<h4 style="margin-top: 15px;">Basic Information</h4>';
                         html += '<div class="info-grid">';
-                        if (image.appDesc.projectName) {
-                            html += `<div class="info-item"><label>Project Name:</label><span>${image.appDesc.projectName}</span></div>`;
+                        html += `<div class="info-item"><label>Magic:</label><span class="mono">0x${image.magic.toString(16).toUpperCase()}</span></div>`;
+                        html += `<div class="info-item"><label>Segment Count:</label><span>${image.segmentCount}</span></div>`;
+                        html += `<div class="info-item"><label>Entry Address:</label><span class="mono">0x${image.entryAddr.toString(16).toUpperCase().padStart(8, '0')}</span></div>`;
+                        html += `<div class="info-item"><label>Chip:</label><span>${image.chipName} (0x${image.chipId.toString(16).toUpperCase().padStart(4, '0')})</span></div>`;
+                        html += '</div>';
+
+                        html += '<h4 style="margin-top: 15px;">Flash Configuration</h4>';
+                        html += '<div class="info-grid">';
+                        html += `<div class="info-item"><label>SPI Mode:</label><span>${image.spiModeName} (${image.spiMode})</span></div>`;
+                        html += `<div class="info-item"><label>SPI Speed:</label><span>${image.spiSpeedName}</span></div>`;
+                        html += `<div class="info-item"><label>Flash Size:</label><span>${image.spiSizeName}</span></div>`;
+                        html += `<div class="info-item"><label>WP Pin:</label><span>${image.wpPinDisabled ? 'Disabled (0xEE)' : '0x' + image.wpPin.toString(16).toUpperCase()}</span></div>`;
+                        html += '</div>';
+
+                        html += '<h4 style="margin-top: 15px;">Chip Revision</h4>';
+                        html += '<div class="info-grid">';
+                        html += `<div class="info-item"><label>Min Chip Rev:</label><span>v${image.minChipRevMajor}.${image.minChipRevMinor} (${image.minChipRevFull})</span></div>`;
+                        html += `<div class="info-item"><label>Max Chip Rev:</label><span>v${image.maxChipRevMajor}.${image.maxChipRevMinor} (${image.maxChipRevFull})</span></div>`;
+                        html += `<div class="info-item"><label>Legacy Min Rev:</label><span>${image.minChipRev}</span></div>`;
+                        html += '</div>';
+
+                        // App Description (if found)
+                        if (image.appDesc && image.appDesc.found) {
+                            html += '<h4 style="margin-top: 15px;">Application Description</h4>';
+                            html += '<div class="info-grid">';
+                            if (image.appDesc.projectName) {
+                                html += `<div class="info-item"><label>Project Name:</label><span>${image.appDesc.projectName}</span></div>`;
+                            }
+                            if (image.appDesc.version) {
+                                html += `<div class="info-item"><label>Version:</label><span>${image.appDesc.version}</span></div>`;
+                            }
+                            if (image.appDesc.idfVer) {
+                                html += `<div class="info-item"><label>ESP-IDF Version:</label><span>${image.appDesc.idfVer}</span></div>`;
+                            }
+                            html += `<div class="info-item"><label>Secure Version:</label><span>${image.appDesc.secureVersion}</span></div>`;
+                            if (image.appDesc.date && image.appDesc.time) {
+                                html += `<div class="info-item"><label>Build Date/Time:</label><span>${image.appDesc.date} ${image.appDesc.time}</span></div>`;
+                            }
+                            if (image.appDesc.appElfSha256) {
+                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>App ELF SHA256:</label><span class="mono" title="Reference only - ELF file not available for validation">${image.appDesc.appElfSha256} <span style="color: #9a9a9a;">ℹ️</span></span></div>`;
+                            }
+                            html += '</div>';
                         }
-                        if (image.appDesc.version) {
-                            html += `<div class="info-item"><label>Version:</label><span>${image.appDesc.version}</span></div>`;
+
+                        html += '<h4 style="margin-top: 15px;">Validation</h4>';
+                        html += '<div class="info-grid">';
+
+                        /* Calculate expected checksum for OTA app */
+                        let otaChecksumMismatch = false;
+                        let otaCalculatedChecksum = null;
+                        try {
+                            const checksumInfo = await parser.calculateImageChecksum(partition.offset, partition.length);
+                            otaCalculatedChecksum = checksumInfo.checksum;
+                            otaChecksumMismatch = (checksumInfo.checksum !== image.checksum);
+                        } catch (e) {
+                            console.warn('Could not calculate OTA checksum:', e.message);
                         }
-                        if (image.appDesc.idfVer) {
-                            html += `<div class="info-item"><label>ESP-IDF Version:</label><span>${image.appDesc.idfVer}</span></div>`;
+
+                        /* Checksum display */
+                        const otaChecksumColor = otaChecksumMismatch ? '#e88888' : '#6ec589';
+                        const otaChecksumIcon = otaChecksumMismatch ? '✗' : '✓';
+                        html += `<div class="info-item"><label>Checksum:</label><span class="mono" style="color: ${otaChecksumColor};">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ${otaChecksumIcon}</span></div>`;
+                        if (otaChecksumMismatch && otaCalculatedChecksum !== null) {
+                            html += `<div class="info-item"><label>Checksum (calculated):</label><span class="mono">0x${otaCalculatedChecksum.toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
                         }
-                        html += `<div class="info-item"><label>Secure Version:</label><span>${image.appDesc.secureVersion}</span></div>`;
-                        if (image.appDesc.date && image.appDesc.time) {
-                            html += `<div class="info-item"><label>Build Date/Time:</label><span>${image.appDesc.date} ${image.appDesc.time}</span></div>`;
+                        html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
+
+                        /* SHA256 display */
+                        const otaSha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
+                        const otaSha256Valid = sha256Validation && sha256Validation.valid === true;
+                        const otaSha256Invalid = sha256Validation && sha256Validation.valid === false;
+                        const otaSha256Color = otaSha256Valid ? '#6ec589' : otaSha256Invalid ? '#e88888' : '#9a9a9a';
+                        const otaSha256Icon = otaSha256Valid ? '✓' : otaSha256Invalid ? '✗' : '⏳';
+
+                        if (image.sha256) {
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256:</label><span class="mono" style="color: ${otaSha256Color};">${image.sha256} ${otaSha256Icon}</span></div>`;
+                            if (otaSha256Invalid && sha256RegionCalc) {
+                                html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256 (calculated):</label><span class="mono">${sha256RegionCalc}</span></div>`;
+                            }
                         }
-                        if (image.appDesc.appElfSha256) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>App ELF SHA256:</label><span class="mono" title="Reference only - ELF file not available for validation">${image.appDesc.appElfSha256} <span style="color: #9a9a9a;">ℹ️</span></span></div>`;
+                        if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
+                            const regionLen = image.sha256DataEnd - image.sha256DataStart;
+                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
                         }
                         html += '</div>';
+
+                        html += '<h4 style="margin-top: 15px;">Segments</h4>';
+                        html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
+                        image.segmentList.forEach((seg, sidx) => {
+                            html += '<tr>';
+                            html += `<td>${sidx}</td>`;
+                            html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
+                            html += `<td>${formatBytes(seg.length)}</td>`;
+                            html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
+                            html += '</tr>';
+                        });
+                        html += '</tbody></table>';
                     }
-
-                    html += '<h4 style="margin-top: 15px;">Validation</h4>';
-                    html += '<div class="info-grid">';
-
-                    /* Calculate expected checksum for OTA app */
-                    let otaChecksumMismatch = false;
-                    let otaCalculatedChecksum = null;
-                    try {
-                        const checksumInfo = await parser.calculateImageChecksum(partition.offset, partition.length);
-                        otaCalculatedChecksum = checksumInfo.checksum;
-                        otaChecksumMismatch = (checksumInfo.checksum !== image.checksum);
-                    } catch (e) {
-                        console.warn('Could not calculate OTA checksum:', e.message);
-                    }
-
-                    /* Checksum display */
-                    const otaChecksumColor = otaChecksumMismatch ? '#e88888' : '#6ec589';
-                    const otaChecksumIcon = otaChecksumMismatch ? '✗' : '✓';
-                    html += `<div class="info-item"><label>Checksum:</label><span class="mono" style="color: ${otaChecksumColor};">0x${(image.checksum || 0).toString(16).toUpperCase().padStart(2, '0')} ${otaChecksumIcon}</span></div>`;
-                    if (otaChecksumMismatch && otaCalculatedChecksum !== null) {
-                        html += `<div class="info-item"><label>Checksum (calculated):</label><span class="mono">0x${otaCalculatedChecksum.toString(16).toUpperCase().padStart(2, '0')}</span></div>`;
-                    }
-                    html += `<div class="info-item"><label>Hash Appended:</label><span>${image.hasHash ? 'Yes' : 'No'}</span></div>`;
-
-                    /* SHA256 display */
-                    const otaSha256Match = image.sha256 && sha256RegionCalc && image.sha256.toLowerCase() === sha256RegionCalc.toLowerCase();
-                    const otaSha256Valid = sha256Validation && sha256Validation.valid === true;
-                    const otaSha256Invalid = sha256Validation && sha256Validation.valid === false;
-                    const otaSha256Color = otaSha256Valid ? '#6ec589' : otaSha256Invalid ? '#e88888' : '#9a9a9a';
-                    const otaSha256Icon = otaSha256Valid ? '✓' : otaSha256Invalid ? '✗' : '⏳';
-
-                    if (image.sha256) {
-                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256:</label><span class="mono" style="color: ${otaSha256Color};">${image.sha256} ${otaSha256Icon}</span></div>`;
-                        if (otaSha256Invalid && sha256RegionCalc) {
-                            html += `<div class="info-item" style="grid-column: 1 / -1;"><label>SHA256 (calculated):</label><span class="mono">${sha256RegionCalc}</span></div>`;
-                        }
-                    }
-                    if (image.sha256DataStart !== undefined && image.sha256DataEnd !== undefined) {
-                        const regionLen = image.sha256DataEnd - image.sha256DataStart;
-                        html += `<div class="info-item" style="grid-column: 1 / -1;"><label>Hash region:</label><span class="mono">0x${image.sha256DataStart.toString(16).toUpperCase()} - 0x${image.sha256DataEnd.toString(16).toUpperCase()} (${regionLen} bytes)</span></div>`;
-                    }
-                    html += '</div>';
-
-                    html += '<h4 style="margin-top: 15px;">Segments</h4>';
-                    html += '<table><thead><tr><th>#</th><th>Load Address</th><th>Length</th><th>Offset</th></tr></thead><tbody>';
-                    image.segmentList.forEach((seg, sidx) => {
-                        html += '<tr>';
-                        html += `<td>${sidx}</td>`;
-                        html += `<td class="mono">0x${seg.loadAddress.toString(16).toUpperCase().padStart(8, '0')}</td>`;
-                        html += `<td>${formatBytes(seg.length)}</td>`;
-                        html += `<td class="mono">0x${seg.offset.toString(16).toUpperCase()}</td>`;
-                        html += '</tr>';
-                    });
-                    html += '</tbody></table>';
-
 
                     contentDiv.innerHTML = html;
 

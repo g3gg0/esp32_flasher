@@ -300,9 +300,9 @@ class WebUSBSerial {
                     /* Ensure alt setting 0 is active */
                     try { await this.device.selectAlternateInterface(preControlIface.interfaceNumber, 0); } catch (e) { }
                     this.controlInterface = preControlIface.interfaceNumber;
-                    this._emitLog(`[WebUSB] Pre-claimed CDC control iface ${preControlIface.interfaceNumber}`);
+                    this.logMessage(`[WebUSB] Pre-claimed CDC control iface ${preControlIface.interfaceNumber}`);
                 } catch (e) {
-                    this._emitLog(`[WebUSB] Could not pre-claim CDC control iface ${preControlIface.interfaceNumber}: ${e && e.message ? e.message : e}`);
+                    this.logError(`[WebUSB] Could not pre-claim CDC control iface ${preControlIface.interfaceNumber}: ${e && e.message ? e.message : e}`);
                 }
             }
 
@@ -355,16 +355,16 @@ class WebUSBSerial {
                             this.maxTransferSize = Math.min(inEp.packetSize, 64);
                         }
                     } catch (e) { }
-                    this._emitLog(`[WebUSB] Claimed iface ${cand.iface.interfaceNumber} (class=${alt.interfaceClass}) with IN=${this.endpointIn} OUT=${this.endpointOut}`);
+                    this.logMessage(`[WebUSB] Claimed iface ${cand.iface.interfaceNumber} (class=${alt.interfaceClass}) with IN=${this.endpointIn} OUT=${this.endpointOut}`);
                     return config;
                 } catch (claimErr) {
                     lastErr = claimErr;
-                    this._emitLog(`[WebUSB] claim failed on iface ${cand.iface.interfaceNumber} (class=${cand.iface.alternates[0].interfaceClass}): ${claimErr && claimErr.message ? claimErr.message : claimErr}`);
+                    this.logError(`[WebUSB] claim failed on iface ${cand.iface.interfaceNumber} (class=${cand.iface.alternates[0].interfaceClass}): ${claimErr && claimErr.message ? claimErr.message : claimErr}`);
                 }
             }
 
             await this._dumpDeviceDetails('All candidate interfaces failed to claim', lastErr);
-            this._emitLog('[WebUSB] If you are on Windows and see repeat claim failures, ensure the interface is bound to WinUSB (e.g., via Zadig) and close any app using it.');
+            this.logMessage('[WebUSB] If you are on Windows and see repeat claim failures, ensure the interface is bound to WinUSB (e.g., via Zadig) and close any app using it.');
             throw lastErr || new Error('Unable to claim any USB interface');
         };
 
@@ -448,20 +448,20 @@ class WebUSBSerial {
         this._createStreams();
 
         // Setup disconnect handler
-        console.log('[WebUSBSerial-flasher] Setting up USB disconnect handler');
+        this.logDebug('[WebUSBSerial-flasher] Setting up USB disconnect handler');
         this._usbDisconnectHandler = (event) => {
-            console.log('[WebUSBSerial-flasher] USB disconnect event fired, device:', event.device.productId);
+            this.logDebug('[WebUSBSerial-flasher] USB disconnect event fired, device:', event.device.productId);
             if (event.device === this.device) {
-                console.log('[WebUSBSerial-flasher] Device matches, firing close event');
+                this.logDebug('[WebUSBSerial-flasher] Device matches, firing close event');
                 // Fire 'close' event to mimic Web Serial behavior
                 this._fireEvent('close');
                 this._cleanup();
             } else {
-                console.log('[WebUSBSerial-flasher] Device mismatch - different device disconnected');
+                this.logDebug('[WebUSBSerial-flasher] Device mismatch - different device disconnected');
             }
         };
         navigator.usb.addEventListener('disconnect', this._usbDisconnectHandler);
-        console.log('[WebUSBSerial-flasher] Disconnect handler registered with navigator.usb');
+        this.logDebug('[WebUSBSerial-flasher] Disconnect handler registered with navigator.usb');
     }
 
     /**
@@ -493,7 +493,7 @@ class WebUSBSerial {
     async _dumpDeviceDetails(label, err) {
         try {
             if (!this.device) {
-                this._emitLog(`[WebUSB] ${label}: no device set`);
+                this.logMessage(`[WebUSB] ${label}: no device set`);
                 return;
             }
             const d = this.device;
@@ -504,7 +504,7 @@ class WebUSBSerial {
             const cfg = d.configuration;
             if (!cfg) {
                 lines.push('[WebUSB] No active configuration');
-                this._emitLog(lines.join('\n'));
+                this.logMessage(lines.join('\n'));
                 return;
             }
             lines.push(`[WebUSB] Active config: value=${cfg.configurationValue} interfaces=${cfg.interfaces.length}`);
@@ -515,17 +515,9 @@ class WebUSBSerial {
                     lines.push(`[WebUSB]    ep ${ep.endpointNumber}: dir=${ep.direction} type=${ep.type} packetSize=${ep.packetSize}`);
                 }
             }
-            this._emitLog(lines.join('\n'));
+            this.logMessage(lines.join('\n'));
         } catch (dumpErr) {
-            this._emitLog(`[WebUSB] Failed to dump device details: ${dumpErr && dumpErr.message ? dumpErr.message : dumpErr}`);
-        }
-    }
-
-    _emitLog(msg) {
-        if (this.logger && typeof this.logger.info === 'function') {
-            this.logger.info(msg);
-        } else {
-            console.log(msg);
+            this.logError(`[WebUSB] Failed to dump device details: ${dumpErr && dumpErr.message ? dumpErr.message : dumpErr}`);
         }
     }
 
@@ -717,41 +709,13 @@ class ESPFlasher {
      * Initialize ESP32 flasher instance
      * Creates new instance with default configuration and empty state
      */
-    constructor() {
-        this.port = null;
-        this.currentAddress = 0x0000;
-
-        this.current_chip = "none";
-        this.devMode = false;
-        this.stubLoaded = false;
-        this.responseHandlers = new Map();
-        this.chip_magic_addr = 0x40001000;
-        this.chip_descriptions = new ChipDescriptionsClass().chip_descriptions;
-
-        this.buffer = [];
-        this.escaping = false;
-        this.slipLayer = new SlipLayer();
-
-        this.synced = false;
-        this.consoleBuffer = '';
-        this._preSyncState = 'idle';
-
-        this.logMessage = (msg) => { };
-        this.logDebug = (msg) => { };
-        this.logError = (msg) => { };
-        this.reader = null;
-
-
-        this.dtrState = true;
-        this.rtsState = true;
-
-        /* Command execution lock to prevent concurrent command execution */
-        this._commandLock = Promise.resolve();
-        this.logPackets = false;
-
-        /* Persistent writer + queued writes to avoid WritableStream lock contention */
-        this._activeWriter = null;
-        this._writeChain = Promise.resolve();
+    constructor(options = {}) {
+        this.devMode = options.devMode || false;
+        this.logDebug = options.logDebug || ((msg) => { });
+        this.logError = options.logError || ((msg) => { });
+        this.logWarning = options.logWarning || ((msg) => { });
+        this.logMessage = options.logMessage || ((msg) => { });
+        this.logPackets = options.logPackets || false;
 
         /*
         Technical Limitation:
@@ -767,7 +731,33 @@ class ESPFlasher {
 
             Normal ESP32 needs 115200 or 250000 for any operation.
         */
-        this.initialBaudRate = 921600;
+        this.initialBaudRate = options.initialBaudRate || 921600;
+
+
+
+        this.chip_magic_addr = 0x40001000;
+        this.chip_descriptions = new ChipDescriptionsClass().chip_descriptions;
+        this.port = null;
+        this.currentAddress = 0x0000;
+        this.current_chip = "none";
+        this.stubLoaded = false;
+        this.responseHandlers = new Map();
+        this.buffer = [];
+        this.escaping = false;
+        this.slipLayer = new SlipLayer();
+        this.synced = false;
+        this.consoleBuffer = '';
+        this._preSyncState = 'idle';
+        this.reader = null;
+        this.dtrState = true;
+        this.rtsState = true;
+
+        /* Command execution lock to prevent concurrent command execution */
+        this._commandLock = Promise.resolve();
+
+        /* Persistent writer + queued writes to avoid WritableStream lock contention */
+        this._activeWriter = null;
+        this._writeChain = Promise.resolve();
     }
 
     /**
@@ -942,7 +932,17 @@ class ESPFlasher {
     async startRxLoop() {
         try {
             while (true) {
+                if (typeof performance !== 'undefined' && performance.mark && performance.measure) {
+                    performance.mark('esp32_flasher_receive_start');
+                }
                 const { value, done } = await this.reader.read();
+                if (typeof performance !== 'undefined' && performance.mark && performance.measure) {
+                    performance.mark('esp32_flasher_receive_end');
+                    try {
+                        performance.measure('esp32_flasher_receive', 'esp32_flasher_receive_start', 'esp32_flasher_receive_end');
+                    } catch (measureErr) {
+                    }
+                }
                 if (done) {
                     this.logDebug('Reader has been canceled');
                     break;
@@ -994,6 +994,12 @@ class ESPFlasher {
             }
             this.reader = null;
         }
+
+        /* Wait for pending writes and release writer before closing */
+        try {
+            await this._writeChain;
+        } catch (e) { /* Ignore pending write errors on reopen */ }
+        this._releaseWriter();
 
         /* Close and reopen the same port with new baud */
         try {
@@ -1150,21 +1156,21 @@ class ESPFlasher {
      * Execute command on device
      * @async
      * @param {Object} packet - Command packet from buildCommandPacket
-     * @param {Function} callback - Response handler(resolve, reject, responsePacket)
-     * @param {Function} [default_callback] - Raw data handler
+     * @param {Function} packetResponseCbr - Response handler(resolve, reject, responsePacket)
+     * @param {Function} [rawDataCbr] - Raw data handler
      * @param {number} [timeout=500] - Timeout in milliseconds
-     * @param {Function} [hasTimeoutCbr] - Optional timeout check returning boolean
+     * @param {Function} [checkTimeoutCbr] - Optional timeout check returning boolean
      * @returns {Promise<*>} Result from callback
      * @throws {Error} On timeout or command failure
      */
-    async executeCommand(packet, callback, default_callback, timeout = 500, hasTimeoutCbr = null) {
+    async executeCommand(packet, packetResponseCbr, rawDataCbr, timeout = 500, checkTimeoutCbr = null) {
         /*
          Serialize command execution properly:
          - Do NOT create the command promise before acquiring the logical lock.
            Creating it early can start the async work and contend for the writable stream.
          - Instead, chain the creation to the existing lock so only one writer is active.
         */
-        const run = () => this._executeCommandUnlocked(packet, callback, default_callback, timeout, hasTimeoutCbr);
+        const run = () => this._executeCommandUnlocked(packet, packetResponseCbr, rawDataCbr, timeout, checkTimeoutCbr);
         this._commandLock = this._commandLock.then(run, run);
         return this._commandLock;
     }
@@ -1174,69 +1180,84 @@ class ESPFlasher {
      * @async
      * @private
      */
-    async _executeCommandUnlocked(packet, callback, rawDataCallback, timeout = 500, hasTimeoutCbr = null) {
+    async _executeCommandUnlocked(packet, packetResponseCbr, rawDataCbr, timeout = 500, checkTimeoutCbr = null) {
         if (!this.port || !this.port.writable) {
             throw new Error("Port is not writable.");
         }
 
-        var pkt = this.parsePacket(packet.payload);
-
-        /* Log command execution with parameters */
-        const commandNames = {
-            0x02: 'FLASH_BEGIN', 0x03: 'FLASH_DATA', 0x04: 'FLASH_END',
-            0x05: 'MEM_BEGIN', 0x06: 'MEM_END', 0x07: 'MEM_DATA',
-            0x08: 'SYNC', 0x09: 'WRITE_REG', 0x0a: 'READ_REG',
-            0x0b: 'SPI_SET_PARAMS', 0x0d: 'SPI_ATTACH', 0x0f: 'CHANGE_BAUDRATE',
-            0x10: 'FLASH_DEFL_BEGIN', 0x11: 'FLASH_DEFL_DATA', 0x12: 'FLASH_DEFL_END',
-            0x13: 'SPI_FLASH_MD5', 0x14: 'GET_SECURITY_INFO',
-            0xd0: 'ERASE_FLASH', 0xd1: 'ERASE_REGION', 0xd2: 'READ_FLASH', 0xd3: 'RUN_USER_CODE'
-        };
-        const cmdName = commandNames[packet.command] || `0x${packet.command.toString(16)}`;
-
         if (this.devMode) {
-            this.logDebug(`[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'params:', pkt);
+            this.dumpPacket(this.parsePacket(packet.payload));
         }
 
-        this.dumpPacket(pkt);
-
         return new Promise(async (resolve, reject) => {
+            /* Set timeout handler */
+            let timeoutHandle = null;
+
+            const scheduleTimeout = () => {
+                timeoutHandle = setTimeout(() => {
+                    if (checkTimeoutCbr) {
+                        if (checkTimeoutCbr()) {
+                            safeReject(new Error(`Timeout in command ${packet.command}`));
+                        } else {
+                            scheduleTimeout();
+                        }
+                    } else {
+                        safeReject(new Error(`Timeout after ${timeout} ms waiting for response to command ${packet.command}`));
+                    }
+                }, timeout);
+            };
+
+            const safeResolve = (value) => { clearTimeout(timeoutHandle); return resolve(value); };
+            const safeReject = (err) => { clearTimeout(timeoutHandle); return reject(err); };
+
+
             /* Register response handlers */
             this.responseHandlers.clear();
-            this.responseHandlers.set(packet.command, async (response) => {
-                /* Ensure per-command timeout is cleared before resolving */
-                try { clearTimeout(timeoutHandle); } catch (e) { }
-                if (callback) { return callback(resolve, reject, response); }
-            });
 
-            if (rawDataCallback) {
+            /* decide which callbacks to register */
+            if (rawDataCbr) {
+                /* this command seems to have have normal response then raw data */
+                this.responseHandlers.set(packet.command, async (response) => {
+                    if (packetResponseCbr) {
+                        return packetResponseCbr(safeResolve, safeReject, response);
+                    }
+                });
                 this.responseHandlers.set(-1, async (response) => {
-                    /* Clear timeout as soon as we hand raw data to caller */
-                    try { clearTimeout(timeoutHandle); } catch (e) { }
-                    return rawDataCallback(resolve, reject, response);
+                    return rawDataCbr(safeResolve, safeReject, response);
+                });
+            } else {
+                /* only normal response */
+                this.responseHandlers.set(packet.command, async (response) => {
+                    if (packetResponseCbr) {
+                        return packetResponseCbr(safeResolve, safeReject, response);
+                    }
                 });
             }
 
-            /* Set timeout handler */
-            const timeoutHandle = setTimeout(() => {
-                if (hasTimeoutCbr) {
-                    if (hasTimeoutCbr()) {
-                        reject(new Error(`Timeout in command ${packet.command}`));
-                    }
-                } else {
-                    reject(new Error(`Timeout after ${timeout} ms waiting for response to command ${packet.command}`));
-                }
-            }, timeout);
-
             /* Send the packet with proper error handling */
             try {
+                scheduleTimeout();
+                if (typeof performance !== 'undefined' && performance.mark) {
+                    performance.mark('esp32_flasher_send_start');
+                }
+
                 await this._writeFrame(this.slipLayer.encode(packet.payload));
+
+                if (typeof performance !== 'undefined' && performance.mark && performance.measure) {
+                    performance.mark('esp32_flasher_send_end');
+                    try {
+                        performance.measure('esp32_flasher_send', 'esp32_flasher_send_start', 'esp32_flasher_send_end');
+                        performance.measure('esp32_flasher_latency', 'esp32_flasher_receive_end', 'esp32_flasher_send_start');
+                        /* measured ~50-100us latency on USB-JTAG for register read flooding */
+                    } catch (measureErr) {
+                    }
+                }
             } catch (error) {
                 clearTimeout(timeoutHandle);
                 reject(error);
             }
         });
     }
-
 
     /**
      * Disconnect from serial port
@@ -1245,7 +1266,7 @@ class ESPFlasher {
      */
     async disconnect() {
         if (this._disconnecting) {
-            return; /* Already disconnecting, avoid double-close */
+            return;
         }
         this._disconnecting = true;
 
@@ -1267,7 +1288,7 @@ class ESPFlasher {
                 this.port.removeEventListener('close', this.disconnect);
                 await this.port.close();
             } catch (error) {
-                this.logError('Error during disconnect:', error);
+                //this.logError('Error during disconnect:', error);
             }
             this.port = null;
         }
@@ -1343,7 +1364,8 @@ class ESPFlasher {
         }
 
         try {
-            await this.port.setSignals(signals);
+            await this.setDtr(this.dtrState);
+            await this.setRts(this.rtsState);
             return true;
         } catch (error) {
             this.logError(`Could not set signals: ${error}.`);
@@ -1371,21 +1393,40 @@ class ESPFlasher {
         try {
 
             if (this.isEspressifUsbJtag) {
-                await this.setSignals({ requestToSend: false, dataTerminalReady: false });
-                await this.setSignals({ requestToSend: false, dataTerminalReady: bootloader });
-                await this.setSignals({ requestToSend: true, dataTerminalReady: bootloader });
-                await new Promise(r => setTimeout(r, 100));
-                await this.setSignals({ requestToSend: true, dataTerminalReady: false });
-                await new Promise(r => setTimeout(r, 100));
-                await this.setSignals({ requestToSend: true, dataTerminalReady: true });
-            } else {
-                await this.setSignals({ requestToSend: false, dataTerminalReady: false });
-                await this.setSignals({ requestToSend: true, dataTerminalReady: !bootloader });
-                await new Promise(r => setTimeout(r, 100));
-                await this.setSignals({ requestToSend: false, dataTerminalReady: bootloader });
-                await new Promise(r => setTimeout(r, 100));
-                await this.setSignals({ requestToSend: false, dataTerminalReady: false });
+                /* Native USB/JTAG interface - use the method described in ESP32-S3 Table 33.4-3. Reset SoC into Download Mode.
+                   This procedure assumes the Windows CDC driver toggles DRT only when RTS is set explicitly. */
+
+                /* set to known state first, but causes an extra reset usually */
                 await this.setDtr(false);
+                await this.setRts(false);
+
+                if (bootloader) {
+                    await this.setDtr(true);
+                    await this.setRts(false);
+                    await this.setRts(true);
+                    await this.setDtr(false);
+                }
+
+                await this.setRts(false);
+                await this.setRts(true);
+            } else {
+                /* high/low vs. asserted/deasserted logic is a bit pain here:
+                   EN pin (RTS) - active low - to reset, pull low (EN high means RTS=false)
+                   IO0 pin (DTR) - active low - to enter bootloader, pull low (IO0 high means DTR=false)
+                */
+                const setPins = async ({ io0PinHigh, enPinHigh }) => {
+                    const io0Level = io0PinHigh ? false : true;
+                    const enLevel = enPinHigh ? false : true;
+                    await this.setSignals({ requestToSend: enLevel, dataTerminalReady: io0Level });
+                };
+
+                await setPins({ io0PinHigh: true, enPinHigh: true });
+                await setPins({ io0PinHigh: false, enPinHigh: false });
+                await setPins({ io0PinHigh: true, enPinHigh: false });
+                await new Promise(r => setTimeout(r, 50));
+                await setPins({ io0PinHigh: bootloader ? false : true, enPinHigh: true });
+                await new Promise(r => setTimeout(r, 100));
+                await setPins({ io0PinHigh: true, enPinHigh: true });
             }
 
             return true;
@@ -1883,129 +1924,125 @@ class ESPFlasher {
         [01:06:29] [DEBUG]   Packets received: 64
 
      */
-    async readFlashPlain(address, totalLength = 0x1000, progressCallback) {
-        const performRead = async (cbr) => {
-            let blockSize = Math.min(totalLength, 0x1000);
-            let maxInFlight = Math.min(totalLength, blockSize * 2);
-            const packetCount = totalLength / blockSize;
+    async readFlashPlain(address, totalLength = 0x1000, cbr) {
+        let blockSize = Math.min(totalLength, 0x1000);
+        let maxInFlight = Math.min(totalLength, blockSize * 2);
+        const packetCount = totalLength / blockSize;
 
-            let packet = 0;
-            let lastAckedLength = 0;
-            var data = new Uint8Array(0);
-            var lastDataTime = Date.now();
+        let packet = 0;
+        let lastAckedLength = 0;
+        var data = new Uint8Array(0);
+        var lastDataTime = Date.now();
 
-            /* Timing measurements */
-            const readStartTime = Date.now();
-            let packetLatencies = [];
-            let lastPacketTime = readStartTime;
-            let totalBytesReceived = 0;
+        /* Timing measurements */
+        const readStartTime = Date.now();
+        let packetLatencies = [];
+        let lastPacketTime = readStartTime;
+        let totalBytesReceived = 0;
 
-            if (this.devMode) {
-                console.log(`[ReadFlashPlain] Starting ReadFlash:`, { address: `0x${address.toString(16)}`, length: totalLength, sectorSize: blockSize, packets: packetCount, maxInFlight: maxInFlight });
-            }
+        if (this.devMode) {
+            this.logDebug(`[ReadFlashPlain] Starting ReadFlash:`, { address: `0x${address.toString(16)}`, length: totalLength, sectorSize: blockSize, packets: packetCount, maxInFlight: maxInFlight });
+        }
 
-            return this.executeCommand(
-                this.buildCommandPacketU32(READ_FLASH, address, totalLength, blockSize, maxInFlight),
-                async () => {
-                    packet = 0;
-                },
-                async (resolve, reject, rawData) => {
-                    const currentTime = Date.now();
-                    lastDataTime = currentTime;
+        return this.executeCommand(
+            this.buildCommandPacketU32(READ_FLASH, address, totalLength, blockSize, maxInFlight),
+            async () => {
+                packet = 0;
+            },
+            async (resolve, reject, rawData) => {
+                const currentTime = Date.now();
+                lastDataTime = currentTime;
 
-                    if (data.length == totalLength) {
-                        if (rawData.length == 16) {
-                            /* Calculate MD5 of received data */
-                            const calculatedMD5 = this.calculateMD5(data);
+                if (data.length == totalLength) {
+                    if (rawData.length == 16) {
+                        /* Calculate MD5 of received data */
+                        const calculatedMD5 = this.calculateMD5(data);
 
-                            /* Convert received MD5 bytes to hex string */
-                            const receivedMD5 = Array.from(rawData)
-                                .map(b => b.toString(16).padStart(2, '0'))
-                                .join('');
+                        /* Convert received MD5 bytes to hex string */
+                        const receivedMD5 = Array.from(rawData)
+                            .map(b => b.toString(16).padStart(2, '0'))
+                            .join('');
 
-                            /* Compare MD5 hashes */
-                            if (calculatedMD5.toLowerCase() === receivedMD5.toLowerCase()) {
-                                /* Calculate and log timing statistics */
-                                const totalTime = currentTime - readStartTime;
-                                const dataRate = totalBytesReceived / (totalTime / 1000);
-                                const avgLatency = packetLatencies.length > 0
-                                    ? packetLatencies.reduce((a, b) => a + b, 0) / packetLatencies.length
-                                    : 0;
-                                const minLatency = packetLatencies.length > 0
-                                    ? Math.min(...packetLatencies)
-                                    : 0;
-                                const maxLatency = packetLatencies.length > 0
-                                    ? Math.max(...packetLatencies)
-                                    : 0;
+                        /* Compare MD5 hashes */
+                        if (calculatedMD5.toLowerCase() === receivedMD5.toLowerCase()) {
+                            /* Calculate and log timing statistics */
+                            const totalTime = currentTime - readStartTime;
+                            const dataRate = totalBytesReceived / (totalTime / 1000);
+                            const avgLatency = packetLatencies.length > 0
+                                ? packetLatencies.reduce((a, b) => a + b, 0) / packetLatencies.length
+                                : 0;
+                            const minLatency = packetLatencies.length > 0
+                                ? Math.min(...packetLatencies)
+                                : 0;
+                            const maxLatency = packetLatencies.length > 0
+                                ? Math.max(...packetLatencies)
+                                : 0;
 
-                                if (this.devMode) {
-                                    this.logDebug(`ReadFlash timing: ${totalBytesReceived} bytes in ${totalTime}ms`);
-                                    this.logDebug(`  Data rate: ${(dataRate / 1024 / 1024).toFixed(2)} MB/s (${dataRate.toFixed(0)} B/s)`);
-                                    this.logDebug(`  Packet latency: min=${minLatency}ms, max=${maxLatency}ms, avg=${avgLatency.toFixed(1)}ms`);
-                                    this.logDebug(`  Packets received: ${packetLatencies.length}`);
-                                }
-
-                                resolve(data);
-                            } else {
-                                const error = `MD5 mismatch! Expected: ${receivedMD5}, Got: ${calculatedMD5}`;
-                                this.logError(error);
-                                reject(new Error(error));
+                            if (this.devMode) {
+                                this.logDebug(`ReadFlash timing: ${totalBytesReceived} bytes in ${totalTime}ms`);
+                                this.logDebug(`  Data rate: ${(dataRate / 1024 / 1024).toFixed(2)} MB/s (${dataRate.toFixed(0)} B/s)`);
+                                this.logDebug(`  Packet latency: min=${minLatency}ms, max=${maxLatency}ms, avg=${avgLatency.toFixed(1)}ms`);
+                                this.logDebug(`  Packets received: ${packetLatencies.length}`);
                             }
+
+                            resolve(data);
                         } else {
-                            const error = `Unknown response length for MD5! Expected: 16, Got: ${rawData.length}`;
+                            const error = `MD5 mismatch! Expected: ${receivedMD5}, Got: ${calculatedMD5}`;
                             this.logError(error);
                             reject(new Error(error));
                         }
                     } else {
-                        /* Track packet latency */
-                        const packetLatency = currentTime - lastPacketTime;
-                        packetLatencies.push(packetLatency);
-                        lastPacketTime = currentTime;
-                        totalBytesReceived += rawData.length;
-
-                        /* Append rawData to accumulated data */
-                        const newData = new Uint8Array(data.length + rawData.length);
-                        newData.set(data);
-                        newData.set(rawData, data.length);
-                        data = newData;
-                        packet++;
-
-                        /* Prepare response */
-                        if (data.length >= (lastAckedLength + maxInFlight) || (data.length >= totalLength)) {
-
-                            /* Encode and write response */
-                            var resp = new Uint8Array(4);
-                            resp[0] = (data.length >> 0) & 0xFF;
-                            resp[1] = (data.length >> 8) & 0xFF;
-                            resp[2] = (data.length >> 16) & 0xFF;
-                            resp[3] = (data.length >> 24) & 0xFF;
-
-                            await this._writeFrame(this.slipLayer.encode(resp));
-
-                            /* move last acked length further */
-                            lastAckedLength = Math.min(lastAckedLength + maxInFlight, totalLength);
-                        }
-
-                        /* Call progress callback */
-                        if (cbr) {
-                            cbr(data.length, totalLength);
-                        }
+                        const error = `Unknown response length for MD5! Expected: 16, Got: ${rawData.length}`;
+                        this.logError(error);
+                        reject(new Error(error));
                     }
-                },
-                1000 * packetCount,
-                /* Timeout condition: if the last raw data callback was more than a second ago */
-                () => {
-                    const timeSinceLastData = Date.now() - lastDataTime;
-                    const hasTimedOut = timeSinceLastData > 1000;
-                    if (hasTimedOut) {
-                        console.log(`[ReadFlashPlain] TIMEOUT CHECK: timeSinceLastData=${timeSinceLastData}ms, triggering timeout`);
+                } else {
+                    /* Track packet latency */
+                    const packetLatency = currentTime - lastPacketTime;
+                    packetLatencies.push(packetLatency);
+                    lastPacketTime = currentTime;
+                    totalBytesReceived += rawData.length;
+
+                    /* Append rawData to accumulated data */
+                    const newData = new Uint8Array(data.length + rawData.length);
+                    newData.set(data);
+                    newData.set(rawData, data.length);
+                    data = newData;
+                    packet++;
+
+                    /* Prepare response */
+                    if (data.length >= (lastAckedLength + maxInFlight) || (data.length >= totalLength)) {
+
+                        /* Encode and write response */
+                        var resp = new Uint8Array(4);
+                        resp[0] = (data.length >> 0) & 0xFF;
+                        resp[1] = (data.length >> 8) & 0xFF;
+                        resp[2] = (data.length >> 16) & 0xFF;
+                        resp[3] = (data.length >> 24) & 0xFF;
+
+                        await this._writeFrame(this.slipLayer.encode(resp));
+
+                        /* move last acked length further */
+                        lastAckedLength = Math.min(lastAckedLength + maxInFlight, totalLength);
                     }
-                    return hasTimedOut;
+
+                    /* Call progress callback */
+                    if (cbr) {
+                        cbr(data.length, totalLength);
+                    }
                 }
-            );
-        };
-
-        return performRead(progressCallback);
+            },
+            500,
+            /* Timeout condition: if the last raw data callback was more than a second ago */
+            () => {
+                const timeSinceLastData = Date.now() - lastDataTime;
+                const hasTimedOut = timeSinceLastData > 1000;
+                if (hasTimedOut) {
+                    this.logError(`[ReadFlashPlain] TIMEOUT CHECK: timeSinceLastData=${timeSinceLastData}ms, triggering timeout`);
+                }
+                return hasTimedOut;
+            }
+        );
     }
 
     /**
@@ -2129,27 +2166,27 @@ class ESPFlasher {
      * @async
      * @param {number} address - Target address
      * @param {Uint8Array} data - Data to write
-     * @param {Function} [progressCallback] - Callback(written, total, stage)
+     * @param {Function} [progressCbr] - Callback(written, total, stage)
      * @returns {Promise<Object>} {success: boolean, md5: string}
      * @throws {Error} If write/verification fails
      */
-    async writeFlash(address, data, progressCallback) {
+    async writeFlash(address, data, progressCbr) {
         try {
             /* Step 1: Write data to flash */
             this.logDebug(`WriteFlashSafe: Writing ${data.length} bytes to 0x${address.toString(16).padStart(8, '0')}...`);
             await this.writeFlashPlain(address, data, (offset, total) => {
-                progressCallback && progressCallback(offset, total, 'writing');
+                progressCbr && progressCbr(offset, total, 'Writing');
             });
             this.logDebug(`WriteFlashSafe: Write complete`);
 
             /* Step 2: Calculate MD5 of input data */
-            progressCallback && progressCallback(data.length, data.length, 'calc MD5 of input');
+            progressCbr && progressCbr(data.length, data.length, 'Calculating MD5 of input');
             this.logDebug(`WriteFlashSafe: Calculating MD5 of ${data.length} bytes to write...`);
             const expectedMD5 = this.calculateMD5(data);
             this.logDebug(`Input data MD5: ${expectedMD5}`);
 
             /* Step 3: Get MD5 from device */
-            progressCallback && progressCallback(data.length, data.length, 'calc MD5 onchip');
+            progressCbr && progressCbr(data.length, data.length, 'Calculating MD5 on device');
             this.logDebug(`WriteFlashSafe: Calculating MD5 on device for verification...`);
             const deviceMD5 = await this.checksumFlash(address, data.length);
             this.logDebug(`Device MD5: ${deviceMD5}`);
@@ -2164,7 +2201,7 @@ class ESPFlasher {
 
             this.logDebug(`WriteFlashSafe: MD5 verification passed ✓`);
 
-            progressCallback && progressCallback(data.length, data.length, expectedMD5, 'verified');
+            progressCbr && progressCbr(data.length, data.length, expectedMD5, 'Verified');
 
             return { success: true, md5: expectedMD5 };
 
@@ -2415,6 +2452,20 @@ class ESPFlasher {
         if (!this.devMode) {
             return;
         }
+
+        /* Log command execution with parameters */
+        const commandNames = {
+            0x02: 'FLASH_BEGIN', 0x03: 'FLASH_DATA', 0x04: 'FLASH_END',
+            0x05: 'MEM_BEGIN', 0x06: 'MEM_END', 0x07: 'MEM_DATA',
+            0x08: 'SYNC', 0x09: 'WRITE_REG', 0x0a: 'READ_REG',
+            0x0b: 'SPI_SET_PARAMS', 0x0d: 'SPI_ATTACH', 0x0f: 'CHANGE_BAUDRATE',
+            0x10: 'FLASH_DEFL_BEGIN', 0x11: 'FLASH_DEFL_DATA', 0x12: 'FLASH_DEFL_END',
+            0x13: 'SPI_FLASH_MD5', 0x14: 'GET_SECURITY_INFO',
+            0xd0: 'ERASE_FLASH', 0xd1: 'ERASE_REGION', 0xd2: 'READ_FLASH', 0xd3: 'RUN_USER_CODE'
+        };
+        const cmdName = commandNames[packet.command] || `0x${packet.command.toString(16)}`;
+        this.logDebug(`[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'params:', pkt);
+
         if (pkt.dir == 0) {
             this.logDebug(`Command: `, pkt);
             this.logDebug(`Command raw: ${Array.from(pkt.raw).map(byte => byte.toString(16).padStart(2, '0')).join(' ')}`);

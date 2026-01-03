@@ -49,6 +49,10 @@ class SparseImage {
         this.length = size;
         /* Lock to ensure _ensureData executes serially */
         this._ensureDataLock = Promise.resolve();
+
+        this.logMessage = (msg) => { };
+        this.logDebug = (msg) => { };
+        this.logError = (msg) => { };
     }
 
     /**
@@ -266,9 +270,9 @@ class SparseImage {
      */
     async _ensureData(address, size) {
         /* Acquire lock to ensure only one _ensureData executes at a time */
-        return this._ensureDataLock = this._ensureDataLock.then(() =>
-            this._ensureDataUnlocked(address, size)
-        );
+        const run = () => this._ensureDataUnlocked(address, size);
+        this._ensureDataLock = this._ensureDataLock.then(run, run);
+        return this._ensureDataLock;
     }
 
     /**
@@ -343,7 +347,7 @@ class SparseImage {
 
         const fmtRanges = (list) => list.map(s => `[0x${s.address.toString(16)}-0x${(s.address + s.data.length).toString(16)})`).join(', ');
         const preRanges = fmtRanges(this.writeBuffer);
-        // console.log('SparseImage.write start', { address: start, length: normalized.length, preRanges });
+        // this.logDebug('SparseImage.write start', { address: start, length: normalized.length, preRanges });
         const sectorSize = this.sectorSize || 0x1000;
         const touchedSectors = new Set();
 
@@ -506,7 +510,7 @@ class SparseImage {
         mergeWrites();
 
         const postRanges = fmtRanges(this.writeBuffer);
-        // console.log('SparseImage.write done', { address: start, length: normalized.length, preRanges, postRanges });
+        // this.logDebug('SparseImage.write done', { address: start, length: normalized.length, preRanges, postRanges });
     }
 
     fill(value, start = 0, end = this.size) {
@@ -520,7 +524,7 @@ class SparseImage {
         const len = end - start;
         const buf = new Uint8Array(len);
         buf.fill(desired);
-        // console.log('SparseImage.fill', { start, end, len, desired });
+        // this.logDebug('SparseImage.fill', { start, end, len, desired });
         this.write(start, buf);
     }
 
@@ -548,6 +552,11 @@ class SparseImage {
         this.readBuffer = this._mergeReadAndWriteWithPriority(this.readBuffer, this.writeBuffer);
 
         // Clear pending writes
+        this.writeBuffer = [];
+    }
+
+    async clear(){
+        this.readBuffer = [];
         this.writeBuffer = [];
     }
 
@@ -786,6 +795,9 @@ class FATParser {
         this.buffer = SparseImage._createProxy(sparseImage);
         this.view = sparseImage.createDataView();
         this.fatInfo = null;
+        this.logMessage = (msg) => { };
+        this.logDebug = (msg) => { };
+        this.logError = (msg) => { };
     }
 
     async initialize() {
@@ -1028,7 +1040,7 @@ class FATParser {
         const wlInfo = fatInfo.wearLeveling;
         const fatOffset = fatInfo.reservedSectors * WL_SECTOR_SIZE;
         const fatType = fatInfo.fatType;
-        
+
         if (fatType === 'FAT12') {
             const entryOffset = fatOffset + Math.floor(cluster * 1.5);
             const sector = Math.floor(entryOffset / WL_SECTOR_SIZE);
@@ -1298,40 +1310,40 @@ class FATParser {
         /* Step 6: Write directory entry */
         const now = new Date();
         const dirEntryData = new Uint8Array(32);
-        
+
         /* Filename (8 bytes) + Extension (3 bytes) */
         for (let i = 0; i < 8; i++) dirEntryData[i] = name.charCodeAt(i);
         for (let i = 0; i < 3; i++) dirEntryData[8 + i] = ext.charCodeAt(i);
-        
+
         /* Attributes (1 byte): 0x20 = Archive */
         dirEntryData[11] = 0x20;
-        
+
         /* Reserved (10 bytes) */
         for (let i = 12; i < 22; i++) dirEntryData[i] = 0x00;
-        
+
         /* Time (2 bytes) */
-        const time = ((now.getHours() & 0x1F) << 11) | 
-                     ((now.getMinutes() & 0x3F) << 5) | 
-                     ((now.getSeconds() / 2) & 0x1F);
+        const time = ((now.getHours() & 0x1F) << 11) |
+            ((now.getMinutes() & 0x3F) << 5) |
+            ((now.getSeconds() / 2) & 0x1F);
         new DataView(dirEntryData.buffer).setUint16(22, time, true);
-        
+
         /* Date (2 bytes) */
-        const date = (((now.getFullYear() - 1980) & 0x7F) << 9) | 
-                     (((now.getMonth() + 1) & 0x0F) << 5) | 
-                     (now.getDate() & 0x1F);
+        const date = (((now.getFullYear() - 1980) & 0x7F) << 9) |
+            (((now.getMonth() + 1) & 0x0F) << 5) |
+            (now.getDate() & 0x1F);
         new DataView(dirEntryData.buffer).setUint16(24, date, true);
-        
+
         /* First cluster (2 bytes) */
         new DataView(dirEntryData.buffer).setUint16(26, allocatedClusters[0], true);
-        
+
         /* File size (4 bytes) */
         new DataView(dirEntryData.buffer).setUint32(28, data.length, true);
 
         /* Write directory entry */
         this.sparseImage.write(freeEntry.offset, dirEntryData);
 
-        return { 
-            success: true, 
+        return {
+            success: true,
             filename: filename,
             size: data.length,
             clusters: allocatedClusters.length,
@@ -1344,16 +1356,16 @@ class FATParser {
         const WL_SECTOR_SIZE = 0x1000;
         const fatInfo = this.fatInfo;
         const wlInfo = fatInfo.wearLeveling;
-        
+
         /* Root directory */
         if (!path || path === '') {
             const rootDirSector = fatInfo.reservedSectors + fatInfo.numFATs * fatInfo.sectorsPerFAT;
             const rootDirOffset = this.wlSectorToOffset(wlInfo, rootDirSector);
             const maxEntries = 512; // Standard for FAT16 root directory
-            
-            return { 
-                found: true, 
-                offset: rootDirOffset, 
+
+            return {
+                found: true,
+                offset: rootDirOffset,
                 isRoot: true,
                 maxEntries: maxEntries
             };
@@ -1362,30 +1374,30 @@ class FATParser {
         /* Navigate to subdirectory */
         const parts = path.split('/').filter(p => p.length > 0);
         let currentDir = fatInfo.files;
-        
+
         for (const part of parts) {
             const found = currentDir.find(f => f.isDirectory && f.name.toLowerCase() === part.toLowerCase());
             if (!found) {
                 return { found: false, error: `Directory not found: ${part}` };
             }
             currentDir = found.children || [];
-            
+
             /* Get directory cluster offset */
             if (found.cluster >= 2 && found.cluster < 0xFFF0) {
                 const firstDataSector = fatInfo.reservedSectors + fatInfo.numFATs * fatInfo.sectorsPerFAT +
                     Math.ceil(512 * 32 / fatInfo.bytesPerSector);
                 const clusterSector = firstDataSector + (found.cluster - 2) * fatInfo.sectorsPerCluster;
                 const clusterOffset = this.wlSectorToOffset(wlInfo, clusterSector);
-                
-                return { 
-                    found: true, 
-                    offset: clusterOffset, 
+
+                return {
+                    found: true,
+                    offset: clusterOffset,
                     isRoot: false,
                     maxEntries: null // Subdirectory size limited by cluster
                 };
             }
         }
-        
+
         return { found: false, error: 'Invalid directory structure' };
     }
 
@@ -1398,14 +1410,14 @@ class FATParser {
         for (let i = 0; i < maxIter; i++) {
             const entryOffset = dirOffset + i * 32;
             if (entryOffset + 32 > this.sparseImage.size) break;
-            
+
             const firstByte = await this.view.getUint8(entryOffset);
-            
+
             /* Deleted entry (0xE5) - prioritize this */
             if (firstByte === 0xE5) {
                 return { offset: entryOffset, index: i, wasDeleted: true };
             }
-            
+
             /* End of directory (0x00) - use this if no deleted entry found */
             if (firstByte === 0x00) {
                 if (!firstFreeEntry) {
@@ -1504,6 +1516,9 @@ class SpiffsParser {
         this.buffer = SparseImage._createProxy(sparseImage);
         this.view = sparseImage.createDataView();
         this.spiffsInfo = null;
+        this.logMessage = (msg) => { };
+        this.logDebug = (msg) => { };
+        this.logError = (msg) => { };
     }
 
     async initialize() {
@@ -1515,7 +1530,7 @@ class SpiffsParser {
         const offset = this.startOffset;
         const size = this.size;
 
-        console.log(`[SPIFFS] Parsing partition at offset 0x${offset.toString(16)}, size ${size} bytes`);
+        this.logDebug(`[SPIFFS] Parsing partition at offset 0x${offset.toString(16)}, size ${size} bytes`);
 
         const defaultBlockSize = 4096;
         const headerData = await this.buffer.slice_async(offset, offset + Math.min(defaultBlockSize, size));
@@ -1526,19 +1541,19 @@ class SpiffsParser {
         let blockSizeActual = 4096;
         let validHeader = false;
 
-        console.log(`[SPIFFS] Scanning for magic number...`);
+        this.logDebug(`[SPIFFS] Scanning for magic number...`);
         for (let i = 0; i < Math.min(512, headerData.length - 4); i += 4) {
             try {
                 const testMagic = view.getUint32(i, true);
                 if (testMagic === 0x20160902) {
                     magic = testMagic;
                     validHeader = true;
-                    console.log(`[SPIFFS] Found magic at offset 0x${i.toString(16)}`);
+                    this.logDebug(`[SPIFFS] Found magic at offset 0x${i.toString(16)}`);
                     if (i + 16 <= headerData.length) {
                         const cfgPhysSize = view.getUint32(i + 4, true);
                         const cfgLogBlockSize = view.getUint32(i + 8, true);
                         const cfgLogPageSize = view.getUint32(i + 12, true);
-                        console.log(`[SPIFFS] Config: phys=${cfgPhysSize}, blockSize=${cfgLogBlockSize}, pageSize=${cfgLogPageSize}`);
+                        this.logDebug(`[SPIFFS] Config: phys=${cfgPhysSize}, blockSize=${cfgLogBlockSize}, pageSize=${cfgLogPageSize}`);
                         if (cfgLogBlockSize > 0 && cfgLogBlockSize <= 65536 &&
                             cfgLogPageSize > 0 && cfgLogPageSize <= 2048) {
                             blockSizeActual = cfgLogBlockSize;
@@ -1553,19 +1568,19 @@ class SpiffsParser {
         }
 
         if (!validHeader) {
-            console.log(`[SPIFFS] No magic found, trying pattern detection...`);
+            this.logDebug(`[SPIFFS] No magic found, trying pattern detection...`);
             validHeader = await this.detectByPattern(headerData);
-            console.log(`[SPIFFS] Pattern detection result: ${validHeader}`);
+            this.logDebug(`[SPIFFS] Pattern detection result: ${validHeader}`);
         }
 
         const files = [];
         const pagesPerBlock = Math.floor(blockSizeActual / pageSize);
-        console.log(`[SPIFFS] Config: blockSize=${blockSizeActual}, pageSize=${pageSize}, pagesPerBlock=${pagesPerBlock}`);
-        console.log(`[SPIFFS] Scanning ${Math.floor(size / blockSizeActual)} blocks...`);
+        this.logDebug(`[SPIFFS] Config: blockSize=${blockSizeActual}, pageSize=${pageSize}, pagesPerBlock=${pagesPerBlock}`);
+        this.logDebug(`[SPIFFS] Scanning ${Math.floor(size / blockSizeActual)} blocks...`);
 
         for (let blockIdx = 0; blockIdx < Math.floor(size / blockSizeActual); blockIdx++) {
             const blockOffset = offset + blockIdx * blockSizeActual;
-            console.log(`[SPIFFS] ===== Block ${blockIdx}: offset 0x${blockOffset.toString(16)} =====`);
+            this.logDebug(`[SPIFFS] ===== Block ${blockIdx}: offset 0x${blockOffset.toString(16)} =====`);
             const blockData = await this.buffer.slice_async(blockOffset, blockOffset + Math.min(blockSizeActual, size - blockIdx * blockSizeActual));
 
             for (let pageIdx = 0; pageIdx < pagesPerBlock; pageIdx++) {
@@ -1603,17 +1618,17 @@ class SpiffsParser {
                 }
 
                 const isDeleted = (flags & 0x80) === 0;
-                console.log(`[SPIFFS] ===== Page at Block ${blockIdx}, Page ${pageIdx} (offset 0x${pageStart.toString(16)}) =====`);
-                console.log(`[SPIFFS]   Offset 0-1: obj_id = 0x${objId.toString(16).padStart(4, '0')}`);
-                console.log(`[SPIFFS]   Offset 2-3: span_ix = ${span} (0x${span.toString(16).padStart(4, '0')})`);
-                console.log(`[SPIFFS]   Offset 4:   flags = 0x${flags.toString(16).padStart(2, '0')} ${isDeleted ? '[DELETED]' : '[VALID]'}`);
+                this.logDebug(`[SPIFFS] ===== Page at Block ${blockIdx}, Page ${pageIdx} (offset 0x${pageStart.toString(16)}) =====`);
+                this.logDebug(`[SPIFFS]   Offset 0-1: obj_id = 0x${objId.toString(16).padStart(4, '0')}`);
+                this.logDebug(`[SPIFFS]   Offset 2-3: span_ix = ${span} (0x${span.toString(16).padStart(4, '0')})`);
+                this.logDebug(`[SPIFFS]   Offset 4:   flags = 0x${flags.toString(16).padStart(2, '0')} ${isDeleted ? '[DELETED]' : '[VALID]'}`);
 
                 if (isIndexHeader) {
                     const sizeIsUndefined = fileSize === 0xFFFFFFFF;
                     const sizeLog = sizeIsUndefined ? 'undefined (0xFFFFFFFF)' : `${fileSize} bytes (0x${fileSize.toString(16)})`;
-                    console.log(`[SPIFFS]   Offset 8-11: size = ${sizeLog}`);
-                    console.log(`[SPIFFS]   Offset 12:   type = ${type} (${type === 0x01 ? 'FILE' : type === 0x02 ? 'DIR' : 'UNKNOWN'})`);
-                    console.log(`[SPIFFS]   Offset 13+:  name = "${nameStr}"`);
+                    this.logDebug(`[SPIFFS]   Offset 8-11: size = ${sizeLog}`);
+                    this.logDebug(`[SPIFFS]   Offset 12:   type = ${type} (${type === 0x01 ? 'FILE' : type === 0x02 ? 'DIR' : 'UNKNOWN'})`);
+                    this.logDebug(`[SPIFFS]   Offset 13+:  name = "${nameStr}"`);
 
                     if ((type === 0x01 || type === 0x02) && nameStr !== '[NO NAME]' && nameStr.startsWith('/')) {
                         const displayName = isDeleted ? `${nameStr} (deleted)` : nameStr;
@@ -1628,17 +1643,17 @@ class SpiffsParser {
                             flags: flags,
                             deleted: isDeleted
                         });
-                        console.log(`[SPIFFS] ✓ Added to file list: "${displayName}" (deleted=${isDeleted})`);
+                        this.logDebug(`[SPIFFS] ✓ Added to file list: "${displayName}" (deleted=${isDeleted})`);
                     } else {
-                        console.log(`[SPIFFS] ⊘ Skipped: not a valid file (type=${type}, name="${nameStr}")`);
+                        this.logDebug(`[SPIFFS] ⊘ Skipped: not a valid file (type=${type}, name="${nameStr}")`);
                     }
                 } else {
-                    console.log(`[SPIFFS]   (Data page, span_ix=${span})`);
+                    this.logDebug(`[SPIFFS]   (Data page, span_ix=${span})`);
                 }
             }
         }
 
-        console.log(`[SPIFFS] Parsing complete. Found ${files.length} files.`);
+        this.logDebug(`[SPIFFS] Parsing complete. Found ${files.length} files.`);
         return {
             valid: validHeader || files.length > 0,
             magic: magic,
@@ -1660,7 +1675,7 @@ class SpiffsParser {
             if (objId !== 0xFFFF && objId !== 0x0000 && flags !== 0xFF) {
                 for (let j = i + 12; j < i + 64 && j < data.length; j++) {
                     if (data[j] === 0x2F) {
-                        console.log(`[SPIFFS] Pattern detected at offset 0x${i.toString(16)}: objId=0x${objId.toString(16)}, flags=0x${flags.toString(16)}`);
+                        this.logDebug(`[SPIFFS] Pattern detected at offset 0x${i.toString(16)}: objId=0x${objId.toString(16)}, flags=0x${flags.toString(16)}`);
                         foundPattern = true;
                         break;
                     }
@@ -1678,12 +1693,12 @@ class SpiffsParser {
         const pagesPerBlock = Math.floor(blockSize / pageSize);
         const fileSize = file.size >>> 0;
 
-        console.log(`[SPIFFS] ========== Reading file "${file.name}" ==========`);
-        console.log(`[SPIFFS] objId(header)=0x${file.objId.toString(16)}, size=${fileSize} bytes`);
-        console.log(`[SPIFFS] Header page: block=${file.blockIdx}, page=${file.pageIdx}`);
+        this.logDebug(`[SPIFFS] ========== Reading file "${file.name}" ==========`);
+        this.logDebug(`[SPIFFS] objId(header)=0x${file.objId.toString(16)}, size=${fileSize} bytes`);
+        this.logDebug(`[SPIFFS] Header page: block=${file.blockIdx}, page=${file.pageIdx}`);
 
         if (!fileSize) {
-            console.log(`[SPIFFS] File size is 0, returning empty array`);
+            this.logDebug(`[SPIFFS] File size is 0, returning empty array`);
             return new Uint8Array(0);
         }
 
@@ -1696,7 +1711,7 @@ class SpiffsParser {
 
         const spixToAddr = new Map();
         let pagesFound = 0;
-        console.log(`[SPIFFS] Scanning for data pages: target obj_id=0x${dataObjId.toString(16)}`);
+        this.logDebug(`[SPIFFS] Scanning for data pages: target obj_id=0x${dataObjId.toString(16)}`);
 
         for (let blk = 0; blk < totalBlocks; blk++) {
             const blockBase = offset + blk * blockSize;
@@ -1716,20 +1731,20 @@ class SpiffsParser {
                         spixToAddr.set(span, paddr);
                         pagesFound++;
                         if (pagesFound <= 8) {
-                            console.log(`[SPIFFS]   Data page: blk=${blk}, pg=${pg}, span_ix=${span}, paddr=0x${paddr.toString(16)}`);
+                            this.logDebug(`[SPIFFS]   Data page: blk=${blk}, pg=${pg}, span_ix=${span}, paddr=0x${paddr.toString(16)}`);
                         }
                     }
                 }
             }
         }
 
-        console.log(`[SPIFFS] Found ${pagesFound} data pages for obj_id=0x${dataObjId.toString(16)} (data_per_page=${dataPerPage})`);
+        this.logDebug(`[SPIFFS] Found ${pagesFound} data pages for obj_id=0x${dataObjId.toString(16)} (data_per_page=${dataPerPage})`);
         if (pagesFound === 0) {
             const headerOffset = offset + file.blockIdx * blockSize + file.pageIdx * pageSize;
             const naiveContent = headerOffset + pageSize;
             console.warn(`[SPIFFS] WARNING: No data pages found via scan. Falling back to next-page heuristic at 0x${naiveContent.toString(16)}`);
             const fileData = await this.buffer.slice_async(naiveContent, naiveContent + fileSize);
-            console.log(`[SPIFFS] Fallback read first 32 bytes: ${Array.from(fileData.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+            this.logDebug(`[SPIFFS] Fallback read first 32 bytes: ${Array.from(fileData.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
             return fileData;
         }
 
@@ -1757,13 +1772,13 @@ class SpiffsParser {
             curOff += lenToRead;
         }
 
-        console.log(`[SPIFFS] Read complete: ${out.length} bytes`);
+        this.logDebug(`[SPIFFS] Read complete: ${out.length} bytes`);
         if (logPreview.length) {
             for (const e of logPreview) {
-                console.log(`[SPIFFS]   Read spix=${e.spix} at 0x${e.paddr.toString(16)} len=${e.len}`);
+                this.logDebug(`[SPIFFS]   Read spix=${e.spix} at 0x${e.paddr.toString(16)} len=${e.len}`);
             }
         }
-        console.log(`[SPIFFS] First 32 bytes (hex): ${Array.from(out.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+        this.logDebug(`[SPIFFS] First 32 bytes (hex): ${Array.from(out.slice(0, 32)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
         return out;
     }
 }
@@ -1780,7 +1795,10 @@ class OTADataParser {
         this.offset = offset;
         this.length = length;
         this.otaInfo = null;
-        
+        this.logMessage = (msg) => { };
+        this.logDebug = (msg) => { };
+        this.logError = (msg) => { };
+
         // CRC32 lookup table for esp_rom_crc32_le
         this.crc32_le_table = new Uint32Array([
             0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f, 0xe963a535, 0x9e6495a3,
@@ -1818,12 +1836,12 @@ class OTADataParser {
             0xb3667a2e, 0xc4614ab8, 0x5d681b02, 0x2a6f2b94, 0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d
         ]);
     }
-    
+
 
     async initialize() {
         const OTA_DATA_SIZE = 0x1000;  // 4096 bytes (one sector)
         const data = await this.sparseImage.subarray_async(this.offset, this.offset + (OTA_DATA_SIZE * 2));
-        
+
         // ESP32 IDF uses two sectors to store information about which partition is running
         // They are defined as the OTA data partition, two esp_ota_select_entry_t structures
         // are saved in the two sectors, named otadata[0] (first sector) and otadata[1] (second sector)
@@ -1833,7 +1851,7 @@ class OTADataParser {
         // 
         // If both ota_seq != 0, it will choose max seq, and calculate (max_seq - 1) % max_ota_app_number
         // to determine which OTA partition to boot (subtype mask 0x0F)
-        
+
         // OTA image states
         const ESP_OTA_IMG_NEW = 0x0;
         const ESP_OTA_IMG_PENDING_VERIFY = 0x1;
@@ -1841,27 +1859,27 @@ class OTADataParser {
         const ESP_OTA_IMG_INVALID = 0x3;
         const ESP_OTA_IMG_ABORTED = 0x4;
         const ESP_OTA_IMG_UNDEFINED = 0xFFFFFFFF;
-        
+
         const entries = [];
         for (let i = 0; i < 2; i++) {
             const offset = i * OTA_DATA_SIZE;
             const view = new DataView(data.buffer, data.byteOffset + offset, OTA_DATA_SIZE);
-            
+
             const seq = view.getUint32(0, true);
             const otaState = view.getUint32(24, true);  // Read as uint32
             const crc = view.getUint32(28, true);
-            
+
             // CRC32 is calculated over first 4 bytes (sequence number) using esp_rom_crc32_le(UINT32_MAX, &ota_seq, 4)
             const dataForCRC = new Uint8Array(data.buffer, data.byteOffset + offset, 4);
             const calculatedCRC = this.calculateCRC32(dataForCRC);
             const crcValid = crc === calculatedCRC;
-            
+
             // Entry is invalid if: seq == 0xFFFFFFFF OR ota_state == INVALID OR ota_state == ABORTED
             const isInvalid = seq === 0xFFFFFFFF || otaState === ESP_OTA_IMG_INVALID || otaState === ESP_OTA_IMG_ABORTED;
-            
+
             // Entry is valid if: NOT invalid AND CRC matches
             const isValid = !isInvalid && crcValid;
-            
+
             entries.push({
                 index: i,
                 sequence: seq,
@@ -1928,6 +1946,9 @@ class NVSParser {
         this.buffer = SparseImage._createProxy(sparseImage);
         this.view = sparseImage.createDataView();
         this.pages = null;
+        this.logMessage = (msg) => { };
+        this.logDebug = (msg) => { };
+        this.logError = (msg) => { };
     }
 
     async initialize() {
@@ -2181,7 +2202,7 @@ class NVSParser {
         const namespaces = new Map();
         namespaces.set(0, '');
 
-        //console.log(`[NVS Parse] Starting NVS parse for partition at offset 0x${this.startOffset.toString(16)}, length 0x${this.size.toString(16)}`);
+        //this.logDebug(`[NVS Parse] Starting NVS parse for partition at offset 0x${this.startOffset.toString(16)}, length 0x${this.size.toString(16)}`);
 
         for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
             const blockOffset = this.startOffset + sectorOffset;
@@ -2200,7 +2221,7 @@ class NVSParser {
             let stateName = 'UNKNOWN';
             if (state === NVS_PAGE_STATE.UNINIT) {
                 stateName = 'UNINIT';
-                //console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: UNINIT, skipping`);
+                //this.logDebug(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: UNINIT, skipping`);
                 continue;
             } else if (state === NVS_PAGE_STATE.ACTIVE) {
                 stateName = 'ACTIVE';
@@ -2210,11 +2231,11 @@ class NVSParser {
                 stateName = 'FREEING';
             } else if (state === NVS_PAGE_STATE.CORRUPT) {
                 stateName = 'CORRUPT';
-                //console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: CORRUPT, skipping`);
+                //this.logDebug(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: CORRUPT, skipping`);
                 continue;
             }
 
-            //console.log(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: state=${stateName}, seq=${seq}, version=${version}`);
+            //this.logDebug(`[NVS Parse] Page at 0x${blockOffset.toString(16)}: state=${stateName}, seq=${seq}, version=${version}`);
 
             const page = {
                 offset: blockOffset,
@@ -2227,7 +2248,7 @@ class NVSParser {
 
             for (let entry = 0; entry < MAX_ENTRY_COUNT; entry++) {
                 const itemState = this.getNVSItemState(stateBitmap, entry);
-                //console.log(`[NVS Parse]   Entry ${entry}: state=${itemState} (0=ERASED, 2=WRITTEN, 3=EMPTY)`);
+                //this.logDebug(`[NVS Parse]   Entry ${entry}: state=${itemState} (0=ERASED, 2=WRITTEN, 3=EMPTY)`);
                 if (itemState !== 2) continue;
 
                 const entryOffset = blockOffset + 64 + entry * 32;
@@ -2237,7 +2258,7 @@ class NVSParser {
                 const datatype = await this.view.getUint8(entryOffset + 1);
                 const span = await this.view.getUint8(entryOffset + 2);
 
-                //console.log(`[NVS Parse]     nsIndex=${nsIndex}, datatype=0x${datatype.toString(16)}, span=${span}`);
+                //this.logDebug(`[NVS Parse]     nsIndex=${nsIndex}, datatype=0x${datatype.toString(16)}, span=${span}`);
 
                 if (span === 0 || span > 126) {
                     console.warn(`[NVS Parse]     Invalid span ${span} at offset ${entryOffset}, skipping`);
@@ -2247,7 +2268,7 @@ class NVSParser {
                 if (nsIndex === 0 && datatype !== 0xFF && datatype !== 0x00) {
                     const key = await this.readString(entryOffset + 8, 16);
                     const namespaceIndex = await this.view.getUint8(entryOffset + 24);
-                    //console.log(`[NVS Parse]     Namespace definition: "${key}" -> index ${namespaceIndex}`);
+                    //this.logDebug(`[NVS Parse]     Namespace definition: "${key}" -> index ${namespaceIndex}`);
                     if (key && namespaceIndex < 255) {
                         namespaces.set(namespaceIndex, key);
                     }
@@ -2255,21 +2276,21 @@ class NVSParser {
 
                 const item = await this.parseItem(entryOffset, namespaces);
                 if (item) {
-                    //console.log(`[NVS Parse]     Parsed item: nsIndex=${item.nsIndex}, key="${item.key}", type=${item.typeName}, value=${JSON.stringify(item.value)}`);
+                    //this.logDebug(`[NVS Parse]     Parsed item: nsIndex=${item.nsIndex}, key="${item.key}", type=${item.typeName}, value=${JSON.stringify(item.value)}`);
                     page.items.push(item);
                     if (item.span > 1) {
                         entry += item.span - 1;
                     }
                 } else {
-                    console.log(`[NVS Parse]     Item parsing returned null, skipping`);
+                    this.logDebug(`[NVS Parse]     Item parsing returned null, skipping`);
                 }
             }
 
             if (page.items.length > 0) {
-                //console.log(`[NVS Parse] Page added with ${page.items.length} items`);
+                //this.logDebug(`[NVS Parse] Page added with ${page.items.length} items`);
                 pages.push(page);
             } else {
-                //console.log(`[NVS Parse] Page has no items, not added`);
+                //this.logDebug(`[NVS Parse] Page has no items, not added`);
             }
         }
 
@@ -2281,7 +2302,7 @@ class NVSParser {
             }
         }
 
-        //console.log(`[NVS Parse] Parse complete: ${pages.length} pages, ${pages.reduce((sum, p) => sum + p.items.length, 0)} total items`);
+        //this.logDebug(`[NVS Parse] Parse complete: ${pages.length} pages, ${pages.reduce((sum, p) => sum + p.items.length, 0)} total items`);
         return pages;
     }
 
@@ -2381,7 +2402,7 @@ class NVSParser {
         while (usedIndices.has(newNsIndex) && newNsIndex < 255) newNsIndex++;
         if (newNsIndex >= 255) throw new Error('No available namespace indices (max 254 namespaces)');
 
-        console.log(`[NVS AddNamespace] Creating namespace "${namespaceName}" with index ${newNsIndex}`);
+        this.logDebug(`[NVS AddNamespace] Creating namespace "${namespaceName}" with index ${newNsIndex}`);
 
         const entry = new Uint8Array(32);
         entry[0] = 0;
@@ -2411,11 +2432,11 @@ class NVSParser {
                 const itemState = this.getNVSItemState(stateBitmap, entryIdx);
                 if (itemState === 3 || itemState === 0) {
                     const entryOffset = blockOffset + 64 + entryIdx * 32;
-                    console.log(`[NVS AddNamespace] Writing namespace definition at entry ${entryIdx}, offset 0x${entryOffset.toString(16)}`);
+                    this.logDebug(`[NVS AddNamespace] Writing namespace definition at entry ${entryIdx}, offset 0x${entryOffset.toString(16)}`);
                     this.sparseImage.write(entryOffset, entry);
                     this.setNVSItemState(stateBitmap, entryIdx, 2);
                     this.sparseImage.write(blockOffset + 32, stateBitmap);
-                    console.log(`[NVS AddNamespace] Successfully added namespace "${namespaceName}" with index ${newNsIndex}`);
+                    this.logDebug(`[NVS AddNamespace] Successfully added namespace "${namespaceName}" with index ${newNsIndex}`);
                     return;
                 }
             }
@@ -2433,18 +2454,18 @@ class NVSParser {
         const BLOB_TYPE = 0x42;
         const BLOB_INDEX_TYPE = 0x48;
 
-        console.log(`[NVS Delete] Starting delete for ${namespace}.${key}`);
-        
+        this.logDebug(`[NVS Delete] Starting delete for ${namespace}.${key}`);
+
         /* Build namespace map first */
         const namespaceMap = await this.buildNamespaceMap();
-        console.log(`[NVS Delete] Namespace map:`, namespaceMap);
-        
+        this.logDebug(`[NVS Delete] Namespace map:`, namespaceMap);
+
         const nsIndex = namespaceMap[namespace];
         if (nsIndex === undefined) {
-            console.log(`[NVS Delete] Namespace "${namespace}" not found in map`);
+            this.logDebug(`[NVS Delete] Namespace "${namespace}" not found in map`);
             throw new Error(`NVS namespace ${namespace} not found`);
         }
-        console.log(`[NVS Delete] Target namespace "${namespace}" has index ${nsIndex}`);
+        this.logDebug(`[NVS Delete] Target namespace "${namespace}" has index ${nsIndex}`);
 
         let foundItemType = null;
 
@@ -2456,11 +2477,11 @@ class NVSParser {
 
             const stateName =
                 state === 0xFFFFFFFF ? 'UNINIT' :
-                state === 0xFFFFFFFE ? 'ACTIVE' :
-                state === 0xFFFFFFFC ? 'FULL' :
-                state === 0xFFFFFFF8 ? 'FREEING' :
-                state === 0xFFFFFFF0 ? 'CORRUPT' : `UNKNOWN(0x${state.toString(16)})`;
-            console.log(`[NVS Delete] Scanning page at 0x${blockOffset.toString(16)} state=${stateName}`);
+                    state === 0xFFFFFFFE ? 'ACTIVE' :
+                        state === 0xFFFFFFFC ? 'FULL' :
+                            state === 0xFFFFFFF8 ? 'FREEING' :
+                                state === 0xFFFFFFF0 ? 'CORRUPT' : `UNKNOWN(0x${state.toString(16)})`;
+            this.logDebug(`[NVS Delete] Scanning page at 0x${blockOffset.toString(16)} state=${stateName}`);
 
             const stateBitmap = new Uint8Array(32);
             for (let i = 0; i < 32; i++) stateBitmap[i] = await this.view.getUint8(blockOffset + 32 + i);
@@ -2477,7 +2498,7 @@ class NVSParser {
                 const span = await this.view.getUint8(entryOffset + 2);
                 const itemKey = await this.readString(entryOffset + 8, 16);
 
-                console.log(`[NVS Delete]   Entry ${entry}: ns=${itemNsIndex}, type=0x${datatype.toString(16)}, span=${span}, key="${itemKey}"`);
+                this.logDebug(`[NVS Delete]   Entry ${entry}: ns=${itemNsIndex}, type=0x${datatype.toString(16)}, span=${span}, key="${itemKey}"`);
 
                 /* Skip namespace definitions */
                 if (itemNsIndex === 0) {
@@ -2487,7 +2508,7 @@ class NVSParser {
 
                 if (itemNsIndex === nsIndex && itemKey === key) {
                     foundItemType = datatype;
-                    console.log(`[NVS Delete]   Found target item at entry ${entry}, offset 0x${entryOffset.toString(16)}, span=${span}. Erasing...`);
+                    this.logDebug(`[NVS Delete]   Found target item at entry ${entry}, offset 0x${entryOffset.toString(16)}, span=${span}. Erasing...`);
                     for (let slice = 0; slice < span; slice++) {
                         const sliceOffset = entryOffset + slice * 32;
                         const erasedEntry = new Uint8Array(32);
@@ -2496,7 +2517,7 @@ class NVSParser {
                         this.setNVSItemState(stateBitmap, entry + slice, 3);
                     }
                     this.sparseImage.write(blockOffset + 32, stateBitmap);
-                    console.log(`[NVS Delete]   Erase complete and state bitmap updated for page at 0x${blockOffset.toString(16)}`);
+                    this.logDebug(`[NVS Delete]   Erase complete and state bitmap updated for page at 0x${blockOffset.toString(16)}`);
                     break;
                 }
 
@@ -2507,7 +2528,7 @@ class NVSParser {
         }
 
         if (foundItemType === null) {
-            console.log(`[NVS Delete] Item ${namespace}.${key} not found (nsIndex=${nsIndex})`);
+            this.logDebug(`[NVS Delete] Item ${namespace}.${key} not found (nsIndex=${nsIndex})`);
             throw new Error(`NVS item ${namespace}.${key} not found`);
         }
 
@@ -2515,7 +2536,7 @@ class NVSParser {
         /* If deleting a BlobIndex (0x48), also delete the Blob chunks (0x42) */
         if (foundItemType === BLOB_TYPE || foundItemType === BLOB_INDEX_TYPE) {
             const complementaryType = (foundItemType === BLOB_TYPE) ? BLOB_INDEX_TYPE : BLOB_TYPE;
-            console.log(`[NVS Delete] Item is a Blob${foundItemType === BLOB_TYPE ? 'Index' : ''}, searching for complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry...`);
+            this.logDebug(`[NVS Delete] Item is a Blob${foundItemType === BLOB_TYPE ? 'Index' : ''}, searching for complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry...`);
 
             for (let sectorOffset = 0; sectorOffset < this.size; sectorOffset += NVS_SECTOR_SIZE) {
                 const blockOffset = this.startOffset + sectorOffset;
@@ -2544,7 +2565,7 @@ class NVSParser {
                         continue;
                     }
 
-                    console.log(`[NVS Delete]   Found complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry at entry ${entry}, offset 0x${entryOffset.toString(16)}, span=${span}. Erasing...`);
+                    this.logDebug(`[NVS Delete]   Found complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry at entry ${entry}, offset 0x${entryOffset.toString(16)}, span=${span}. Erasing...`);
                     for (let slice = 0; slice < span; slice++) {
                         const sliceOffset = entryOffset + slice * 32;
                         const erasedEntry = new Uint8Array(32);
@@ -2553,12 +2574,12 @@ class NVSParser {
                         this.setNVSItemState(stateBitmap, entry + slice, 3);
                     }
                     this.sparseImage.write(blockOffset + 32, stateBitmap);
-                    console.log(`[NVS Delete]   Complementary entry erase complete`);
+                    this.logDebug(`[NVS Delete]   Complementary entry erase complete`);
                     return;
                 }
             }
 
-            console.log(`[NVS Delete] No complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry found for ${namespace}.${key}`);
+            this.logDebug(`[NVS Delete] No complementary ${complementaryType === BLOB_TYPE ? 'Blob' : 'BlobIndex'} entry found for ${namespace}.${key}`);
         }
     }
 
@@ -2610,7 +2631,7 @@ class NVSParser {
 
                     if (hasSpace) {
                         const entryOffset = blockOffset + 64 + entry * 32;
-                        
+
                         /* Set nsIndex for all entries and calculate header CRC */
                         for (let i = 0; i < item.entries.length; i++) {
                             if (item.entries[i][0] === 0) {
@@ -2620,7 +2641,7 @@ class NVSParser {
                             }
                         }
 
-                        console.log(`[NVS Add] Writing item at entry ${entry}, nsIndex=${nsIndex}, key="${key}", span=${item.span}, entries=${item.entries.length}`);
+                        this.logDebug(`[NVS Add] Writing item at entry ${entry}, nsIndex=${nsIndex}, key="${key}", span=${item.span}, entries=${item.entries.length}`);
 
                         for (let slice = 0; slice < item.entries.length; slice++) {
                             const sliceOffset = entryOffset + slice * 32;
@@ -2629,7 +2650,7 @@ class NVSParser {
                         }
 
                         this.sparseImage.write(blockOffset + 32, stateBitmap);
-                        console.log(`[NVS Add] Successfully added item to partition`);
+                        this.logDebug(`[NVS Add] Successfully added item to partition`);
                         return;
                     }
 
@@ -2756,7 +2777,7 @@ class NVSParser {
                 if (hexBytes.some(b => isNaN(b) || b < 0 || b > 255)) throw new Error('Invalid hex bytes');
                 if (hexBytes.length > 32) throw new Error('BlobSmall too long (max 32 bytes)');
                 const blobData = new Uint8Array(hexBytes);
-                
+
                 /* Small blob: single entry without blob index */
                 new DataView(entry.buffer).setUint16(24, blobData.length, true);
                 /* Reserved bytes (26-27) must stay 0xFF to match firmware */
@@ -2781,7 +2802,7 @@ class NVSParser {
                 if (hexBytes.some(b => isNaN(b) || b < 0 || b > 255)) throw new Error('Invalid hex bytes');
                 if (hexBytes.length > 1984) throw new Error('Blob too long (max 1984 bytes)');
                 const blobData = new Uint8Array(hexBytes);
-                
+
                 {
                     /* Large blob: write blob chunks first, then blob index (firmware order) */
                     const indexEntry = new Uint8Array(32);
@@ -2794,19 +2815,19 @@ class NVSParser {
                     indexEntry.set(keyBytes, 8);
                     indexEntry[8 + keyBytes.length] = 0;
                     new DataView(indexEntry.buffer).setUint32(24, blobData.length, true); /* totalSize */
-                    
+
                     /* Calculate number of chunks needed */
                     const maxChunkSize = 32 + 31 * 32; /* first entry has 32 bytes, each additional can hold 32 bytes */
                     const chunkCount = Math.ceil(blobData.length / maxChunkSize);
                     indexEntry[28] = chunkCount; /* chunkCount */
                     indexEntry[29] = 0; /* chunkStart */
-                    
+
                     /* Create chunk entries first */
                     let offset = 0;
                     for (let chunkIdx = 0; chunkIdx < chunkCount; chunkIdx++) {
                         const chunkSize = Math.min(maxChunkSize, blobData.length - offset);
                         const chunkData = blobData.slice(offset, offset + chunkSize);
-                        
+
                         const chunkEntry = new Uint8Array(32);
                         chunkEntry.fill(0x00);
                         chunkEntry[0] = 0; /* nsIndex will be set later */
@@ -2822,16 +2843,16 @@ class NVSParser {
                         chunkEntry[27] = 0xFF;
                         const chunkCrc = NVSParser.crc32(chunkData);
                         new DataView(chunkEntry.buffer).setUint32(28, chunkCrc, true);
-                        
+
                         entries.push(chunkEntry);
-                        
+
                         const chunkDataEntry = new Uint8Array(32 * (chunkSpan - 1));
                         chunkDataEntry.fill(0xFF);
                         chunkDataEntry.set(chunkData, 0);
                         for (let i = 0; i < chunkSpan - 1; i++) {
                             entries.push(chunkDataEntry.slice(i * 32, (i + 1) * 32));
                         }
-                        
+
                         offset += chunkSize;
                     }
 
@@ -2844,7 +2865,7 @@ class NVSParser {
 
         /* Calculate total span (sum of all entry spans, but entries array contains all 32-byte blocks) */
         const totalSpan = entries.length;
-        
+
         const headerCrc = NVSParser.crc32Header(entries[0]);
         new DataView(entries[0].buffer).setUint32(4, headerCrc, true);
 
@@ -2968,46 +2989,275 @@ class SparseImageDataView {
 }
 
 class ESP32Parser {
-    constructor(input, readDataCallback = null, writeDataCallback = null, sizeHint = null) {
-        // Cases:
-        // 1) input is SparseImage
-        // 2) input is Uint8Array/ArrayBuffer (eager data)
-        // 3) input is number (size) with readDataCallback (and optional writeDataCallback)
-        // 4) input is null/undefined but readDataCallback provided with sizeHint
+    constructor(input, options = {}) {
+        /* Options structure:
+         * {
+         *   readDataCallback: async function(addr, len) -> { address, data }
+         *   writeDataCallback: async function(addr, data) -> void
+         *   sizeHint: number (for lazy-loading without explicit size)
+         *   preReadCommandCbr: function(addr, len) -> void
+         *   postReadCommandCbr: function(addr, len) -> void
+         *   preReadBlockCbr: function() -> void
+         *   readBlockCbr: function(bytesRead, totalBytes) -> void
+         *   postReadBlockCbr: function() -> void
+         *   preWriteCommandCbr: function(addr, len) -> void
+         *   postWriteCommandCbr: function(addr, len) -> void
+         *   writeBlockCbr: function(offset, total, status) -> void
+         *   preFlushPrepareCbr: function(sparseImage) -> void
+         *   postFlushPrepareCbr: function(sparseImage) -> void
+         * }
+         */
 
-        if (input instanceof SparseImage) {
+        /* Store callback references for use in async handlers */
+        this.callbacks = {
+            preReadCommandCbr: options.preReadCommandCbr,
+            postReadCommandCbr: options.postReadCommandCbr,
+            preReadBlockCbr: options.preReadBlockCbr,
+            readBlockCbr: options.readBlockCbr,
+            postReadBlockCbr: options.postReadBlockCbr,
+            preWriteCommandCbr: options.preWriteCommandCbr,
+            postWriteCommandCbr: options.postWriteCommandCbr,
+            writeBlockCbr: options.writeBlockCbr,
+            preFlushPrepareCbr: options.preFlushPrepareCbr,
+            postFlushPrepareCbr: options.postFlushPrepareCbr
+        };
+
+        this.logMessage = options.logMessage || ((msg) => { });
+        this.logDebug = options.logDebug || ((msg) => { });
+        this.logWarning = options.logWarning || ((msg) => { });
+        this.logError = options.logError || ((msg) => { });
+
+        // Cases:
+        // 1) input is ESPFlasher - use it directly as this.flasher
+        // 2) input is SparseImage
+        // 3) input is Uint8Array/ArrayBuffer (eager data)
+        // 4) input is number (size) with readDataCallback (and optional writeDataCallback)
+        // 5) input is null/undefined but readDataCallback provided with sizeHint
+
+        this.flasher = null;
+
+        if (input instanceof ESPFlasher) {
+            /* ESPFlasher device path */
+            this.flasher = input;
+            this.sparseImage = new SparseImage(
+                options.sizeHint ?? 0,
+                this._onSparseImageRead.bind(this),
+                this._onSparseImageWrite.bind(this),
+                this._onSparseImageFlushPrepare.bind(this)
+            );
+        } else if (input instanceof SparseImage) {
+            /* SparseImage provided directly */
             this.sparseImage = input;
-            this.buffer = SparseImage._createProxy(input);
-            this.view = input.createDataView();
         } else if (input instanceof Uint8Array || input instanceof ArrayBuffer) {
-            // Eager buffer path, backward compatible
-            const si = SparseImage.fromBuffer(input);
-            this.sparseImage = si;
-            this.buffer = SparseImage._createProxy(si);
-            this.view = si.createDataView();
+            /* Eager buffer path, backward compatible */
+            this.sparseImage = SparseImage.fromBuffer(input);
         } else if (typeof input === 'number') {
-            // Size provided directly
-            const size = input;
-            const si = new SparseImage(size, readDataCallback, writeDataCallback);
-            this.sparseImage = si;
-            this.buffer = SparseImage._createProxy(si);
-            this.view = si.createDataView();
-        } else if ((input === null || input === undefined) && readDataCallback) {
-            // Lazy-only path needs a size hint
-            const size = sizeHint ?? 0;
-            const si = new SparseImage(size, readDataCallback, writeDataCallback);
-            this.sparseImage = si;
-            this.buffer = SparseImage._createProxy(si);
-            this.view = si.createDataView();
+            /* Size provided directly */
+            this.sparseImage = new SparseImage(input, options.readDataCallback, options.writeDataCallback);
+        } else if ((input === null || input === undefined) && options.readDataCallback) {
+            /* Lazy-only path needs a size hint */
+            this.sparseImage = new SparseImage(options.sizeHint ?? 0, options.readDataCallback, options.writeDataCallback);
         } else {
-            throw new Error('Invalid constructor arguments for ESP32Parser. Provide Uint8Array/ArrayBuffer, SparseImage, or size with readDataCallback.');
+            throw new Error('Invalid constructor arguments for ESP32Parser. Provide ESPFlasher, Uint8Array/ArrayBuffer, SparseImage, or size with readDataCallback.');
         }
 
+        this.buffer = SparseImage._createProxy(this.sparseImage);
+        this.view = this.sparseImage.createDataView();
         this.partitions = [];
         this.nvsData = [];
+        this.logMessage = (msg) => { };
+        this.logDebug = (msg) => { };
+        this.logError = (msg) => { };
     }
 
-    // Helper functions
+    /**
+     * SparseImage read callback for ESPFlasher device
+     * Reads flash data from the device, respecting alignment and size constraints
+     */
+    async _onSparseImageRead(readAddr, readLen) {
+        const addr = readAddr & ~0x0FFF;
+        const maxChunk = 0x00800000;
+        const desired = Math.min(readLen, maxChunk);
+        let len = (desired + 0x1000) & ~0x0FFF;
+
+        this.callbacks.preReadCommandCbr && this.callbacks.preReadCommandCbr(addr, len);
+
+        const totalSize = this.sparseImage.size;
+        /* Ensure we don't read beyond configured flash size */
+        if (addr >= totalSize) {
+            throw new Error(`Read address 0x${addr.toString(16)} exceeds flash size 0x${totalSize.toString(16)}`);
+        }
+        len = Math.min(len, totalSize - addr);
+        if (len <= 0) {
+            throw new Error(`Invalid read length at address 0x${addr.toString(16)}`);
+        }
+
+        try {
+            this.callbacks.preReadBlockCbr && this.callbacks.preReadBlockCbr();
+            const ret = await this.flasher.readFlashPlain(addr, len, (bytesRead, totalBytes) => {
+                this.callbacks.readBlockCbr && this.callbacks.readBlockCbr(addr, len, bytesRead, totalBytes);
+            });
+            this.callbacks.postReadBlockCbr && this.callbacks.postReadBlockCbr();
+            const chunk = { address: addr, data: ret };
+            this.callbacks.postReadCommandCbr && this.callbacks.postReadCommandCbr(addr, len);
+            return chunk;
+        } catch (readError) {
+            this.logError('Device read error:', readError);
+            throw readError;
+        }
+    }
+
+    /**
+     * SparseImage write callback for ESPFlasher device
+     * Writes flash data to the device with alignment validation
+     */
+    async _onSparseImageWrite(writeAddr, writeData) {
+        this.callbacks.preWriteCommandCbr && this.callbacks.preWriteCommandCbr(writeAddr, writeData.length);
+
+        /* Write callback for flushing changes to device */
+        if (writeAddr % 0x1000 !== 0) {
+            throw new Error(`Write address 0x${writeAddr.toString(16)} is not aligned to 0x1000 bytes`);
+        }
+        if (writeData.length % 0x1000 !== 0) {
+            throw new Error(`Write data length ${writeData.length} is not aligned to 0x1000 bytes`);
+        }
+        try {
+            await this.flasher.writeFlash(writeAddr, writeData, (offset, total, status) => {
+                this.callbacks.writeBlockCbr && this.callbacks.writeBlockCbr(writeAddr, writeData, offset, total, status);
+            });
+        } catch (writeError) {
+            this.logError('Device write error:', writeError);
+            throw writeError;
+        }
+        this.callbacks.postWriteCommandCbr && this.callbacks.postWriteCommandCbr(writeAddr, writeData.length);
+    }
+
+    /**
+     * SparseImage flush prepare callback for ESPFlasher device
+     * Consolidates write buffer into 4KB-aligned blocks
+     */
+    async _onSparseImageFlushPrepare(sparseImage) {
+        this.callbacks.preFlushPrepareCbr && this.callbacks.preFlushPrepareCbr();
+
+        /* Flush prepare callback: combine cached and write data into 0x1000-byte blocks */
+        this.logDebug('Flush prepare: consolidating write buffer into 4KB-aligned blocks');
+
+        if (sparseImage.writeBuffer.length === 0) return;
+
+        /* Get the range we need to cover */
+        let minAddr = Infinity;
+        let maxAddr = 0;
+
+        for (const seg of sparseImage.writeBuffer) {
+            minAddr = Math.min(minAddr, seg.address);
+            maxAddr = Math.max(maxAddr, seg.address + seg.data.length);
+        }
+
+        if (minAddr === Infinity) return; /* Nothing to do */
+
+        /* Align to 0x1000 byte boundaries */
+        const blockStart = minAddr & ~0x0FFF;
+        const blockEnd = (maxAddr + 0x0FFF) & ~0x0FFF;
+
+        this.logDebug(`Prepare: processing range 0x${blockStart.toString(16)} - 0x${blockEnd.toString(16)}`);
+
+        /* Build aligned blocks: prefer writeBuffer-only materialization; otherwise read via sparse image */
+        const blockMap = new Map(); /* blockAddr -> blockData */
+
+        for (let blockAddr = blockStart; blockAddr < blockEnd; blockAddr += 0x1000) {
+            const blockEndAddr = blockAddr + 0x1000;
+
+            const overlaps = [];
+            for (const seg of sparseImage.writeBuffer) {
+                const segStart = seg.address;
+                const segEnd = seg.address + seg.data.length;
+                const overlapStart = Math.max(blockAddr, segStart);
+                const overlapEnd = Math.min(blockEndAddr, segEnd);
+                if (overlapStart < overlapEnd) {
+                    overlaps.push({ start: overlapStart, end: overlapEnd, seg });
+                }
+            }
+
+            /* Skip blocks with no write data at all */
+            if (overlaps.length === 0) {
+                continue;
+            }
+
+            overlaps.sort((a, b) => a.start - b.start);
+
+            let coveredCursor = blockAddr;
+            for (const ov of overlaps) {
+                if (ov.start > coveredCursor) {
+                    break;
+                }
+                if (ov.end > coveredCursor) {
+                    coveredCursor = ov.end;
+                }
+                if (coveredCursor >= blockEndAddr) {
+                    break;
+                }
+            }
+
+            const fullyCovered = coveredCursor >= blockEndAddr;
+            let blockData;
+
+            if (fullyCovered) {
+                blockData = new Uint8Array(0x1000);
+                blockData.fill(0xFF);
+                for (const ov of overlaps) {
+                    const srcOff = ov.start - ov.seg.address;
+                    const dstOff = ov.start - blockAddr;
+                    const len = ov.end - ov.start;
+                    blockData.set(ov.seg.data.slice(srcOff, srcOff + len), dstOff);
+                }
+            } else {
+                blockData = await sparseImage.slice_async(blockAddr, blockEndAddr);
+            }
+
+            blockMap.set(blockAddr, blockData);
+        }
+
+        /* Merge touching/consecutive blocks */
+        const mergedBlocks = [];
+        const blockAddrs = Array.from(blockMap.keys()).sort((a, b) => a - b);
+
+        let currentStart = null;
+        let currentData = null;
+
+        for (const blockAddr of blockAddrs) {
+            if (currentStart === null) {
+                /* Start new merged block */
+                currentStart = blockAddr;
+                currentData = new Uint8Array(blockMap.get(blockAddr));
+            } else if (currentStart + currentData.length === blockAddr) {
+                /* Consecutive block: merge it */
+                const mergedData = new Uint8Array(currentData.length + 0x1000);
+                mergedData.set(currentData, 0);
+                mergedData.set(blockMap.get(blockAddr), currentData.length);
+                currentData = mergedData;
+            } else {
+                /* Gap detected: save current merged block and start new one */
+                mergedBlocks.push({ address: currentStart, data: currentData });
+                this.logDebug(`  Merged block at 0x${currentStart.toString(16)}, size: ${currentData.length} bytes`);
+                currentStart = blockAddr;
+                currentData = new Uint8Array(blockMap.get(blockAddr));
+            }
+        }
+
+        /* Add final merged block */
+        if (currentStart !== null) {
+            mergedBlocks.push({ address: currentStart, data: currentData });
+            this.logDebug(`  Merged block at 0x${currentStart.toString(16)}, size: ${currentData.length} bytes`);
+        }
+
+        /* Replace write buffer with merged blocks */
+        sparseImage.writeBuffer = mergedBlocks;
+
+        this.logDebug(`Flush prepare complete: ${mergedBlocks.length} blocks aligned and ready`);
+
+        this.callbacks.postFlushPrepareCbr && this.callbacks.postFlushPrepareCbr();
+    }
+
     static bytesToHex(bytes, separator = '') {
         return Array.from(bytes)
             .map(b => b.toString(16).padStart(2, '0').toUpperCase())
@@ -3067,44 +3317,44 @@ class ESP32Parser {
         /* Headers are NOT included in checksum (but are included in SHA256) */
         let currentOffset = imageOffset + 24;
         let checksum = 0xEF;
-        
+
         const MAX_CHUNK_SIZE = 1024 * 1024; // 1 MB chunks to avoid allocation failures
         const maxOffset = imageLength !== null ? imageOffset + imageLength : this.sparseImage.size;
-        
+
         for (let i = 0; i < segmentCount; i++) {
             // Check if we've hit erased flash (segment header would be 0xFFFFFFFF)
             const segLoadAddr = await this.view.getUint32(currentOffset, true);
             const segLength = await this.view.getUint32(currentOffset + 4, true);
-            
+
             // Detect erased/invalid flash: length 0xFFFFFFFF or unreasonably large
             if (segLength === 0xFFFFFFFF || segLength > 0x1000000) {
                 throw new Error(`Segment ${i} has invalid length (0x${segLength.toString(16)}) - image may be corrupted or truncated`);
             }
-            
+
             currentOffset += 8; // Skip segment header (not included in checksum)
-            
+
             // Validate segment is within partition/flash bounds
             if (currentOffset + segLength > maxOffset) {
                 throw new Error(`Segment ${i} extends beyond image bounds (offset: 0x${currentOffset.toString(16)}, length: ${segLength}, max: 0x${maxOffset.toString(16)})`);
             }
-            
+
             // Process segment in chunks to avoid memory allocation failures
             let segmentOffset = currentOffset;
             let remaining = segLength;
-            
+
             while (remaining > 0) {
                 const chunkSize = Math.min(remaining, MAX_CHUNK_SIZE);
                 const segmentChunk = await this.sparseImage.slice_async(segmentOffset, segmentOffset + chunkSize);
-                
+
                 // XOR all bytes of this chunk
                 for (let j = 0; j < segmentChunk.length; j++) {
                     checksum ^= segmentChunk[j];
                 }
-                
+
                 segmentOffset += chunkSize;
                 remaining -= chunkSize;
             }
-            
+
             currentOffset += segLength;
         }
 
@@ -3154,18 +3404,18 @@ class ESP32Parser {
         /* Hash region is from image start to checksum offset (inclusive) */
         const hashRegionEnd = currentOffset + 1;
         const hashRegionLength = hashRegionEnd - imageOffset;
-        
+
         /* Process in chunks to avoid allocation failures on large images */
         const MAX_CHUNK = 1024 * 1024; // 1 MB
         let hashRegionData;
-        
+
         if (hashRegionLength <= MAX_CHUNK) {
             hashRegionData = await this.sparseImage.slice_async(imageOffset, hashRegionEnd);
         } else {
             hashRegionData = new Uint8Array(hashRegionLength);
             let offset = 0;
             let remaining = hashRegionLength;
-            
+
             while (remaining > 0) {
                 const chunkSize = Math.min(remaining, MAX_CHUNK);
                 const chunk = await this.sparseImage.slice_async(
@@ -3184,7 +3434,7 @@ class ESP32Parser {
 
         /* SHA256 is stored 32 bytes after the checksum */
         const sha256StorageOffset = currentOffset + 1;
-        
+
         /* Read the stored SHA256 to compare */
         let storedSha256Hex = '';
         if (sha256StorageOffset + 32 <= this.sparseImage.size) {
@@ -3344,7 +3594,7 @@ class ESP32Parser {
             if (!fixType || fixType === 'ota') {
                 try {
                     let otaPartition = null;
-                    
+
                     /* If OTA offset/length provided, use them directly */
                     if (otaOffset !== null && otaLength !== null) {
                         otaPartition = {
@@ -3359,7 +3609,7 @@ class ESP32Parser {
                             otaPartition = this.partitions[validationResult.bootOtaPartitionIndex];
                         }
                     }
-                    
+
                     if (otaPartition) {
                         const otaImage = await this.parseImage(otaPartition.offset, otaPartition.length);
                         if (otaImage && otaImage.magic === 0xE9 && !otaImage.error) {
@@ -3370,14 +3620,14 @@ class ESP32Parser {
                             let newChecksum = checksumInfo.checksum;
                             let oldSHA256 = null;
                             let newSHA256 = null;
-                            
+
                             if (checksumInfo.checksum !== otaImage.checksum) {
                                 const checksumByte = new Uint8Array(1);
                                 checksumByte[0] = checksumInfo.checksum;
                                 this.sparseImage.write(checksumInfo.checksumOffsetAbsolute, checksumByte);
                                 checksumFixed = true;
                             }
-                            
+
                             /* Fix SHA256 if appended */
                             try {
                                 const sha256Info = await this.calculateAndFixImageSHA256(otaPartition.offset);
@@ -3391,7 +3641,7 @@ class ESP32Parser {
                             } catch (sha256Error) {
                                 /* Non-critical: continue even if SHA256 fixing fails */
                             }
-                            
+
                             if (checksumFixed || sha256Fixed) {
                                 results.otaApp = {
                                     partition: otaPartition.label,
@@ -3498,8 +3748,8 @@ class ESP32Parser {
         let bestCandidate = null;
         let bestPartitionCount = 0;
 
-        //console.log(`Detecting partition table offset starting from 0x${start.toString(16)}`);
-        //console.log(`Buffer length: 0x${len.toString(16)}, search limit: 0x${searchLimit.toString(16)}`);
+        //this.logDebug(`Detecting partition table offset starting from 0x${start.toString(16)}`);
+        //this.logDebug(`Buffer length: 0x${len.toString(16)}, search limit: 0x${searchLimit.toString(16)}`);
 
         while (!bestCandidate && ptr < searchLimit) {
             // Skip 0xFF bytes and check for 4K boundary alignment
@@ -3508,7 +3758,7 @@ class ESP32Parser {
                 const validCount = await this.validatePartitionTable(ptr);
 
                 if (validCount > 0) {
-                    //console.log(`Found valid partition table at 0x${ptr.toString(16)} with ${validCount} entries`);
+                    //this.logDebug(`Found valid partition table at 0x${ptr.toString(16)} with ${validCount} entries`);
 
                     // Keep track of best candidate (most partitions)
                     if (validCount > bestPartitionCount) {
@@ -3522,11 +3772,11 @@ class ESP32Parser {
 
         if (bestCandidate !== null) {
             this.partitionTableOffset = bestCandidate;
-            //console.log(`Selected partition table offset at 0x${bestCandidate.toString(16)} with ${bestPartitionCount} entries`);
+            //this.logDebug(`Selected partition table offset at 0x${bestCandidate.toString(16)} with ${bestPartitionCount} entries`);
             return bestCandidate;
         }
 
-        //console.log(`No partition table detected`);
+        //this.logDebug(`No partition table detected`);
         return null;
     }
 
@@ -3914,7 +4164,7 @@ class ESP32Parser {
         }
 
         try {
-            //console.log(`Image SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
+            //this.logDebug(`Image SHA256 region: start=0x${image.sha256DataStart.toString(16)}, end=0x${image.sha256DataEnd.toString(16)}, length=${image.sha256DataEnd - image.sha256DataStart}`);
             const dataToHash = await this.sparseImage.slice_async(image.sha256DataStart, image.sha256DataEnd);
             const calculatedHash = await ESP32Parser.calculateSHA256(dataToHash);
             const calculatedHashHex = ESP32Parser.bytesToHex(calculatedHash);
@@ -3940,6 +4190,9 @@ class ESP32Parser {
             throw new Error('ESP32Parser has no SparseImage');
         }
         const parser = new FATParser(this.sparseImage, partition.offset, partition.length);
+        parser.logMessage = this.logMessage.bind(this);
+        parser.logDebug = this.logDebug.bind(this);
+        parser.logError = this.logError.bind(this);
         await parser.initialize();
         return parser;
     }
@@ -3951,9 +4204,12 @@ class ESP32Parser {
         if (!this.sparseImage) {
             throw new Error('ESP32Parser has no SparseImage');
         }
-        const spiffsParser = new SpiffsParser(this.sparseImage, partition.offset, partition.length);
-        await spiffsParser.initialize();
-        return spiffsParser;
+        const parser = new SpiffsParser(this.sparseImage, partition.offset, partition.length);
+        parser.logMessage = this.logMessage.bind(this);
+        parser.logDebug = this.logDebug.bind(this);
+        parser.logError = this.logError.bind(this);
+        await parser.initialize();
+        return parser;
     }
 
     // Parse NVS (Non-Volatile Storage) — returns NVSParser instance
@@ -3961,9 +4217,12 @@ class ESP32Parser {
         if (!this.sparseImage) {
             throw new Error('ESP32Parser has no SparseImage');
         }
-        const nvsParser = new NVSParser(this.sparseImage, partition.offset, partition.length);
-        await nvsParser.initialize();
-        return nvsParser;
+        const parser = new NVSParser(this.sparseImage, partition.offset, partition.length);
+        parser.logMessage = this.logMessage.bind(this);
+        parser.logDebug = this.logDebug.bind(this);
+        parser.logError = this.logError.bind(this);
+        await parser.initialize();
+        return parser;
     }
 
     // Parse OTA data partition — delegated to OTADataParser class
@@ -3971,9 +4230,12 @@ class ESP32Parser {
         if (!this.sparseImage) {
             throw new Error('ESP32Parser has no SparseImage');
         }
-        const otaDataParser = new OTADataParser(this.sparseImage, partition.offset, partition.length);
-        await otaDataParser.initialize();
-        return otaDataParser;
+        const parser = new OTADataParser(this.sparseImage, partition.offset, partition.length);
+        parser.logMessage = this.logMessage.bind(this);
+        parser.logDebug = this.logDebug.bind(this);
+        parser.logError = this.logError.bind(this);
+        await parser.initialize();
+        return parser;
     }
 
     // Get partition by label
@@ -4090,7 +4352,7 @@ class ESP32Parser {
                             /* No appended hash; treat valid magic as acceptable */
                             result.bootPartitionValid = true;
                         }
-                        
+
                         /* Extract app description if available */
                         if (img && img.appDesc && img.appDesc.found) {
                             result.appProjectName = img.appDesc.projectName || null;
