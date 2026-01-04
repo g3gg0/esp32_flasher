@@ -4370,11 +4370,11 @@ class ESP32Parser {
         let nvsValid = false;
         if (nvsPart) {
             try {
-                const pages = await this.parseNVS(nvsPart);
-                if (Array.isArray(pages) && pages.length > 0) {
+                const nvs = await this.parseNVS(nvsPart);
+                if (nvs && Array.isArray(nvs.pages) && nvs.pages.length > 0) {
                     /* Count valid items (not just pages) */
                     let itemCount = 0;
-                    for (const page of pages) {
+                    for (const page of nvs.pages) {
                         if (page.items && Array.isArray(page.items)) {
                             itemCount += page.items.length;
                         }
@@ -4390,8 +4390,8 @@ class ESP32Parser {
         const partitionsFound = Array.isArray(this.partitions) && this.partitions.length > 0;
         result.success = !!(result.bootloader && partitionsFound);
 
-        /* All valid if: bootloader parsed, partition table found, otadata OK with all CRCs valid, and boot partition valid */
-        result.allValid = !!(result.bootloader && partitionsFound && result.otadata && allOtaCrcsValid && result.bootPartitionValid);
+        /* All valid if: bootloader parsed, partition table found, otadata OK with all CRCs valid, nvs valid and boot partition valid */
+        result.allValid = !!(result.bootloader && partitionsFound && result.otadata && allOtaCrcsValid && result.bootPartitionValid && nvsValid);
 
         /* Attach optional details for callers that need them */
         result.partitionTableOffset = ptOffset ?? null;
