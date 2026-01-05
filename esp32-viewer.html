@@ -2659,9 +2659,9 @@
 
         async function parseAndDisplay(focusBootloader = false) {
             // Parse bootloader first to detect partition table offset
-            bootloaderInfo = await parseBootloader(0x1000);
+            bootloaderInfo = await parseBootloader(0x0000);
             if (!bootloaderInfo || bootloaderInfo.error) {
-                bootloaderInfo = await parseBootloader(0x0000);
+                bootloaderInfo = await parseBootloader(0x1000);
             }
             console.log("Bootloader parsed:", bootloaderInfo);
 

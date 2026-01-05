@@ -3313,9 +3313,20 @@ class ESP32Parser {
 
         const segmentCount = await this.view.getUint8(imageOffset + 1);
 
+        /* Auto-detect header format */
+        const validESP32ChipIds = [0x0000, 0x0002, 0x0005, 0x0009, 0x000C, 0x000D, 0x0010, 0x0012, 0x0013, 0x0017];
+        let headerSize = 8;
+        
+        if (imageOffset + 24 <= this.sparseImage.size) {
+            const chipIdCandidate = await this.view.getUint16(imageOffset + 12, true);
+            if (validESP32ChipIds.includes(chipIdCandidate)) {
+                headerSize = 24;
+            }
+        }
+
         /* Parse segments and calculate checksum ONLY over segment data payloads */
         /* Headers are NOT included in checksum (but are included in SHA256) */
-        let currentOffset = imageOffset + 24;
+        let currentOffset = imageOffset + headerSize;
         let checksum = 0xEF;
 
         const MAX_CHUNK_SIZE = 1024 * 1024; // 1 MB chunks to avoid allocation failures
@@ -3380,17 +3391,29 @@ class ESP32Parser {
         }
 
         const segmentCount = await this.view.getUint8(imageOffset + 1);
-        const hasHash = (await this.view.getUint8(imageOffset + 23)) === 1;
+        
+        /* Auto-detect header format */
+        const validESP32ChipIds = [0x0000, 0x0002, 0x0005, 0x0009, 0x000C, 0x000D, 0x0010, 0x0012, 0x0013, 0x0017];
+        let headerSize = 8;
+        let hasHash = false;
+        
+        if (imageOffset + 24 <= this.sparseImage.size) {
+            const chipIdCandidate = await this.view.getUint16(imageOffset + 12, true);
+            if (validESP32ChipIds.includes(chipIdCandidate)) {
+                headerSize = 24;
+                hasHash = (await this.view.getUint8(imageOffset + 23)) === 1;
+            }
+        }
 
         if (!hasHash) {
             return {
                 hasHash: false,
-                reason: 'Image does not have appended hash'
+                reason: 'Image does not have appended hash (ESP8266 or hash flag not set)'
             };
         }
 
         /* Parse segments to find checksum offset */
-        let currentOffset = imageOffset + 24;
+        let currentOffset = imageOffset + headerSize;
         for (let i = 0; i < segmentCount; i++) {
             const segLength = await this.view.getUint32(currentOffset + 4, true);
             currentOffset += 8 + segLength;
@@ -3921,6 +3944,7 @@ class ESP32Parser {
             0x0019: 'ESP32-H21',
             0x001C: 'ESP32-H4',
             0x0020: 'ESP32-S31',
+            0xFFF0: 'ESP8266',
             0xFFFF: 'Invalid'
         };
         return chipNames[chipId] || `Unknown (0x${chipId.toString(16).toUpperCase().padStart(4, '0')})`;
@@ -3965,7 +3989,7 @@ class ESP32Parser {
 
     // Parse firmware image
     async parseImage(offset, length) {
-        if (offset + 24 > this.sparseImage.size) {
+        if (offset + 8 > this.sparseImage.size) {
             return { error: 'Offset out of bounds' };
         }
 
@@ -3981,24 +4005,53 @@ class ESP32Parser {
         const spiSize = (flashInfoByte >> 4) & 0x0F;  // Upper 4 bits
         const entryAddr = await this.view.getUint32(offset + 4, true);
 
-        // Extended header (24 bytes total)
-        const wpPin = await this.view.getUint8(offset + 8);
-        const spiPinDrv = [
-            await this.view.getUint8(offset + 9),
-            await this.view.getUint8(offset + 10),
-            await this.view.getUint8(offset + 11)
-        ];
-        const chipId = await this.view.getUint16(offset + 12, true);
-        const minChipRev = await this.view.getUint8(offset + 14);
-        const minChipRevFull = await this.view.getUint16(offset + 15, true);
-        const maxChipRevFull = await this.view.getUint16(offset + 17, true);
-        const reserved = [
-            await this.view.getUint8(offset + 19),
-            await this.view.getUint8(offset + 20),
-            await this.view.getUint8(offset + 21),
-            await this.view.getUint8(offset + 22)
-        ];
-        const hashAppended = await this.view.getUint8(offset + 23);
+        // Auto-detect header format: ESP32 has 24-byte header with chip ID at offset 12-13
+        // ESP8266 has 8-byte header, segments start immediately after
+        // Valid ESP32 chip IDs: 0x0000, 0x0002, 0x0005, 0x0009, 0x000C, 0x000D, 0x0010, 0x0012, 0x0013, 0x0017
+        const validESP32ChipIds = [0x0000, 0x0002, 0x0005, 0x0009, 0x000C, 0x000D, 0x0010, 0x0012, 0x0013, 0x0017];
+        let hasExtendedHeader = false;
+        let headerSize = 8;
+        
+        if (offset + 24 <= this.sparseImage.size) {
+            const chipIdCandidate = await this.view.getUint16(offset + 12, true);
+            if (validESP32ChipIds.includes(chipIdCandidate)) {
+                hasExtendedHeader = true;
+                headerSize = 24;
+            }
+        }
+
+        // Extended header (24 bytes total) - only for ESP32 family
+        let wpPin, spiPinDrv, chipId, minChipRev, minChipRevFull, maxChipRevFull, reserved, hashAppended;
+        
+        if (hasExtendedHeader) {
+            wpPin = await this.view.getUint8(offset + 8);
+            spiPinDrv = [
+                await this.view.getUint8(offset + 9),
+                await this.view.getUint8(offset + 10),
+                await this.view.getUint8(offset + 11)
+            ];
+            chipId = await this.view.getUint16(offset + 12, true);
+            minChipRev = await this.view.getUint8(offset + 14);
+            minChipRevFull = await this.view.getUint16(offset + 15, true);
+            maxChipRevFull = await this.view.getUint16(offset + 17, true);
+            reserved = [
+                await this.view.getUint8(offset + 19),
+                await this.view.getUint8(offset + 20),
+                await this.view.getUint8(offset + 21),
+                await this.view.getUint8(offset + 22)
+            ];
+            hashAppended = await this.view.getUint8(offset + 23);
+        } else {
+            // ESP8266 format - no extended header
+            wpPin = undefined;
+            spiPinDrv = undefined;
+            chipId = 0xFFF0; // Special marker for ESP8266
+            minChipRev = undefined;
+            minChipRevFull = undefined;
+            maxChipRevFull = undefined;
+            reserved = undefined;
+            hashAppended = 0; // ESP8266 doesn't support appended hash
+        }
 
         const image = {
             offset: offset,
@@ -4011,25 +4064,33 @@ class ESP32Parser {
             spiSize: spiSize,
             spiSizeName: this.getSpiSizeName(spiSize),
             entryAddr: entryAddr,
-            wpPin: wpPin,
-            wpPinDisabled: wpPin === 0xEE,
-            spiPinDrv: spiPinDrv,
+            headerSize: headerSize,
+            hasExtendedHeader: hasExtendedHeader,
             chipId: chipId,
             chipName: this.getChipName(chipId),
-            minChipRev: minChipRev,
-            minChipRevFull: minChipRevFull,
-            minChipRevMajor: Math.floor(minChipRevFull / 100),
-            minChipRevMinor: minChipRevFull % 100,
-            maxChipRevFull: maxChipRevFull,
-            maxChipRevMajor: Math.floor(maxChipRevFull / 100),
-            maxChipRevMinor: maxChipRevFull % 100,
-            reserved: reserved,
-            hashAppended: hashAppended,
-            hasHash: hashAppended === 1,
             segmentList: []
         };
+        
+        // Add extended header fields only if present
+        if (hasExtendedHeader) {
+            image.wpPin = wpPin;
+            image.wpPinDisabled = wpPin === 0xEE;
+            image.spiPinDrv = spiPinDrv;
+            image.minChipRev = minChipRev;
+            image.minChipRevFull = minChipRevFull;
+            image.minChipRevMajor = Math.floor(minChipRevFull / 100);
+            image.minChipRevMinor = minChipRevFull % 100;
+            image.maxChipRevFull = maxChipRevFull;
+            image.maxChipRevMajor = Math.floor(maxChipRevFull / 100);
+            image.maxChipRevMinor = maxChipRevFull % 100;
+            image.reserved = reserved;
+            image.hashAppended = hashAppended;
+            image.hasHash = hashAppended === 1;
+        } else {
+            image.hasHash = false;
+        }
 
-        let currentOffset = offset + 24;
+        let currentOffset = offset + headerSize;
 
         // Parse segments
         for (let i = 0; i < segmentCount; i++) {
