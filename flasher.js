@@ -733,6 +733,10 @@ class ESPFlasher {
         */
         this.initialBaudRate = options.initialBaudRate || 921600;
 
+        /* Flash read tuning */
+        this.readFlashBlockSize = options.readFlashBlockSize || 0x1000;
+        this.readFlashMaxInFlight = options.readFlashMaxInFlight || 32;
+
         this.chip_magic_addr = 0x40001000;
         this.chip_descriptions = new ChipDescriptionsClass().chip_descriptions;
         this.port = null;
@@ -1939,8 +1943,8 @@ class ESPFlasher {
 
      */
     async readFlashPlain(address, totalLength = 0x1000, cbr) {
-        let blockSize = Math.min(totalLength, 0x1000);
-        let maxInFlight = Math.min(totalLength, blockSize * 2);
+        let blockSize = Math.min(totalLength, this.readFlashBlockSize);
+        let maxInFlight = Math.min(totalLength, blockSize * this.readFlashMaxInFlight);
         const packetCount = totalLength / blockSize;
 
         let packet = 0;
