@@ -733,8 +733,6 @@ class ESPFlasher {
         */
         this.initialBaudRate = options.initialBaudRate || 921600;
 
-
-
         this.chip_magic_addr = 0x40001000;
         this.chip_descriptions = new ChipDescriptionsClass().chip_descriptions;
         this.port = null;
@@ -832,7 +830,7 @@ class ESPFlasher {
         }
         if (this.logPackets) {
             const truncMsg = truncated ? ` (showing ${bytesToShow}/${data.length} bytes)` : '';
-            this.logDebug(`${arrow} ${isTx} [${data.length} bytes]${truncMsg}`);
+            this.logDebug(`${arrow} [${data.length} bytes]${truncMsg}`);
             lines.forEach(line => this.logDebug(line));
         }
     }
@@ -1136,7 +1134,11 @@ class ESPFlasher {
      * @description Distinguishes stub loader from ROM bootloader by magic address response size
      */
     async isStubLoader() {
-        return this.executeCommand(this.buildCommandPacketU32(READ_REG, this.chip_magic_addr),
+        if (this.current_chip === 'esp8266') {
+            return this.stubLoaded;
+        }
+
+        this.stubLoaded = this.executeCommand(this.buildCommandPacketU32(READ_REG, this.chip_magic_addr),
             async (resolve, reject, responsePacket) => {
                 if (responsePacket && responsePacket.data) {
                     if (responsePacket.data.length == 2) {
@@ -1150,6 +1152,8 @@ class ESPFlasher {
                     reject('Failed to read register');
                 }
             });
+
+        return this.stubLoaded;
     }
 
     /**
@@ -1463,15 +1467,24 @@ class ESPFlasher {
      */
     async downloadMem(address, payload) {
         var binary = this.base64ToByteArray(payload);
+        const MAX_PACKET_SIZE = 0x1800; // as limited in https://github.com/espressif/esptool/blob/master/esptool/loader.py#L265 
+        const packets = Math.ceil(binary.length / MAX_PACKET_SIZE);
 
-        await this.executeCommand(this.buildCommandPacketU32(MEM_BEGIN, binary.length, 1, binary.length, address),
+        await this.executeCommand(this.buildCommandPacketU32(MEM_BEGIN, binary.length, packets, MAX_PACKET_SIZE, address),
             async (resolve, reject, responsePacket) => {
                 resolve();
-            });
-        await this.executeCommand(this.buildCommandPacketU32(MEM_DATA, binary.length, 0, 0, 0, binary),
-            async (resolve, reject, responsePacket) => {
-                resolve();
-            });
+            }, null, 1000);
+
+        /* Send data in chunks */
+        for (let seq = 0; seq < packets; seq++) {
+            const offset = seq * MAX_PACKET_SIZE;
+            const chunk = binary.slice(offset, offset + MAX_PACKET_SIZE);
+            
+            await this.executeCommand(this.buildCommandPacketU32(MEM_DATA, chunk.length, seq, 0, 0, chunk),
+                async (resolve, reject, responsePacket) => {
+                    resolve();
+                }, null, 1000);
+        }
     }
 
     /**
@@ -1845,6 +1858,7 @@ class ESPFlasher {
             return false;
         }
 
+        this.stubLoaded = true;
         return true;
     }
 
