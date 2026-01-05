@@ -471,14 +471,36 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                         WebUSB
                     </label>
                 </div>
-                <div class="input-group" id="baudSelectGroup" style="display: none;">
-                    <label for="baudRateSelect">Baud Rate (advanced):</label>
-                    <select id="baudRateSelect">
-                        <option value="76800">76800</option>
-                        <option value="115200">115200</option>
-                        <option value="921600" selected>921600</option>
-                        <option value="1000000">1000000</option>
-                    </select>
+                <div id="advancedBaudGroup" style="display:none; margin-top:10px; text-align:center;">
+                    <div style="margin-top:6px;">
+                        <label for="advancedBaudSelect" style="font-size:0.9em; color:#a0a0a0;">Baud Rate:</label>
+                        <select id="advancedBaudSelect"
+                            style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
+                            <option value="76800">76800</option>
+                            <option value="115200">115200</option>
+                            <option value="921600" selected>921600</option>
+                            <option value="1000000">1000000</option>
+                            <option value="2000000">2000000</option>
+                        </select>
+                        <label for="transferSizeSelect" style="font-size:0.9em; color:#a0a0a0;">Transfer Size:</label>
+                        <select id="transferSizeSelect"
+                            style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
+                            <option value="256">256</option>
+                            <option value="512">512</option>
+                            <option value="1024">1024</option>
+                            <option value="2048">2048</option>
+                            <option value="4096" selected>4096</option>
+                        </select>
+                        <label for="inFlightReadsSelect" style="font-size:0.9em; color:#a0a0a0;">In-Flight Reads:</label>
+                        <select id="inFlightReadsSelect"
+                            style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
+                            <option value="1">1</option>
+                            <option value="8">8</option>
+                            <option value="32" selected>32</option>
+                            <option value="64">64</option>
+                            <option value="128">128</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="button-group">
                     <button id="connectBtn" onclick="connectDevice()">Connect Device</button>
@@ -649,6 +671,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         let devicePopupContent = '';
         let isDebugMode = window.location.hash.includes('debug');
         let selectedBaudRate = 921600;
+        let selectedTransferSize = 4096;
+        let selectedInFlightReads = 32;
         let readStartTime = null;
         let writeStartTime = null;
 
@@ -845,12 +869,15 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         }
 
         function setupAdvancedControls() {
-            const group = document.getElementById('baudSelectGroup');
-            const select = document.getElementById('baudRateSelect');
+            const group = document.getElementById('advancedBaudGroup');
+            const baudSelect = document.getElementById('advancedBaudSelect');
+            const transferSizeSelect = document.getElementById('transferSizeSelect');
+            const inFlightReadsSelect = document.getElementById('inFlightReadsSelect');
 
-            if (!group || !select) {
+            if (!group || !baudSelect || !transferSizeSelect || !inFlightReadsSelect) {
                 return;
             }
+
 
             if (!isDebugMode) {
                 group.style.display = 'none';
@@ -858,10 +885,12 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             }
 
             group.style.display = 'block';
-            select.value = selectedBaudRate.toString();
+            baudSelect.value = selectedBaudRate.toString();
+            transferSizeSelect.value = selectedTransferSize.toString();
+            inFlightReadsSelect.value = selectedInFlightReads.toString();
 
-            select.addEventListener('change', () => {
-                const nextBaud = parseInt(select.value, 10);
+            baudSelect.addEventListener('change', () => {
+                const nextBaud = parseInt(baudSelect.value, 10);
                 if (!Number.isFinite(nextBaud)) {
                     return;
                 }
@@ -872,7 +901,31 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 log(`Baud rate set to ${selectedBaudRate} (applies to next open)`, 'info');
             });
 
-            log('Advanced mode enabled: baud selector available', 'info');
+            transferSizeSelect.addEventListener('change', () => {
+                const nextSize = parseInt(transferSizeSelect.value, 10);
+                if (!Number.isFinite(nextSize)) {
+                    return;
+                }
+                selectedTransferSize = nextSize;
+                if (flasher) {
+                    flasher.readFlashBlockSize = selectedTransferSize;
+                }
+                log(`Transfer size set to ${selectedTransferSize} bytes (applies to next read)`, 'info');
+            });
+
+            inFlightReadsSelect.addEventListener('change', () => {
+                const nextInFlight = parseInt(inFlightReadsSelect.value, 10);
+                if (!Number.isFinite(nextInFlight)) {
+                    return;
+                }
+                selectedInFlightReads = nextInFlight;
+                if (flasher) {
+                    flasher.readFlashMaxInFlight = selectedInFlightReads;
+                }
+                log(`In-flight reads set to ${selectedInFlightReads} (applies to next read)`, 'info');
+            });
+
+            log('Advanced mode enabled: baud, transfer size, and in-flight controls available', 'info');
         }
 
         async function connectDevice() {

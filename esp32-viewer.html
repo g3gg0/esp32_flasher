@@ -1130,14 +1130,33 @@
                         onclick="toggleDeviceSession()">Connect to ESP32</button>
                 </div>
                 <div id="advancedBaudGroup" style="display:none; margin-top:10px; text-align:center;">
-                    <label for="advancedBaudSelect" style="font-size:0.9em; color:#a0a0a0;">Baud Rate
-                        (advanced):</label>
                     <div style="margin-top:6px;">
+                        <label for="advancedBaudSelect" style="font-size:0.9em; color:#a0a0a0;">Baud Rate:</label>
                         <select id="advancedBaudSelect"
                             style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
+                            <option value="76800">76800</option>
                             <option value="115200">115200</option>
                             <option value="921600" selected>921600</option>
                             <option value="1000000">1000000</option>
+                            <option value="2000000">2000000</option>
+                        </select>
+                        <label for="transferSizeSelect" style="font-size:0.9em; color:#a0a0a0;">Transfer Size:</label>
+                        <select id="transferSizeSelect"
+                            style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
+                            <option value="256">256</option>
+                            <option value="512">512</option>
+                            <option value="1024">1024</option>
+                            <option value="2048">2048</option>
+                            <option value="4096" selected>4096</option>
+                        </select>
+                        <label for="inFlightReadsSelect" style="font-size:0.9em; color:#a0a0a0;">In-Flight Reads:</label>
+                        <select id="inFlightReadsSelect"
+                            style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
+                            <option value="1">1</option>
+                            <option value="8">8</option>
+                            <option value="32" selected>32</option>
+                            <option value="64">64</option>
+                            <option value="128">128</option>
                         </select>
                     </div>
                 </div>
@@ -1271,7 +1290,7 @@
         let currentFile = null;
         let replaceTargetPartition = null;
 
-        let deviceFlasher = null;
+        let flasher = null;
         let deviceMode = false;
         let deviceMac = null;
         let devicePopupTimer = null;
@@ -1287,6 +1306,8 @@
         let isDebugMode = window.location.hash.includes('debug');
         let isAdvancedMode = window.location.hash.includes('advanced');
         let selectedBaudRate = 921600;
+        let selectedTransferSize = 4096;
+        let selectedInFlightReads = 32;
 
         /* Performance tracking for read/write operations */
         let readStartTime = null;
@@ -1316,8 +1337,10 @@
 
             try {
                 setDeviceStatus('Requesting serial port...', 'loading');
-                deviceFlasher = new ESPFlasher({
+                flasher = new ESPFlasher({
                     initialBaudRate: selectedBaudRate,
+                    readFlashBlockSize: selectedTransferSize,
+                    readFlashMaxInFlight: selectedInFlightReads,
                     logMessage: (msg) => console.log('[Flasher]', msg),
                     logWarning: (msg) => console.warn('[Flasher WARNING]', msg),
                     logError: (msg) => console.error('[Flasher ERROR]', msg),
@@ -1326,11 +1349,11 @@
                 });
 
                 /* Set up callback for unexpected device disconnection */
-                deviceFlasher.disconnected = () => {
+                flasher.disconnected = () => {
                     handleUnexpectedDeviceDisconnect();
                 };
 
-                deviceFlasher.deviceStateCallback = (state, data) => {
+                flasher.deviceStateCallback = (state, data) => {
                     if (state === 'secure') {
                         showSecureModError('Secure bootloader detected. Flash access is disabled.');
                     } else if (state === 'secure_boot') {
@@ -1349,26 +1372,26 @@
                     console.log('Android device detected, using WebUSB');
                     setDeviceStatus('Android detected - using WebUSB', 'info');
                     const port = await WebUSBSerial.requestPort();
-                    await deviceFlasher.openPortWithPort(port);
+                    await flasher.openPortWithPort(port);
                 } else {
                     console.log('Desktop detected, using Web Serial API');
-                    await deviceFlasher.openPort(); // Use Web Serial (default)
+                    await flasher.openPort(); // Use Web Serial (default)
                 }
                 setDeviceButtons({ connected: true });
 
                 /* Try hard reset + sync across baud rates: default, 250000, 115200 */
                 let synced = false;
-                const baudCandidates = [deviceFlasher.initialBaudRate, 250000, 115200];
+                const baudCandidates = [flasher.initialBaudRate, 250000, 115200];
                 for (const baud of baudCandidates) {
                     try {
-                        if (baud && baud !== deviceFlasher.initialBaudRate) {
-                            await deviceFlasher.reopenPort(baud);
+                        if (baud && baud !== flasher.initialBaudRate) {
+                            await flasher.reopenPort(baud);
                         }
                         setDeviceStatus('Resetting ESP32...', 'loading');
-                        await deviceFlasher.hardReset(true);
+                        await flasher.hardReset(true);
 
                         setDeviceStatus('Syncing...', 'loading');
-                        await deviceFlasher.sync();
+                        await flasher.sync();
                         synced = true;
                         break;
                     } catch (err) {
@@ -1376,24 +1399,24 @@
                     }
                 }
                 if (!synced) {
-                    deviceFlasher.disconnect();
+                    flasher.disconnect();
                     throw new Error('Failed to sync after trying default, 250000, 115200 baud.');
                 }
 
                 // Read MAC address after successful sync
                 try {
-                    deviceMac = await deviceFlasher.readMac();
+                    deviceMac = await flasher.readMac();
                 } catch (macErr) {
                     console.warn('Could not read device MAC:', macErr);
                     deviceMac = null;
                 }
 
-                const isStub = await deviceFlasher.isStubLoader();
+                const isStub = await flasher.isStubLoader();
                 setDeviceButtons({ connected: true, synced: true, stub: isStub });
 
                 if (!isStub) {
                     setDeviceStatus('Loading stub...', 'loading');
-                    const stubLoaded = await deviceFlasher.downloadStub();
+                    const stubLoaded = await flasher.downloadStub();
                     setDeviceButtons({ connected: true, synced: true, stub: stubLoaded });
                 }
 
@@ -1405,7 +1428,7 @@
                 deviceReadProgressDone = 0;
                 const totalSize = deviceFlashSizeBytes;
 
-                parser = new ESP32Parser(deviceFlasher, {
+                parser = new ESP32Parser(flasher, {
                     sizeHint: totalSize,
                     logMessage: (msg) => console.log('[Parser]', msg),
                     logWarning: (msg) => console.warn('[Parser WARNING]', msg),
@@ -1451,7 +1474,7 @@
                 displaySourceInfo({
                     name: 'ESP32 Device',
                     size: totalSize,
-                    type: `device/${deviceFlasher.current_chip || 'esp32'}`,
+                    type: `device/${flasher.current_chip || 'esp32'}`,
                     lastModified: Date.now()
                 });
 
@@ -1468,16 +1491,16 @@
                 }
 
                 await parseAndDisplay(true);
-                setDeviceStatus('Connected to ' + deviceFlasher.current_chip + '. Firmware loaded and parsed.', 'success');
+                setDeviceStatus('Connected to ' + flasher.current_chip + '. Firmware loaded and parsed.', 'success');
                 setToggleButtonState(true);
 
                 /* Hide file drop/browse when in device mode */
                 const dropZone = document.getElementById('dropZone');
                 if (dropZone) dropZone.style.display = 'none';
             } catch (e) {
-                if (deviceFlasher) {
+                if (flasher) {
                     try {
-                        deviceFlasher.disconnect();
+                        flasher.disconnect();
                     } catch (disconnectError) {
                         //console.warn('Error during disconnect:', disconnectError);
                     }
@@ -1495,9 +1518,9 @@
 
         async function disconnectDeviceSession() {
             intentionalDisconnect = true;
-            if (deviceFlasher) {
+            if (flasher) {
                 try {
-                    await deviceFlasher.disconnect();
+                    await flasher.disconnect();
                 } catch (e) {
                     console.warn('Device disconnect error:', e);
                 }
@@ -1566,7 +1589,7 @@
 
         function clearDeviceState() {
             /* Clear all device information and reset to disconnected state */
-            deviceFlasher = null;
+            flasher = null;
             deviceMode = false;
             deviceMac = null;
             parser = null;
@@ -2012,9 +2035,11 @@
 
         function setupAdvancedControls() {
             const group = document.getElementById('advancedBaudGroup');
-            const select = document.getElementById('advancedBaudSelect');
+            const baudSelect = document.getElementById('advancedBaudSelect');
+            const transferSizeSelect = document.getElementById('transferSizeSelect');
+            const inFlightReadsSelect = document.getElementById('inFlightReadsSelect');
 
-            if (!group || !select) {
+            if (!group || !baudSelect || !transferSizeSelect || !inFlightReadsSelect) {
                 return;
             }
 
@@ -2024,21 +2049,47 @@
             }
 
             group.style.display = 'block';
-            select.value = selectedBaudRate.toString();
+            baudSelect.value = selectedBaudRate.toString();
+            transferSizeSelect.value = selectedTransferSize.toString();
+            inFlightReadsSelect.value = selectedInFlightReads.toString();
 
-            select.addEventListener('change', () => {
-                const nextBaud = parseInt(select.value, 10);
+            baudSelect.addEventListener('change', () => {
+                const nextBaud = parseInt(baudSelect.value, 10);
                 if (!Number.isFinite(nextBaud)) {
                     return;
                 }
                 selectedBaudRate = nextBaud;
-                if (deviceFlasher) {
-                    deviceFlasher.initialBaudRate = selectedBaudRate;
+                if (flasher) {
+                    flasher.initialBaudRate = selectedBaudRate;
                 }
                 setDeviceStatus(`Baud set to ${selectedBaudRate} (advanced)`, 'info');
             });
 
-            setDeviceStatus('Advanced baud selector enabled (#advanced).', 'info');
+            transferSizeSelect.addEventListener('change', () => {
+                const nextSize = parseInt(transferSizeSelect.value, 10);
+                if (!Number.isFinite(nextSize)) {
+                    return;
+                }
+                selectedTransferSize = nextSize;
+                if (flasher) {
+                    flasher.readFlashBlockSize = selectedTransferSize;
+                }
+                setDeviceStatus(`Transfer size set to ${selectedTransferSize} bytes (advanced)`, 'info');
+            });
+
+            inFlightReadsSelect.addEventListener('change', () => {
+                const nextInFlight = parseInt(inFlightReadsSelect.value, 10);
+                if (!Number.isFinite(nextInFlight)) {
+                    return;
+                }
+                selectedInFlightReads = nextInFlight;
+                if (flasher) {
+                    flasher.readFlashMaxInFlight = selectedInFlightReads;
+                }
+                setDeviceStatus(`In-flight reads set to ${selectedInFlightReads} (advanced)`, 'info');
+            });
+
+            setDeviceStatus('Advanced controls enabled (#advanced).', 'info');
         }
 
         function showDevicePopup(message, state = null) {
@@ -2381,7 +2432,7 @@
         async function deviceConnect() {
             try {
                 setDeviceStatus('Requesting serial port...', 'loading');
-                deviceFlasher = new ESPFlasher({
+                flasher = new ESPFlasher({
                     initialBaudRate: selectedBaudRate,
                     logMessage: (msg) => console.log('[Flasher]', msg),
                     logWarning: (msg) => console.warn('[Flasher WARNING]', msg),
@@ -2389,7 +2440,7 @@
                     logDebug: (msg) => { isDebugMode ?? console.log('[Flasher DEBUG]', msg); },
                     logPackets: isDebugMode,
                 });
-                await deviceFlasher.openPort();
+                await flasher.openPort();
                 setDeviceStatus('Connected. You may Hard Reset, then Sync.', 'success');
                 setDeviceButtons({ connected: true });
             } catch (e) {
@@ -2399,10 +2450,10 @@
         }
 
         async function deviceHardReset() {
-            if (!deviceFlasher) return;
+            if (!flasher) return;
             try {
                 setDeviceStatus('Resetting...', 'loading');
-                await deviceFlasher.hardReset(true);
+                await flasher.hardReset(true);
                 setDeviceStatus('Reset sequence sent.', 'success');
             } catch (e) {
                 setDeviceStatus('Reset failed: ' + e.message, 'error');
@@ -2410,31 +2461,31 @@
         }
 
         async function deviceSync() {
-            if (!deviceFlasher) return;
+            if (!flasher) return;
             try {
                 setDeviceStatus('Syncing...', 'loading');
-                await deviceFlasher.sync();
+                await flasher.sync();
 
                 // Read MAC address
                 try {
-                    deviceMac = await deviceFlasher.readMac();
+                    deviceMac = await flasher.readMac();
                 } catch (macErr) {
                     console.warn('Could not read device MAC:', macErr);
                     deviceMac = null;
                 }
 
-                setDeviceStatus('Synced to ' + deviceFlasher.current_chip + '.', 'success');
-                setDeviceButtons({ connected: true, synced: true, stub: await deviceFlasher.isStubLoader() });
+                setDeviceStatus('Synced to ' + flasher.current_chip + '.', 'success');
+                setDeviceButtons({ connected: true, synced: true, stub: await flasher.isStubLoader() });
             } catch (e) {
                 setDeviceStatus('Sync failed: ' + e.message, 'error');
             }
         }
 
         async function deviceLoadStub() {
-            if (!deviceFlasher) return;
+            if (!flasher) return;
             try {
                 setDeviceStatus('Loading stub...', 'loading');
-                const ok = await deviceFlasher.downloadStub();
+                const ok = await flasher.downloadStub();
                 setDeviceButtons({ connected: true, synced: true, stub: ok });
                 setDeviceStatus(ok ? 'Stub loaded.' : 'Stub load failed', ok ? 'success' : 'error');
             } catch (e) {
@@ -2443,7 +2494,7 @@
         }
 
         async function deviceRefresh() {
-            if (!deviceFlasher) return;
+            if (!flasher) return;
             try {
                 deviceMode = true;
                 setDeviceStatus('Fetching bootloader and partition table...', 'loading');
@@ -2459,7 +2510,7 @@
                 displaySourceInfo({
                     name: 'ESP32 Device',
                     size: totalSize,
-                    type: `device/${deviceFlasher.current_chip || 'esp32'}`,
+                    type: `device/${flasher.current_chip || 'esp32'}`,
                     lastModified: Date.now()
                 });
 
@@ -2556,8 +2607,8 @@
 
             const typeLabel = (() => {
                 const t = file.type || 'application/octet-stream';
-                if (t.startsWith('device/') && deviceFlasher && deviceFlasher.current_chip) {
-                    return `device/${deviceFlasher.current_chip}`;
+                if (t.startsWith('device/') && flasher && flasher.current_chip) {
+                    return `device/${flasher.current_chip}`;
                 }
                 return t;
             })();
@@ -2638,7 +2689,7 @@
         }
 
         async function applyDeviceFlashSize(sizeBytes) {
-            if (!deviceFlasher) {
+            if (!flasher) {
                 return;
             }
 
@@ -2652,7 +2703,7 @@
             displaySourceInfo({
                 name: 'ESP32 Device',
                 size: deviceFlashSizeBytes,
-                type: `device/${deviceFlasher.current_chip || 'esp32'}`,
+                type: `device/${flasher.current_chip || 'esp32'}`,
                 lastModified: Date.now()
             });
         }
@@ -3317,9 +3368,9 @@
 
                 // Generate meaningful filename
                 let filename;
-                if (deviceMode && deviceFlasher) {
+                if (deviceMode && flasher) {
                     // Device mode: use chip type and MAC
-                    const chipName = deviceFlasher.current_chip || 'esp32';
+                    const chipName = flasher.current_chip || 'esp32';
                     const macPart = deviceMac ? '_' + deviceMac.replace(/:/g, '') : '';
                     filename = `${chipName}${macPart}_dump.bin`;
                 } else if (currentFile && currentFile.name) {
@@ -3364,7 +3415,7 @@
         }
 
         async function writeToDevice() {
-            if (!deviceFlasher || !deviceMode) {
+            if (!flasher || !deviceMode) {
                 alert('No device connected.');
                 return;
             }
@@ -3516,8 +3567,8 @@
 
                     // Try to auto-select build based on connected device chip
                     let selectedBuildIdx = 0;
-                    if (deviceFlasher && deviceFlasher.current_chip) {
-                        const deviceChip = deviceFlasher.current_chip.toUpperCase();
+                    if (flasher && flasher.current_chip) {
+                        const deviceChip = flasher.current_chip.toUpperCase();
                         const matchIdx = manifest.builds.findIndex(build => {
                             const chipFam = (build.chipFamily || '').toUpperCase();
                             return chipFam.includes(deviceChip) || deviceChip.includes(chipFam);
