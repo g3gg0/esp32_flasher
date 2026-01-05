@@ -474,6 +474,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 <div class="input-group" id="baudSelectGroup" style="display: none;">
                     <label for="baudRateSelect">Baud Rate (advanced):</label>
                     <select id="baudRateSelect">
+                        <option value="76800">76800</option>
                         <option value="115200">115200</option>
                         <option value="921600" selected>921600</option>
                         <option value="1000000">1000000</option>
@@ -493,6 +494,14 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                             Disconnected
                             <span class="status-badge status-disconnected">OFFLINE</span>
                         </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">USB Device:</span>
+                        <span class="info-value" id="usbDevice">Not connected</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Baud Rate:</span>
+                        <span class="info-value" id="baudRate">--</span>
                     </div>
                     <div class="info-row">
                         <span class="info-label">Chip Type:</span>
@@ -894,6 +903,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                     log('Device disconnected', 'warn');
                     updateStatus('Disconnected', 'disconnected');
                     updateButtons(false, false, false);
+                    document.getElementById('usbDevice').textContent = 'Not connected';
+                    document.getElementById('baudRate').textContent = '--';
                     document.getElementById('chipType').textContent = 'Not detected';
                     document.getElementById('macAddress').textContent = '--:--:--:--:--:--';
                     document.getElementById('stubStatus').textContent = 'Not loaded';
@@ -918,6 +929,74 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 }
 
                 log('Port opened successfully', 'info');
+
+                // Display baud rate
+                document.getElementById('baudRate').textContent = selectedBaudRate.toString();
+
+                // Display VID/PID information
+                const portInfo = flasher.port.getInfo();
+                if (portInfo.usbVendorId !== undefined && portInfo.usbProductId !== undefined) {
+                    const vid = portInfo.usbVendorId.toString(16).padStart(4, '0').toUpperCase();
+                    const pid = portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase();
+                    let deviceName = 'Unknown';
+
+                    /* https://devicehunt.com */
+                    switch (portInfo.usbVendorId) {
+                        case 0x303A:
+                            deviceName = 'Espressif USB JTAG';
+                            break;
+                        case 0x10C4:
+                            deviceName = 'Silicon Labs - '
+                            switch (portInfo.usbProductId) {
+                                case 0xEA60:
+                                    deviceName += 'CP2102/CP2104';
+                                    break;
+                                case 0xEA70:
+                                    deviceName += 'CP2105';
+                                    break;
+                                default:
+                                    deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
+                                    break;
+                            }
+                            break;
+                        case 0x1A86:
+                            deviceName = 'QinHeng Electronics - ';
+                            switch (portInfo.usbProductId) {
+                                case 0x7522:
+                                case 0x7523:
+                                    deviceName += 'CH340';
+                                    break;
+                                default:
+                                    deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
+                                    break;
+                            }
+                            break;
+                        case 0x0403:
+                            deviceName = 'FTDI - ';
+                            switch (portInfo.usbProductId) {
+                                case 0x6011:
+                                    deviceName += 'FT4232H Quad HS';
+                                    break;
+                                case 0x6014:
+                                    deviceName += 'FT232H Single';
+                                    break;
+                                case 0xa9a0:
+                                    deviceName += 'FT2232';
+                                    break;
+                                default:
+                                    deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
+                                    break;
+                            }
+                            break;
+                        default:
+                            deviceName = 'Unknown';
+                            break;
+                    }
+
+                    document.getElementById('usbDevice').textContent = `${deviceName} (${vid}:${pid})`;
+                } else {
+                    document.getElementById('usbDevice').textContent = 'VID/PID not available';
+                }
 
                 if (!flasher.isEspressifUsbJtag) {
                     // Technical limitation note about baud rate and ROM messages
@@ -1023,6 +1102,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 log('Disconnected successfully', 'info');
                 updateStatus('Disconnected', 'disconnected');
                 updateButtons(false, false, false);
+                document.getElementById('usbDevice').textContent = 'Not connected';
+                document.getElementById('baudRate').textContent = '--';
 
                 // Clear any highlights
                 document.getElementById('hardResetBtn').classList.remove('highlighted');
