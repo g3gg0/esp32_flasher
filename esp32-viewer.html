@@ -1166,7 +1166,7 @@
                 <input type="file" id="fileInput" class="file-input" accept=".bin">
             </div>
 
-            <div style="margin-top:10px; text-align:center;">
+            <div id="packetLoggingGroup" style="margin-top:10px; text-align:center; display:none;">
                 <label style="font-size:0.9em; color:#a0a0a0;">Packet Logging:</label><br>
                 <label style="font-size:0.85em; color:#c8c8c8; margin-right:15px;">
                     <input type="radio" name="packetLogging" value="none" checked onchange="updatePacketLogging()">
@@ -1371,8 +1371,8 @@
                 /* Apply packet logging to SLIP layer */
                 if (flasher.slipLayer) {
                     flasher.slipLayer.logPackets = selectedPacketLogging !== 'none';
-                    flasher.slipLayer.logDebug = (...args) => console.log('[SLIP]', ...args);
-                    flasher.slipLayer.logError = (...args) => console.error('[SLIP ERROR]', ...args);
+                    flasher.slipLayer.logDebug = (...args) => { if (isAdvancedMode) console.log('[SLIP]', ...args); };
+                    flasher.slipLayer.logError = (...args) => { if (isAdvancedMode) console.error('[SLIP ERROR]', ...args); };
                 }
 
                 /* Set up callback for unexpected device disconnection */
@@ -2071,6 +2071,7 @@
             const baudSelect = document.getElementById('advancedBaudSelect');
             const transferSizeSelect = document.getElementById('transferSizeSelect');
             const inFlightReadsSelect = document.getElementById('inFlightReadsSelect');
+            const packetLoggingGroup = document.getElementById('packetLoggingGroup');
 
             if (!group || !baudSelect || !transferSizeSelect || !inFlightReadsSelect) {
                 return;
@@ -2078,10 +2079,12 @@
 
             if (!isAdvancedMode) {
                 group.style.display = 'none';
+                if (packetLoggingGroup) packetLoggingGroup.style.display = 'none';
                 return;
             }
 
             group.style.display = 'block';
+            if (packetLoggingGroup) packetLoggingGroup.style.display = 'block';
             baudSelect.value = selectedBaudRate.toString();
             transferSizeSelect.value = selectedTransferSize.toString();
             inFlightReadsSelect.value = selectedInFlightReads.toString();
@@ -2147,7 +2150,7 @@
                         flasher.devMode = true;
                         if (flasher.slipLayer) {
                             flasher.slipLayer.logPackets = true;
-                            flasher.slipLayer.logDebug = (...args) => console.log('[SLIP]', ...args);
+                            flasher.slipLayer.logDebug = (...args) => { if (isAdvancedMode) console.log('[SLIP]', ...args); };
                         }
                         break;
                     case 'raw':
@@ -2155,7 +2158,7 @@
                         flasher.devMode = true;
                         if (flasher.slipLayer) {
                             flasher.slipLayer.logPackets = true;
-                            flasher.slipLayer.logDebug = (...args) => console.log('[SLIP]', ...args);
+                            flasher.slipLayer.logDebug = (...args) => { if (isAdvancedMode) console.log('[SLIP]', ...args); };
                         }
                         break;
                 }
@@ -2514,15 +2517,15 @@
                     logWarning: (...args) => console.warn('[Flasher WARNING]', ...args),
                     logError: (...args) => console.error('[Flasher ERROR]', ...args),
                     logDebug: (...args) => { if (isAdvancedMode) console.log('[Flasher DEBUG]', ...args); },
-                    logPackets: selectedPacketLogging !== 'none',
+                    logPackets: selectedPacketLogging === 'raw',
                     devMode: selectedPacketLogging !== 'none',
                 });
 
                 /* Apply packet logging to SLIP layer */
                 if (flasher.slipLayer) {
                     flasher.slipLayer.logPackets = selectedPacketLogging !== 'none';
-                    flasher.slipLayer.logDebug = (...args) => console.log('[SLIP]', ...args);
-                    flasher.slipLayer.logError = (...args) => console.error('[SLIP ERROR]', ...args);
+                    flasher.slipLayer.logDebug = (...args) => { if (isAdvancedMode) console.log('[SLIP]', ...args); };
+                    flasher.slipLayer.logError = (...args) => { if (isAdvancedMode) console.error('[SLIP ERROR]', ...args); };
                 }
 
                 await flasher.openPort();
