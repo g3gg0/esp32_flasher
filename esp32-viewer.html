@@ -1364,8 +1364,8 @@
                     logWarning: (...args) => console.warn('[Flasher WARNING]', ...args),
                     logError: (...args) => console.error('[Flasher ERROR]', ...args),
                     logDebug: (...args) => { if (isAdvancedMode) console.log('[Flasher DEBUG]', ...args); },
-                    logPackets: selectedPacketLogging !== 'none',
-                    devMode: selectedPacketLogging !== 'none',
+                    logPackets: selectedPacketLogging === 'raw',
+                    devMode: isAdvancedMode,
                 });
 
                 /* Apply packet logging to SLIP layer */
@@ -2518,7 +2518,7 @@
                     logError: (...args) => console.error('[Flasher ERROR]', ...args),
                     logDebug: (...args) => { if (isAdvancedMode) console.log('[Flasher DEBUG]', ...args); },
                     logPackets: selectedPacketLogging === 'raw',
-                    devMode: selectedPacketLogging !== 'none',
+                    devMode: isAdvancedMode,
                 });
 
                 /* Apply packet logging to SLIP layer */
