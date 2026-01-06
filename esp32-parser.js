@@ -43,6 +43,7 @@ class SparseImage {
         this.readDataCallback = readDataCallback;
         this.writeDataCallback = writeDataCallback;
         this.flushPrepareCallback = flushPrepareCallback;
+        this.dataUpdatedCallback = null;
         this.sectorSize = sectorSize || 0x1000;
         this.readBuffer = []; // Array of {address, data} structures
         this.writeBuffer = []; // Array of {address, data} structures
@@ -333,6 +334,8 @@ class SparseImage {
                 // No progress possible from callback, avoid infinite loop
                 break;
             }
+
+            this.dataUpdatedCallback && this.dataUpdatedCallback(a, d.length);
         }
     }
 
@@ -3075,10 +3078,15 @@ class ESP32Parser {
      * Reads flash data from the device, respecting alignment and size constraints
      */
     async _onSparseImageRead(readAddr, readLen) {
-        const addr = readAddr & ~0x0FFF;
-        const maxChunk = 0x00800000;
+        const maxChunk = 0x00100000;
+        /* Limit read length to maxChunk */
         const desired = Math.min(readLen, maxChunk);
-        let len = (desired + 0x1000) & ~0x0FFF;
+
+        /* Align read address to 0x1000 bytes */
+        const addr = readAddr & ~0x0FFF;
+        /* Align read length to 0x1000 bytes */
+        const alignSize = 0x1000;
+        let len = (desired + (alignSize - 1)) & ~(alignSize - 1);
 
         this.callbacks.preReadCommandCbr && this.callbacks.preReadCommandCbr(addr, len);
 

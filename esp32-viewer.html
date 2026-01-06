@@ -126,7 +126,7 @@
 
         .info-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
             gap: 15px;
         }
 
@@ -1117,6 +1117,7 @@
             <h1>ESP32 Firmware Editor</h1>
             <p>Reverse engineering & firmware analysis</p>
             <div style="font-size: 0.75em; margin-top: 12px; opacity: 0.7;"><a href="https://www.g3gg0.de">g3gg0.de</a>
+                <a href="#advanced" onclick="isAdvancedMode = true; setupAdvancedControls()">Advanced mode</a>
             </div>
         </div>
 
@@ -1136,6 +1137,7 @@
                             style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
                             <option value="76800">76800</option>
                             <option value="115200">115200</option>
+                            <option value="460800">460800</option>
                             <option value="921600" selected>921600</option>
                             <option value="1000000">1000000</option>
                             <option value="2000000">2000000</option>
@@ -1149,7 +1151,8 @@
                             <option value="2048">2048</option>
                             <option value="4096" selected>4096</option>
                         </select>
-                        <label for="inFlightReadsSelect" style="font-size:0.9em; color:#a0a0a0;">In-Flight Reads:</label>
+                        <label for="inFlightReadsSelect" style="font-size:0.9em; color:#a0a0a0;">In-Flight
+                            Reads:</label>
                         <select id="inFlightReadsSelect"
                             style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
                             <option value="1">1</option>
@@ -1161,6 +1164,22 @@
                     </div>
                 </div>
                 <input type="file" id="fileInput" class="file-input" accept=".bin">
+            </div>
+
+            <div style="margin-top:10px; text-align:center;">
+                <label style="font-size:0.9em; color:#a0a0a0;">Packet Logging:</label><br>
+                <label style="font-size:0.85em; color:#c8c8c8; margin-right:15px;">
+                    <input type="radio" name="packetLogging" value="none" checked onchange="updatePacketLogging()">
+                    None
+                </label>
+                <label style="font-size:0.85em; color:#c8c8c8; margin-right:15px;">
+                    <input type="radio" name="packetLogging" value="slip" onchange="updatePacketLogging()">
+                    SLIP frames
+                </label>
+                <label style="font-size:0.85em; color:#c8c8c8;">
+                    <input type="radio" name="packetLogging" value="raw" onchange="updatePacketLogging()">
+                    + RAW packets
+                </label>
             </div>
 
             <div class="file-info" id="fileInfo">
@@ -1303,11 +1322,11 @@
         let intentionalDisconnect = false; /* Track intentional disconnects */
         let bootloaderInfo = null;
         let partitionTableOffset = null;
-        let isDebugMode = window.location.hash.includes('debug');
         let isAdvancedMode = window.location.hash.includes('advanced');
         let selectedBaudRate = 921600;
         let selectedTransferSize = 4096;
         let selectedInFlightReads = 32;
+        let selectedPacketLogging = 'none';
 
         /* Performance tracking for read/write operations */
         let readStartTime = null;
@@ -1341,12 +1360,20 @@
                     initialBaudRate: selectedBaudRate,
                     readFlashBlockSize: selectedTransferSize,
                     readFlashMaxInFlight: selectedInFlightReads,
-                    logMessage: (msg) => console.log('[Flasher]', msg),
-                    logWarning: (msg) => console.warn('[Flasher WARNING]', msg),
-                    logError: (msg) => console.error('[Flasher ERROR]', msg),
-                    logDebug: (msg) => { isDebugMode ?? console.log('[Flasher DEBUG]', msg); },
-                    logPackets: isDebugMode,
+                    logMessage: (...args) => console.log('[Flasher]', ...args),
+                    logWarning: (...args) => console.warn('[Flasher WARNING]', ...args),
+                    logError: (...args) => console.error('[Flasher ERROR]', ...args),
+                    logDebug: (...args) => { if (isAdvancedMode) console.log('[Flasher DEBUG]', ...args); },
+                    logPackets: selectedPacketLogging !== 'none',
+                    devMode: selectedPacketLogging !== 'none',
                 });
+
+                /* Apply packet logging to SLIP layer */
+                if (flasher.slipLayer) {
+                    flasher.slipLayer.logPackets = selectedPacketLogging !== 'none';
+                    flasher.slipLayer.logDebug = (...args) => console.log('[SLIP]', ...args);
+                    flasher.slipLayer.logError = (...args) => console.error('[SLIP ERROR]', ...args);
+                }
 
                 /* Set up callback for unexpected device disconnection */
                 flasher.disconnected = () => {
@@ -1430,10 +1457,10 @@
 
                 parser = new ESP32Parser(flasher, {
                     sizeHint: totalSize,
-                    logMessage: (msg) => console.log('[Parser]', msg),
-                    logWarning: (msg) => console.warn('[Parser WARNING]', msg),
-                    logError: (msg) => console.error('[Parser ERROR]', msg),
-                    logDebug: (msg) => { },
+                    logMessage: (...args) => console.log('[Parser]', ...args),
+                    logWarning: (...args) => console.warn('[Parser WARNING]', ...args),
+                    logError: (...args) => console.error('[Parser ERROR]', ...args),
+                    logDebug: (...args) => { },
                     preReadCommandCbr: (addr, len) => {
                         deviceReadProgressDone = 0;
                         deviceReadProgressTotal = len;
@@ -1451,6 +1478,7 @@
                         }
                     },
                     postReadCommandCbr: (addr, len) => {
+                        console.log(`Completed read of ${len} bytes from 0x${addr.toString(16)}`);
                         const now = Date.now();
                         if (now - lastProgressUpdateTime >= UPDATE_THROTTLE_MS) {
                             lastProgressUpdateTime = now;
@@ -1471,8 +1499,11 @@
                         updateMemoryMap();
                     }
                 });
+                parser.sparseImage.dataUpdatedCallback = () => {
+                    updateMemoryMap();
+                };
                 displaySourceInfo({
-                    name: 'ESP32 Device',
+                    name: 'ESP Device',
                     size: totalSize,
                     type: `device/${flasher.current_chip || 'esp32'}`,
                     lastModified: Date.now()
@@ -1484,7 +1515,7 @@
                 parser.logError = (msg) => {
                     console.error('Parser:', msg);
                 };
-                if (isDebugMode) {
+                if (isAdvancedMode) {
                     parser.logDebug = (msg) => {
                         console.log('Parser:', msg);
                     };
@@ -1646,7 +1677,7 @@
         /**
          * Update memory map visualization
          */
-        async function updateMemoryMap() {
+        function updateMemoryMap() {
             if (!parser) return;
 
             const container = document.getElementById('memoryMapContainer');
@@ -1953,6 +1984,8 @@
 
             /* Add click handler to show segments in console */
             map.onclick = () => {
+
+                updateMemoryMap();
                 console.log('=== Memory Map Segments ===');
                 console.log(`Total Size: 0x${totalSize.toString(16).toUpperCase()} (${formatBytes(totalSize)})`);
                 console.log('\nRead Buffer Segments:');
@@ -2090,6 +2123,47 @@
             });
 
             setDeviceStatus('Advanced controls enabled (#advanced).', 'info');
+        }
+
+        function updatePacketLogging() {
+            const selected = document.querySelector('input[name="packetLogging"]:checked');
+            if (!selected) return;
+
+            selectedPacketLogging = selected.value;
+            console.log(`Packet logging changed to: ${selectedPacketLogging}`);
+
+            if (flasher) {
+                console.log('Applying to existing flasher...');
+                switch (selectedPacketLogging) {
+                    case 'none':
+                        flasher.logPackets = false;
+                        flasher.devMode = false;
+                        if (flasher.slipLayer) {
+                            flasher.slipLayer.logPackets = false;
+                        }
+                        break;
+                    case 'slip':
+                        flasher.logPackets = false;
+                        flasher.devMode = true;
+                        if (flasher.slipLayer) {
+                            flasher.slipLayer.logPackets = true;
+                            flasher.slipLayer.logDebug = (...args) => console.log('[SLIP]', ...args);
+                        }
+                        break;
+                    case 'raw':
+                        flasher.logPackets = true;
+                        flasher.devMode = true;
+                        if (flasher.slipLayer) {
+                            flasher.slipLayer.logPackets = true;
+                            flasher.slipLayer.logDebug = (...args) => console.log('[SLIP]', ...args);
+                        }
+                        break;
+                }
+                setDeviceStatus(`Packet logging: ${selectedPacketLogging} (applied)`, 'info');
+            } else {
+                console.log('No flasher yet, will apply on connect');
+                setDeviceStatus(`Packet logging: ${selectedPacketLogging} (will apply on connect)`, 'info');
+            }
         }
 
         function showDevicePopup(message, state = null) {
@@ -2434,15 +2508,27 @@
                 setDeviceStatus('Requesting serial port...', 'loading');
                 flasher = new ESPFlasher({
                     initialBaudRate: selectedBaudRate,
-                    logMessage: (msg) => console.log('[Flasher]', msg),
-                    logWarning: (msg) => console.warn('[Flasher WARNING]', msg),
-                    logError: (msg) => console.error('[Flasher ERROR]', msg),
-                    logDebug: (msg) => { isDebugMode ?? console.log('[Flasher DEBUG]', msg); },
-                    logPackets: isDebugMode,
+                    readFlashBlockSize: selectedTransferSize,
+                    readFlashMaxInFlight: selectedInFlightReads,
+                    logMessage: (...args) => console.log('[Flasher]', ...args),
+                    logWarning: (...args) => console.warn('[Flasher WARNING]', ...args),
+                    logError: (...args) => console.error('[Flasher ERROR]', ...args),
+                    logDebug: (...args) => { if (isAdvancedMode) console.log('[Flasher DEBUG]', ...args); },
+                    logPackets: selectedPacketLogging !== 'none',
+                    devMode: selectedPacketLogging !== 'none',
                 });
+
+                /* Apply packet logging to SLIP layer */
+                if (flasher.slipLayer) {
+                    flasher.slipLayer.logPackets = selectedPacketLogging !== 'none';
+                    flasher.slipLayer.logDebug = (...args) => console.log('[SLIP]', ...args);
+                    flasher.slipLayer.logError = (...args) => console.error('[SLIP ERROR]', ...args);
+                }
+
                 await flasher.openPort();
                 setDeviceStatus('Connected. You may Hard Reset, then Sync.', 'success');
                 setDeviceButtons({ connected: true });
+
             } catch (e) {
                 setDeviceStatus('Connection failed: ' + e.message, 'error');
                 setDeviceButtons({ connected: false });
@@ -2508,7 +2594,7 @@
 
                 /* Fake file info for UI */
                 displaySourceInfo({
-                    name: 'ESP32 Device',
+                    name: 'ESP Device',
                     size: totalSize,
                     type: `device/${flasher.current_chip || 'esp32'}`,
                     lastModified: Date.now()
@@ -2576,11 +2662,14 @@
                     const sparse = SparseImage.fromBuffer(e.target.result);
                     parser = new ESP32Parser(sparse, {
                         sizeHint: sparse.size,
-                        logMessage: (msg) => console.log('[Parser]', msg),
-                        logWarning: (msg) => console.warn('[Parser WARNING]', msg),
-                        logError: (msg) => console.error('[Parser ERROR]', msg),
-                        logDebug: (msg) => { },
+                        logMessage: (...args) => console.log('[Parser]', ...args),
+                        logWarning: (...args) => console.warn('[Parser WARNING]', ...args),
+                        logError: (...args) => console.error('[Parser ERROR]', ...args),
+                        logDebug: (...args) => { },
                     });
+                    parser.sparseImage.dataUpdatedCallback = () => {
+                        updateMemoryMap();
+                    };
                     displaySourceInfo(file);
                     parseAndDisplay(true).then(() => {
                         updateMemoryMap();
@@ -2625,19 +2714,116 @@
                    </select>`
                 : `<span>${formatBytes(sizeValueBytes)}</span>`;
 
-            // Build MAC address row for device mode
-            const macRow = isDevice && deviceMac
-                ? `<div class="info-item">
-                    <label>MAC Address</label>
-                    <span class="mono">${deviceMac}</span>
-                </div>`
-                : '';
+            // Build device-specific rows
+            let usbDeviceInfo = '';
+            let baudRateInfo = '';
+            let macRow = '';
+
+            if (isDevice) {
+                // USB Device (VID/PID)
+                if (flasher && flasher.port && flasher.port.getInfo) {
+                    const portInfo = flasher.port.getInfo();
+                    if (portInfo.usbVendorId !== undefined && portInfo.usbProductId !== undefined) {
+                        const vid = portInfo.usbVendorId.toString(16).padStart(4, '0').toUpperCase();
+                        const pid = portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase();
+                        let deviceName = 'Unknown';
+
+                        /* https://devicehunt.com */
+                        switch (portInfo.usbVendorId) {
+                            case 0x303A:
+                                deviceName = 'Espressif USB JTAG';
+                                break;
+                            case 0x10C4:
+                                deviceName = 'Silicon Labs - ';
+                                switch (portInfo.usbProductId) {
+                                    case 0xEA60:
+                                        deviceName += 'CP2102/CP2104';
+                                        break;
+                                    case 0xEA70:
+                                        deviceName += 'CP2105';
+                                        break;
+                                    default:
+                                        deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
+                                        break;
+                                }
+                                break;
+                            case 0x1A86:
+                                deviceName = 'QinHeng Electronics - ';
+                                switch (portInfo.usbProductId) {
+                                    case 0x7522:
+                                        deviceName += 'CH340C';
+                                        break;
+                                    case 0x7523:
+                                        deviceName += 'CH340';
+                                        break;
+                                    case 0x55D4:
+                                        deviceName += 'CH9102F';
+                                        break;
+                                    default:
+                                        deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
+                                        break;
+                                }
+                                break;
+                            case 0x0403:
+                                deviceName = 'FTDI - ';
+                                switch (portInfo.usbProductId) {
+                                    case 0x6001:
+                                        deviceName += 'FT232R';
+                                        break;
+                                    case 0x6010:
+                                        deviceName += 'FT2232C/D/H';
+                                        break;
+                                    case 0x6011:
+                                        deviceName += 'FT4232H';
+                                        break;
+                                    case 0x6014:
+                                        deviceName += 'FT232H';
+                                        break;
+                                    case 0x6015:
+                                        deviceName += 'FT231X';
+                                        break;
+                                    default:
+                                        deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
+                                        break;
+                                }
+                                break;
+                            default:
+                                deviceName = 'Unknown';
+                                break;
+                        }
+
+                        usbDeviceInfo = `<div class="info-item">
+                            <label>USB Device</label>
+                            <span class="mono">${deviceName} (${vid}:${pid})</span>
+                        </div>`;
+                    } else {
+                        usbDeviceInfo = `<div class="info-item">
+                            <label>USB Device</label>
+                            <span>VID/PID not available</span>
+                        </div>`;
+                    }
+                }
+
+                // Baud Rate
+                baudRateInfo = `<div class="info-item">
+                    <label>Baud Rate</label>
+                    <span class="mono">${selectedBaudRate}</span>
+                </div>`;
+
+                // MAC Address
+                if (deviceMac) {
+                    macRow = `<div class="info-item">
+                        <label>MAC Address</label>
+                        <span class="mono">${deviceMac}</span>
+                    </div>`;
+                }
+            }
 
             grid.innerHTML = `
-                <div class="info-item">
+                ${isDevice ? '' : `<div class="info-item">
                     <label>Filename</label>
                     <span>${file.name}</span>
-                </div>
+                </div>`}
                 <div class="info-item">
                     <label>Size</label>
                     ${sizeMarkup}
@@ -2646,11 +2832,13 @@
                     <label>Type</label>
                     <span>${typeLabel}</span>
                 </div>
-                ${macRow}
                 <div class="info-item">
                     <label>Last Modified</label>
                     <span>${new Date(file.lastModified).toLocaleString()}</span>
                 </div>
+                ${macRow}
+                ${usbDeviceInfo}
+                ${baudRateInfo}
             `;
 
             if (isDevice) {
@@ -2701,11 +2889,13 @@
             parser.sparseImage.size = sizeBytes;
 
             displaySourceInfo({
-                name: 'ESP32 Device',
+                name: 'ESP Device',
                 size: deviceFlashSizeBytes,
                 type: `device/${flasher.current_chip || 'esp32'}`,
                 lastModified: Date.now()
             });
+
+            updateMemoryMap();
         }
 
         async function parseAndDisplay(focusBootloader = false) {

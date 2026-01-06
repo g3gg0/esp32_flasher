@@ -90,8 +90,8 @@ class SlipLayer {
         this.escaping = false;
         this.verbose = true;
         this.logPackets = false;
-        this.logDebug = (msg) => { };
-        this.logError = (msg) => { };
+        this.logDebug = (...args) => { };
+        this.logError = (...args) => { };
     }
 
     /**
@@ -711,10 +711,10 @@ class ESPFlasher {
      */
     constructor(options = {}) {
         this.devMode = options.devMode || false;
-        this.logDebug = options.logDebug || ((msg) => { });
-        this.logError = options.logError || ((msg) => { });
-        this.logWarning = options.logWarning || ((msg) => { });
-        this.logMessage = options.logMessage || ((msg) => { });
+        this.logDebug = options.logDebug || ((...args) => { });
+        this.logError = options.logError || ((...args) => { });
+        this.logWarning = options.logWarning || ((...args) => { });
+        this.logMessage = options.logMessage || ((...args) => { });
         this.logPackets = options.logPackets || false;
 
         /*
@@ -1011,7 +1011,6 @@ class ESPFlasher {
         }
 
         const newBaud = baudRate || this.initialBaudRate;
-        this.initialBaudRate = newBaud;
         await this.port.open({ baudRate: newBaud });
 
         /* Restart RX loop (do not re-register global listeners to avoid duplicates) */
@@ -1483,7 +1482,7 @@ class ESPFlasher {
         for (let seq = 0; seq < packets; seq++) {
             const offset = seq * MAX_PACKET_SIZE;
             const chunk = binary.slice(offset, offset + MAX_PACKET_SIZE);
-            
+
             await this.executeCommand(this.buildCommandPacketU32(MEM_DATA, chunk.length, seq, 0, 0, chunk),
                 async (resolve, reject, responsePacket) => {
                     resolve();
@@ -1945,7 +1944,7 @@ class ESPFlasher {
     async readFlashPlain(address, totalLength = 0x1000, cbr) {
         let blockSize = Math.min(totalLength, this.readFlashBlockSize);
         let maxInFlight = Math.min(totalLength, blockSize * this.readFlashMaxInFlight);
-        const packetCount = totalLength / blockSize;
+        const packetCount = Math.ceil(totalLength / blockSize);
 
         let packet = 0;
         let lastAckedLength = 0;
@@ -1959,7 +1958,7 @@ class ESPFlasher {
         let totalBytesReceived = 0;
 
         if (this.devMode) {
-            this.logDebug(`[ReadFlashPlain] Starting ReadFlash:`, { address: `0x${address.toString(16)}`, length: totalLength, sectorSize: blockSize, packets: packetCount, maxInFlight: maxInFlight });
+            this.logDebug(`[ReadFlashPlain] Starting ReadFlash:`, { address: `0x${address.toString(16)}`, length: `0x${totalLength.toString(16)}`, blockSize: `0x${blockSize.toString(16)}`, packets: packetCount, maxInFlight: `0x${maxInFlight.toString(16)}` });
         }
 
         return this.executeCommand(
@@ -2028,9 +2027,16 @@ class ESPFlasher {
                     data = newData;
                     packet++;
 
+                    if (this.devMode) {
+                        this.logDebug(`[ReadFlashPlain] Received packet ${packet}/${packetCount}, total bytes: ${data.length}/${totalLength}`);
+                    }
+
                     /* Prepare response */
                     if (data.length >= (lastAckedLength + maxInFlight) || (data.length >= totalLength)) {
 
+                        if (this.devMode) {
+                            this.logDebug(`[ReadFlashPlain] Sending ACK for ${data.length} bytes (lastAckedLength=${lastAckedLength})`);
+                        }
                         /* Encode and write response */
                         var resp = new Uint8Array(4);
                         resp[0] = (data.length >> 0) & 0xFF;
@@ -2481,8 +2487,8 @@ class ESPFlasher {
             0x13: 'SPI_FLASH_MD5', 0x14: 'GET_SECURITY_INFO',
             0xd0: 'ERASE_FLASH', 0xd1: 'ERASE_REGION', 0xd2: 'READ_FLASH', 0xd3: 'RUN_USER_CODE'
         };
-        const cmdName = commandNames[packet.command] || `0x${packet.command.toString(16)}`;
-        this.logDebug(`[CMD] ${cmdName} (0x${packet.command.toString(16).padStart(2, '0')})`, 'params:', pkt);
+        const cmdName = commandNames[pkt.command] || `0x${pkt.command.toString(16)}`;
+        this.logDebug(`[CMD] ${cmdName} (0x${pkt.command.toString(16).padStart(2, '0')})`, 'params:', pkt);
 
         if (pkt.dir == 0) {
             this.logDebug(`Command: `, pkt);

@@ -453,7 +453,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         <div class="header">
             <h1>🔧 ESP32 Flasher Test Suite</h1>
             <p>Comprehensive testing tool for ESP32/ESP32-S2/ESP32-S3/ESP32-C3/ESP32-C6 devices</p>
-            <a href="#debug" onclick="isDebugMode = true; setupAdvancedControls()">Advanced mode</a>
+            <a href="#advanced" onclick="isAdvancedMode = true; setupAdvancedControls()">Advanced mode</a>
         </div>
 
         <div class="content">
@@ -478,6 +478,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                             style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
                             <option value="76800">76800</option>
                             <option value="115200">115200</option>
+                            <option value="460800">460800</option>
                             <option value="921600" selected>921600</option>
                             <option value="1000000">1000000</option>
                             <option value="2000000">2000000</option>
@@ -491,7 +492,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                             <option value="2048">2048</option>
                             <option value="4096" selected>4096</option>
                         </select>
-                        <label for="inFlightReadsSelect" style="font-size:0.9em; color:#a0a0a0;">In-Flight Reads:</label>
+                        <label for="inFlightReadsSelect" style="font-size:0.9em; color:#a0a0a0;">In-Flight
+                            Reads:</label>
                         <select id="inFlightReadsSelect"
                             style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
                             <option value="1">1</option>
@@ -500,6 +502,22 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                             <option value="64">64</option>
                             <option value="128">128</option>
                         </select>
+                        <div style="margin-top:10px;">
+                            <label style="font-size:0.9em; color:#a0a0a0;">Packet Logging:</label><br>
+                            <label style="font-size:0.85em; color:#c8c8c8; margin-right:15px;">
+                                <input type="radio" name="packetLogging" value="none" checked
+                                    onchange="updatePacketLogging()">
+                                None
+                            </label>
+                            <label style="font-size:0.85em; color:#c8c8c8; margin-right:15px;">
+                                <input type="radio" name="packetLogging" value="slip" onchange="updatePacketLogging()">
+                                SLIP frames
+                            </label>
+                            <label style="font-size:0.85em; color:#c8c8c8;">
+                                <input type="radio" name="packetLogging" value="raw" onchange="updatePacketLogging()">
+                                + RAW packets
+                            </label>
+                        </div>
                     </div>
                 </div>
                 <div class="button-group">
@@ -646,11 +664,11 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 </div>
             </div>
 
-            <!-- Debug Section -->
+            <!-- Advanced Section -->
             <div class="section">
-                <h2>🐛 Debug</h2>
+                <h2>🎯 Advanced</h2>
                 <div class="button-group">
-                    <button id="toggleDebugBtn" onclick="toggleDebugMode()">Toggle Debug Mode</button>
+                    <button id="toggleDebugBtn" onclick="toggleAdvancedMode()">Toggle Advanced Mode</button>
                     <button id="clearLogBtn" onclick="clearLog()">Clear Log</button>
                 </div>
                 <div class="log-container" id="logContainer">
@@ -669,10 +687,11 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         let selectedFile = null;
         let devicePopupTimer = null;
         let devicePopupContent = '';
-        let isDebugMode = window.location.hash.includes('debug');
+        let isAdvancedMode = window.location.hash.includes('advanced');
         let selectedBaudRate = 921600;
         let selectedTransferSize = 4096;
         let selectedInFlightReads = 32;
+        let selectedPacketLogging = 'none';
         let readStartTime = null;
         let writeStartTime = null;
 
@@ -879,7 +898,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             }
 
 
-            if (!isDebugMode) {
+            if (!isAdvancedMode) {
                 group.style.display = 'none';
                 return;
             }
@@ -928,6 +947,34 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             log('Advanced mode enabled: baud, transfer size, and in-flight controls available', 'info');
         }
 
+        function updatePacketLogging() {
+            const selected = document.querySelector('input[name="packetLogging"]:checked');
+            if (!selected) return;
+
+            selectedPacketLogging = selected.value;
+
+            if (flasher) {
+                switch (selectedPacketLogging) {
+                    case 'none':
+                        flasher.logPackets = false;
+                        flasher.devMode = false;
+                        flasher.slipLayer.logPackets = false;
+                        break;
+                    case 'slip':
+                        flasher.logPackets = true;
+                        flasher.devMode = false;
+                        flasher.slipLayer.logPackets = true;
+                        break;
+                    case 'raw':
+                        flasher.logPackets = true;
+                        flasher.devMode = true;
+                        flasher.slipLayer.logPackets = true;
+                        break;
+                }
+                log(`Packet logging set to: ${selectedPacketLogging}`, 'info');
+            }
+        }
+
         async function connectDevice() {
             try {
                 const connectionType = document.querySelector('input[name="connectionType"]:checked').value;
@@ -935,13 +982,38 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 log(`Requesting ${connectionType === 'webusb' ? 'WebUSB' : 'Web Serial'} port...`, 'info');
                 flasher = new ESPFlasher();
                 flasher.initialBaudRate = selectedBaudRate;
+                flasher.readFlashBlockSize = selectedTransferSize;
+                flasher.readFlashMaxInFlight = selectedInFlightReads;
                 flasher.logMessage = (msg) => log(msg, 'info');
 
-                if (isDebugMode) {
-                    flasher.logPackets = true;
+                /* Apply packet logging settings */
+                switch (selectedPacketLogging) {
+                    case 'none':
+                        flasher.logPackets = false;
+                        flasher.devMode = false;
+                        break;
+                    case 'slip':
+                        flasher.logPackets = true;
+                        flasher.devMode = false;
+                        break;
+                    case 'raw':
+                        flasher.logPackets = true;
+                        flasher.devMode = true;
+                        break;
+                }
+                if (flasher.slipLayer) {
+                    flasher.slipLayer.logPackets = flasher.logPackets;
+                }
+
+                if (isAdvancedMode) {
                     flasher.logDebug = (msg) => {
-                        log(`[DEBUG] ${msg}`, 'debug');
-                        console.log(`[Flasher DEBUG] ${msg}`);
+                        /* If packet logging is enabled, only log to console to avoid flooding the text box */
+                        if (selectedPacketLogging !== 'none') {
+                            console.log(`[Flasher DEBUG] ${msg}`);
+                        } else {
+                            log(`[DEBUG] ${msg}`, 'debug');
+                            console.log(`[Flasher DEBUG] ${msg}`);
+                        }
                     };
                 }
                 flasher.logError = (msg, detail = '') => log(`[ERROR] ${msg} ${detail}`, 'error');
@@ -1503,10 +1575,10 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             }
         }
 
-        function toggleDebugMode() {
+        function toggleAdvancedMode() {
             if (flasher) {
                 flasher.devMode = !flasher.devMode;
-                log(`Debug mode ${flasher.devMode ? 'ENABLED' : 'DISABLED'}`, 'info');
+                log(`Advanced mode ${flasher.devMode ? 'ENABLED' : 'DISABLED'}`, 'info');
             } else {
                 log('Connect to a device first', 'warn');
             }
