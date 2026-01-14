@@ -985,6 +985,10 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 flasher.readFlashBlockSize = selectedTransferSize;
                 flasher.readFlashMaxInFlight = selectedInFlightReads;
                 flasher.logMessage = (msg) => log(msg, 'info');
+                flasher.logWarning = (msg) => {
+                    log(`[WARNING] ${msg}`, 'warn');
+                    console.log(`[Flasher WARNING] ${msg}`);
+                };
 
                 /* Apply packet logging settings */
                 switch (selectedPacketLogging) {
@@ -1059,73 +1063,15 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 document.getElementById('baudRate').textContent = selectedBaudRate.toString();
 
                 // Display VID/PID information
-                const portInfo = flasher.port.getInfo();
-                if (portInfo.usbVendorId !== undefined && portInfo.usbProductId !== undefined) {
-                    const vid = portInfo.usbVendorId.toString(16).padStart(4, '0').toUpperCase();
-                    const pid = portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase();
-                    let deviceName = 'Unknown';
-
-                    /* https://devicehunt.com */
-                    switch (portInfo.usbVendorId) {
-                        case 0x303A:
-                            deviceName = 'Espressif USB JTAG';
-                            break;
-                        case 0x10C4:
-                            deviceName = 'Silicon Labs - '
-                            switch (portInfo.usbProductId) {
-                                case 0xEA60:
-                                    deviceName += 'CP2102/CP2104';
-                                    break;
-                                case 0xEA70:
-                                    deviceName += 'CP2105';
-                                    break;
-                                default:
-                                    deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
-                                    break;
-                            }
-                            break;
-                        case 0x1A86:
-                            deviceName = 'QinHeng Electronics - ';
-                            switch (portInfo.usbProductId) {
-                                case 0x7522:
-                                case 0x7523:
-                                    deviceName += 'CH340';
-                                    break;
-                                default:
-                                    deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
-                                    break;
-                            }
-                            break;
-                        case 0x0403:
-                            deviceName = 'FTDI - ';
-                            switch (portInfo.usbProductId) {
-                                case 0x6011:
-                                    deviceName += 'FT4232H Quad HS';
-                                    break;
-                                case 0x6014:
-                                    deviceName += 'FT232H Single';
-                                    break;
-                                case 0xa9a0:
-                                    deviceName += 'FT2232';
-                                    break;
-                                default:
-                                    deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
-                                    break;
-                            }
-                            break;
-                        default:
-                            deviceName = 'Unknown';
-                            break;
-                    }
-
-                    document.getElementById('usbDevice').textContent = `${deviceName} (${vid}:${pid})`;
+                if (flasher.usbDeviceVendor && flasher.usbDeviceName && flasher.usbDeviceVid && flasher.usbDevicePid) {
+                    document.getElementById('usbDevice').textContent = `${flasher.usbDeviceVendor} - ${flasher.usbDeviceName} (${flasher.usbDeviceVid}:${flasher.usbDevicePid})`;
                 } else {
                     document.getElementById('usbDevice').textContent = 'VID/PID not available';
                 }
 
                 if (!flasher.isEspressifUsbJtag) {
                     // Technical limitation note about baud rate and ROM messages
-                    log('Note: Web Serial cannot change baud rate without reopening; to avoid unintended resets we keep one baud from start to end. The ROM prints reset messages at 115200. With USB-UART RX/TX wiring you must choose: slow baud (115200) to see reset messages, or high baud (e.g., 921600) to get speed but miss those messages.', 'warn');
+                    log('Note: Web Serial cannot change baud rate without reopening; to avoid unintended resets we keep one baud from start to end. The ROM prints reset messages at 115200. With USB-UART RX/TX wiring you must choose: slow baud (115200) to see reset messages, or high baud (e.g., 921600) to get speed but miss those messages.', 'info');
                 }
                 updateStatus('Connected', 'connected');
 

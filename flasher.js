@@ -139,7 +139,7 @@ class SlipLayer {
         }
 
         const truncMsg = truncated ? ` (showing partially)` : '';
-        this.logDebug(`${symbol} SLIP ${type} ${label} [${data.length} bytes]${truncMsg}`, {lines: lines});
+        this.logDebug(`${symbol} SLIP ${type} ${label} [${data.length} bytes]${truncMsg}`, { lines: lines });
     }
 
     /**
@@ -848,7 +848,7 @@ class ESPFlasher {
         }
 
         const truncMsg = truncated ? ` (showing partially)` : '';
-        this.logDebug(`${arrow} RAW [${data.length} bytes]${truncMsg}`, {lines: lines});
+        this.logDebug(`${arrow} RAW [${data.length} bytes]${truncMsg}`, { lines: lines });
     }
 
     /**
@@ -891,29 +891,111 @@ class ESPFlasher {
 
                 await this.port.open({ baudRate: this.initialBaudRate });
 
+                let deviceVendor = `Unknown`;
+                let deviceName = `Unknown`;
+                let deviceVid = null;
+                let devicePid = null;
+
+                this.isEspressifUsbJtag = false;
+                this.maxBaudRate = 2000000;
+
                 /* Get and log VID/PID information */
                 const portInfo = this.port.getInfo();
                 if (portInfo.usbVendorId !== undefined && portInfo.usbProductId !== undefined) {
-                    const vid = portInfo.usbVendorId;
-                    const pid = portInfo.usbProductId;
-                    this.logDebug(`Device: VID=0x${vid.toString(16).padStart(4, '0').toUpperCase()}, PID=0x${pid.toString(16).padStart(4, '0').toUpperCase()}`);
+                    deviceVid = portInfo.usbVendorId.toString(16).padStart(4, '0').toUpperCase();
+                    devicePid = portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase();
 
-                    /* Check for Espressif USB JTAG device */
-                    if (vid === 0x303A) {
-                        this.logDebug('Detected Espressif USB JTAG device - high baud rates supported, bootloader messages will be visible');
-                        this.isEspressifUsbJtag = true;
-                    } else {
-                        this.isEspressifUsbJtag = false;
+                    /* https://devicehunt.com */
+                    switch (portInfo.usbVendorId) {
+                        case 0x303A:
+                            deviceVendor = 'Espressif';
+                            deviceName = 'USB JTAG';
+                            this.isEspressifUsbJtag = true;
+                            this.logDebug('Detected Espressif USB JTAG device - bootloader messages will be visible');
+                            break;
+
+                        case 0x10C4:
+                            deviceVendor = 'Silicon Labs';
+                            switch (portInfo.usbProductId) {
+                                case 0xEA60:
+                                    deviceName = 'CP2102/CP2104';
+                                    break;
+                                case 0xEA70:
+                                    deviceName = 'CP2105';
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+
+                        case 0x1A86:
+                            deviceVendor = 'QinHeng Electronics';
+                            switch (portInfo.usbProductId) {
+                                case 0x7522:
+                                    deviceName = 'CH340C';
+                                    break;
+                                case 0x7523:
+                                    deviceName = 'CH340';
+                                    this.maxBaudRate = 460800;
+                                    break;
+                                case 0x55D3:
+                                    deviceName = 'CH343';
+                                    break;
+                                case 0x55D4:
+                                    deviceName = 'CH9102F';
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+
+                        case 0x0403:
+                            deviceVendor = 'FTDI';
+                            switch (portInfo.usbProductId) {
+                                case 0x6001:
+                                    deviceName = 'FT232R';
+                                    break;
+                                case 0x6010:
+                                    deviceName = 'FT2232C/D/H';
+                                    break;
+                                case 0x6011:
+                                    deviceName = 'FT4232H';
+                                    break;
+                                case 0x6014:
+                                    deviceName = 'FT232H';
+                                    break;
+                                case 0x6015:
+                                    deviceName = 'FT231X';
+                                    break;
+                                default:
+                                    break;
+                            }
+                            break;
+
+                        default:
+                            break;
                     }
+
+                    this.logDebug(`Device: VID=0x${deviceVid}, PID=0x${devicePid} (${deviceName})`);
                 } else {
                     this.logDebug('Device: VID/PID information not available (may not be a USB device)');
-                    this.isEspressifUsbJtag = false;
                 }
+
+                this.usbDeviceVendor = deviceVendor;
+                this.usbDeviceName = deviceName;
+                this.usbDeviceVid = deviceVid;
+                this.usbDevicePid = devicePid;
             } catch (error) {
                 reject(error);
                 return;
             }
 
+            if (this.initialBaudRate > this.maxBaudRate) {
+                this.logWarning(`The selected baud rate of ${this.initialBaudRate} exceeds the maximum supported by this device (${this.maxBaudRate}). Falling back to ${this.maxBaudRate}.`);
+                this.initialBaudRate = this.maxBaudRate;
+                await this.port.close();
+                await this.port.open({ baudRate: this.initialBaudRate });
+            }
 
             // Register for device lost (Web Serial API)
             if (navigator.serial) {

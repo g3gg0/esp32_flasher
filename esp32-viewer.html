@@ -2724,98 +2724,31 @@
 
             if (isDevice) {
                 // USB Device (VID/PID)
-                if (flasher && flasher.port && flasher.port.getInfo) {
-                    const portInfo = flasher.port.getInfo();
-                    if (portInfo.usbVendorId !== undefined && portInfo.usbProductId !== undefined) {
-                        const vid = portInfo.usbVendorId.toString(16).padStart(4, '0').toUpperCase();
-                        const pid = portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase();
-                        let deviceName = 'Unknown';
-
-                        /* https://devicehunt.com */
-                        switch (portInfo.usbVendorId) {
-                            case 0x303A:
-                                deviceName = 'Espressif USB JTAG';
-                                break;
-                            case 0x10C4:
-                                deviceName = 'Silicon Labs - ';
-                                switch (portInfo.usbProductId) {
-                                    case 0xEA60:
-                                        deviceName += 'CP2102/CP2104';
-                                        break;
-                                    case 0xEA70:
-                                        deviceName += 'CP2105';
-                                        break;
-                                    default:
-                                        deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
-                                        break;
-                                }
-                                break;
-                            case 0x1A86:
-                                deviceName = 'QinHeng Electronics - ';
-                                switch (portInfo.usbProductId) {
-                                    case 0x7522:
-                                        deviceName += 'CH340C';
-                                        break;
-                                    case 0x7523:
-                                        deviceName += 'CH340';
-                                        break;
-                                    case 0x55D4:
-                                        deviceName += 'CH9102F';
-                                        break;
-                                    default:
-                                        deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
-                                        break;
-                                }
-                                break;
-                            case 0x0403:
-                                deviceName = 'FTDI - ';
-                                switch (portInfo.usbProductId) {
-                                    case 0x6001:
-                                        deviceName += 'FT232R';
-                                        break;
-                                    case 0x6010:
-                                        deviceName += 'FT2232C/D/H';
-                                        break;
-                                    case 0x6011:
-                                        deviceName += 'FT4232H';
-                                        break;
-                                    case 0x6014:
-                                        deviceName += 'FT232H';
-                                        break;
-                                    case 0x6015:
-                                        deviceName += 'FT231X';
-                                        break;
-                                    default:
-                                        deviceName += `Unknown (${portInfo.usbProductId.toString(16).padStart(4, '0').toUpperCase()})`;
-                                        break;
-                                }
-                                break;
-                            default:
-                                deviceName = 'Unknown';
-                                break;
-                        }
-
-                        usbDeviceInfo = `<div class="info-item">
-                            <label>USB Device</label>
-                            <span class="mono">${deviceName} (${vid}:${pid})</span>
-                        </div>`;
-                    } else {
-                        usbDeviceInfo = `<div class="info-item">
-                            <label>USB Device</label>
-                            <span>VID/PID not available</span>
-                        </div>`;
-                    }
+                if (flasher.usbDeviceVendor && flasher.usbDeviceName && flasher.usbDeviceVid && flasher.usbDevicePid) {
+                    usbDeviceInfo = `
+                    <div class="info-item">
+                        <label>USB Device</label>
+                        <span class="mono">${flasher.usbDeviceVendor} - ${flasher.usbDeviceName} (${flasher.usbDeviceVid}:${flasher.usbDevicePid})</span>
+                    </div>`;
+                } else {
+                    usbDeviceInfo = `
+                    <div class="info-item">
+                        <label>USB Device</label>
+                        <span>VID/PID not available</span>
+                    </div>`;
                 }
 
                 // Baud Rate
-                baudRateInfo = `<div class="info-item">
+                baudRateInfo = `
+                <div class="info-item">
                     <label>Baud Rate</label>
                     <span class="mono">${selectedBaudRate}</span>
                 </div>`;
 
                 // MAC Address
                 if (deviceMac) {
-                    macRow = `<div class="info-item">
+                    macRow = `
+                    <div class="info-item">
                         <label>MAC Address</label>
                         <span class="mono">${deviceMac}</span>
                     </div>`;
@@ -2823,7 +2756,8 @@
             }
 
             grid.innerHTML = `
-                ${isDevice ? '' : `<div class="info-item">
+                ${isDevice ? '' : `
+                <div class="info-item">
                     <label>Filename</label>
                     <span>${file.name}</span>
                 </div>`}
