@@ -18,28 +18,28 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            color: #d4d4d4;
         }
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #0d1117;
+            background: linear-gradient(135deg, #1a1f35 0%, #1c1424 100%);
             min-height: 100vh;
             padding: 20px;
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1900px;
             margin: 0 auto;
-            background: #161b22;
+            background: #2a2a2a;
             border-radius: 10px;
             box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
             overflow: hidden;
-            border: 1px solid #30363d;
         }
 
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            background: linear-gradient(135deg, #3d4a7a 0%, #2d1f3d 100%);
+            color: #e0e0e0;
             padding: 30px;
             text-align: center;
         }
@@ -50,8 +50,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         }
 
         .header p {
-            font-size: 1.1em;
             opacity: 0.9;
+            font-size: 1.1em;
         }
 
         .content {
@@ -452,8 +452,12 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
     <div class="container">
         <div class="header">
             <h1>🔧 ESP32 Flasher Test Suite</h1>
-            <p>Comprehensive testing tool for ESP32/ESP32-S2/ESP32-S3/ESP32-C3/ESP32-C6 devices</p>
-            <a href="#advanced" onclick="isAdvancedMode = true; setupAdvancedControls()">Advanced mode</a>
+            <p>Comprehensive testing tool for ESP devices</p>
+            <div style="font-size: 0.75em; margin-top: 12px; opacity: 0.7;">
+                <a href="#advanced" onclick="isAdvancedMode = !isAdvancedMode; setupAdvancedControls()">[Advanced mode]</a> &nbsp;&nbsp;&nbsp;
+                <a href="https://www.g3gg0.de">[g3gg0.de]</a> &nbsp;&nbsp;&nbsp;
+                <a href="esp32-viewer.html">[ESP32 Editor]</a>
+            </div>
         </div>
 
         <div class="content">
