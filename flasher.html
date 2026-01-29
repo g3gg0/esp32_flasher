@@ -1014,17 +1014,17 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 }
 
                 if (isAdvancedMode) {
-                    flasher.logDebug = (msg) => {
+                    flasher.logDebug = (...args) => {
                         /* If packet logging is enabled, only log to console to avoid flooding the text box */
                         if (selectedPacketLogging !== 'none') {
-                            console.log(`[Flasher DEBUG] ${msg}`);
+                            console.log(`[Flasher DEBUG]`, ...args);
                         } else {
-                            log(`[DEBUG] ${msg}`, 'debug');
-                            console.log(`[Flasher DEBUG] ${msg}`);
+                            log(`[DEBUG]`, ...args);
+                            console.log(`[Flasher DEBUG]`, ...args);
                         }
                     };
                 }
-                flasher.logError = (msg, detail = '') => log(`[ERROR] ${msg} ${detail}`, 'error');
+                flasher.logError = (...args) => log(`[ERROR]`, ...args);
 
                 flasher.deviceStateCallback = (state, data) => {
                     const msg = formatDeviceStateMessage(state, data);
