@@ -1529,7 +1529,10 @@
 
                 /* Hide file drop/browse when in device mode */
                 const dropZone = document.getElementById('dropZone');
-                if (dropZone) dropZone.style.display = 'none';
+                if (dropZone) {
+                    dropZone.style.display = 'none';
+                    dropZone.style.pointerEvents = 'none';
+                }
             } catch (e) {
                 if (flasher) {
                     try {
@@ -1617,7 +1620,10 @@
 
             /* Show file drop/browse zone */
             const dropZone = document.getElementById('dropZone');
-            if (dropZone) dropZone.style.display = 'block';
+            if (dropZone) {
+                dropZone.style.display = 'block';
+                dropZone.style.pointerEvents = 'auto';
+            }
         }
 
         function clearDeviceState() {
@@ -1662,7 +1668,10 @@
 
             /* Show file drop/browse when disconnected */
             const dropZone = document.getElementById('dropZone');
-            if (dropZone) dropZone.style.display = 'block';
+            if (dropZone) {
+                dropZone.style.display = 'block';
+                dropZone.style.pointerEvents = 'auto';
+            }
 
             const popup = document.getElementById('devicePopup');
             if (popup) {
@@ -2619,26 +2628,189 @@
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
 
+        console.log('Setting up drop zone handlers. dropZone:', dropZone ? 'found' : 'NOT FOUND');
+
         setupAdvancedControls();
 
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
+            e.stopPropagation();
             dropZone.classList.add('drag-over');
+            /* Show import dialog when hovering with files */
+            if (!document.getElementById('importPopupOverlay')) {
+                console.log('Showing import popup on dropZone dragover');
+                showImportPopup(0x00000000, deviceFlashSizeBytes, true, async () => { await parseAndDisplay(true); });
+            }
         });
 
-        dropZone.addEventListener('dragleave', () => {
-            dropZone.classList.remove('drag-over');
+        dropZone.addEventListener('dragleave', (e) => {
+            e.stopPropagation();
+            /* Only remove if we're leaving the zone entirely */
+            if (e.target === dropZone) {
+                dropZone.classList.remove('drag-over');
+                /* Close import dialog when leaving */
+                hideImportPopup();
+            }
         });
 
         dropZone.addEventListener('drop', (e) => {
+            console.log('DROP EVENT TRIGGERED on dropZone');
             e.preventDefault();
+            e.stopPropagation();
             dropZone.classList.remove('drag-over');
 
             const files = e.dataTransfer.files;
+            console.log('Files dropped:', files.length);
             if (files.length > 0) {
-                handleFile(files[0]);
+                /* Store the files in importFiles for the dialog to process */
+                importFiles = Array.from(files);
+                const fileNames = importFiles.map(f => f.name).join(', ');
+                const fileNameSpan = document.getElementById('importFileName');
+                if (fileNameSpan) fileNameSpan.textContent = fileNames;
+
+                /* Separate JSON and binary files */
+                const jsonFiles = importFiles.filter(f => f.name.toLowerCase().endsWith('.json'));
+                const binFiles = importFiles.filter(f => !f.name.toLowerCase().endsWith('.json'));
+
+                console.log('JSON files:', jsonFiles.length, 'BIN files:', binFiles.length);
+
+                /* Update preview in the import dialog */
+                if (jsonFiles.length > 0) {
+                    importJsonFile = jsonFiles[0];
+                    importBaseUrl = null;
+                    console.log('Processing JSON file:', importJsonFile.name);
+                    handleJsonManifest(importJsonFile).then(() => {
+                        console.log('JSON processed');
+                        if (binFiles.length > 0) {
+                            updateImportPreviewWithMatching();
+                        }
+                    }).catch(err => {
+                        console.error('Error handling JSON manifest:', err);
+                    });
+                } else if (binFiles.length === 1) {
+                    /* Single binary file - show in preview, use existing address field */
+                    const file = binFiles[0];
+                    console.log('Single .bin file detected:', file.name);
+                    
+                    /* Set importFile for single binary mode */
+                    importFile = file;
+                    importIsJson = false;
+                    
+                    const previewDiv = document.getElementById('importPreview');
+                    if (previewDiv) {
+                        previewDiv.innerHTML = `<span style="color: #7a8bdc;">File: ${file.name} (${(file.size / 1024).toFixed(2)} KB)</span>`;
+                    }
+                    
+                    /* Show address field */
+                    const addressInput = document.getElementById('importAddress');
+                    if (addressInput && addressInput.parentElement) {
+                        addressInput.parentElement.style.display = 'block';
+                    }
+                    
+                    const applyBtn = document.getElementById('importApplyBtn');
+                    if (applyBtn) applyBtn.disabled = false;
+                } else if (binFiles.length > 1) {
+                    /* Multiple binary files without JSON */
+                    const previewDiv = document.getElementById('importPreview');
+                    if (previewDiv) {
+                        previewDiv.innerHTML = '<span style="color: #ff6b6b;">Multiple .bin files without a JSON manifest. Please also drop a JSON file to specify addresses.</span>';
+                    }
+                    const applyBtn = document.getElementById('importApplyBtn');
+                    if (applyBtn) applyBtn.disabled = true;
+                }
             }
         });
+
+        /* Global document drag/drop handlers to support drops when file is loaded and drop zone is hidden */
+        document.addEventListener('dragover', (e) => {
+            console.log('Document dragover detected, zone display:', dropZone.style.display);
+            if (dropZone.style.display === 'none') {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                /* Show import dialog on hover when zone is hidden */
+                if (!document.getElementById('importPopupOverlay')) {
+                    console.log('Showing import popup on document dragover');
+                    showImportPopup(0x00000000, deviceFlashSizeBytes, true, async () => { await parseAndDisplay(true); });
+                }
+                console.log('Document dragover prevented');
+            }
+        }, true);
+
+        document.addEventListener('dragleave', (e) => {
+            /* Close import dialog when leaving document area */
+            if (dropZone.style.display === 'none' && e.clientX === 0 && e.clientY === 0) {
+                console.log('Document dragleave detected, closing import dialog');
+                hideImportPopup();
+            }
+        }, true);
+
+        document.addEventListener('drop', (e) => {
+            console.log('Document drop detected, zone display:', dropZone.style.display);
+            if (dropZone.style.display === 'none') {
+                e.preventDefault();
+                e.stopPropagation();
+                const files = e.dataTransfer.files;
+                console.log('Document drop handled, files:', files.length);
+                if (files.length > 0) {
+                    /* Store files in importFiles for preview */
+                    importFiles = Array.from(files);
+                    const fileNames = importFiles.map(f => f.name).join(', ');
+                    const fileNameSpan = document.getElementById('importFileName');
+                    if (fileNameSpan) fileNameSpan.textContent = fileNames;
+
+                    /* Separate JSON and binary files */
+                    const jsonFiles = importFiles.filter(f => f.name.toLowerCase().endsWith('.json'));
+                    const binFiles = importFiles.filter(f => !f.name.toLowerCase().endsWith('.json'));
+
+                    console.log('JSON files:', jsonFiles.length, 'BIN files:', binFiles.length);
+
+                    /* Update preview in the dialog (no auto-import yet) */
+                    if (jsonFiles.length > 0) {
+                        importJsonFile = jsonFiles[0];
+                        importBaseUrl = null;
+                        console.log('Processing JSON file:', importJsonFile.name);
+                        handleJsonManifest(importJsonFile).then(() => {
+                            console.log('JSON processed');
+                            if (binFiles.length > 0) {
+                                updateImportPreviewWithMatching();
+                            }
+                        }).catch(err => {
+                            console.error('Error handling JSON manifest:', err);
+                        });
+                    } else if (binFiles.length === 1) {
+                        /* Single binary file - show in preview, use existing address field */
+                        const file = binFiles[0];
+                        console.log('Single .bin file detected:', file.name);
+                        
+                        /* Set importFile for single binary mode */
+                        importFile = file;
+                        importIsJson = false;
+                        
+                        const previewDiv = document.getElementById('importPreview');
+                        if (previewDiv) {
+                            previewDiv.innerHTML = `<span style="color: #7a8bdc;">File: ${file.name} (${(file.size / 1024).toFixed(2)} KB)</span>`;
+                        }
+                        
+                        /* Show address field */
+                        const addressInput = document.getElementById('importAddress');
+                        if (addressInput && addressInput.parentElement) {
+                            addressInput.parentElement.style.display = 'block';
+                        }
+                        
+                        const applyBtn = document.getElementById('importApplyBtn');
+                        if (applyBtn) applyBtn.disabled = false;
+                    } else if (binFiles.length > 1) {
+                        /* Multiple binary files without JSON */
+                        const previewDiv = document.getElementById('importPreview');
+                        if (previewDiv) {
+                            previewDiv.innerHTML = '<span style="color: #ff6b6b;">Multiple .bin files without a JSON manifest. Please also drop a JSON file to specify addresses.</span>';
+                        }
+                        const applyBtn = document.getElementById('importApplyBtn');
+                        if (applyBtn) applyBtn.disabled = true;
+                    }
+                }
+            }
+        }, true);
 
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
@@ -2680,7 +2852,10 @@
                         updateMemoryMap();
                         // Hide drop zone and show close button when file is loaded
                         const dropZone = document.getElementById('dropZone');
-                        if (dropZone) dropZone.style.display = 'none';
+                        if (dropZone) {
+                            dropZone.style.display = 'none';
+                            dropZone.style.pointerEvents = 'none';
+                        }
                         const closeBtn = document.getElementById('closeFileBtn');
                         if (closeBtn) closeBtn.style.display = 'inline-block';
                     }).catch(err => {
@@ -3582,9 +3757,12 @@
 
         /* Import binary file functions */
         let importFile = null;
+        let importFiles = []; /* Array of dropped/selected files */
         let importIsJson = false;
         let importJsonData = null;
-        let importBaseUrl = null; // For resolving relative paths in JSON manifests
+        let importJsonFile = null; /* Reference to the JSON file object */
+        let importFileMatches = {}; /* Map of JSON filename -> dropped file object */
+        let importBaseUrl = null; /* For resolving relative paths in JSON manifests */
         let importRangeStart = 0;
         let importRangeLength = 0;
         let importAddressEditable = true;
@@ -3670,13 +3848,13 @@
                 const text = await file.text();
                 const manifest = JSON.parse(text);
 
-                // Detect manifest format and normalize to common structure
+                /* Detect manifest format and normalize to common structure */
                 let flashEntries = [];
                 let manifestType = '';
                 let availableBuilds = [];
 
                 if (manifest.flash && Array.isArray(manifest.flash)) {
-                    // Format 1: { flash: [ { url, address } ] }
+                    /* Format 1: { flash: [ { url, address } ] } */
                     manifestType = 'esptool';
                     flashEntries = manifest.flash.map(entry => ({
                         url: entry.url,
@@ -3685,16 +3863,16 @@
                         isApp: entry.app || false
                     }));
                 } else if (manifest.builds && Array.isArray(manifest.builds) && manifest.builds.length > 0) {
-                    // Format 2: { builds: [ { chipFamily, parts: [], ota: {} } ] }
+                    /* Format 2: { builds: [ { chipFamily, parts: [], ota: {} } ] } */
                     manifestType = 'esp-web-tools';
 
-                    // Collect available builds
+                    /* Collect available builds */
                     availableBuilds = manifest.builds.map((build, idx) => ({
                         chipFamily: build.chipFamily || `Build ${idx + 1}`,
                         index: idx
                     }));
 
-                    // Try to auto-select build based on connected device chip
+                    /* Try to auto-select build based on connected device chip */
                     let selectedBuildIdx = 0;
                     if (flasher && flasher.current_chip) {
                         const deviceChip = flasher.current_chip.toUpperCase();
@@ -3707,7 +3885,7 @@
 
                     const build = manifest.builds[selectedBuildIdx];
 
-                    // Collect parts
+                    /* Collect parts */
                     if (build.parts && Array.isArray(build.parts)) {
                         flashEntries = build.parts.map(part => ({
                             path: part.path,
@@ -3717,11 +3895,11 @@
                         }));
                     }
 
-                    // Add OTA file if present (usually for OTA updates, not initial flash)
-                    // But we'll include it at offset 0 if no parts exist
+                    /* Add OTA file if present (usually for OTA updates, not initial flash) */
+                    /* But we'll include it at offset 0 if no parts exist */
                     if (build.ota && build.ota.path) {
                         if (flashEntries.length === 0) {
-                            // No parts, use OTA file at offset 0
+                            /* No parts, use OTA file at offset 0 */
                             flashEntries.push({
                                 path: build.ota.path,
                                 url: build.ota.path,
@@ -3741,53 +3919,60 @@
                 importIsJson = true;
                 importJsonData = { ...manifest, flashEntries, manifestType, availableBuilds };
 
-                // Update preview to show JSON manifest details
+                /* Update preview */
                 const previewDiv = document.getElementById('importPreview');
                 const applyBtn = document.getElementById('importApplyBtn');
                 const addressInput = document.getElementById('importAddress');
 
-                // Hide address input for JSON manifests
+                /* Hide address input for JSON manifests */
                 if (addressInput && addressInput.parentElement) {
                     addressInput.parentElement.style.display = 'none';
                 }
 
-                // Show erase flash option for JSON manifests
+                /* Show erase flash option for JSON manifests */
                 const eraseOption = document.getElementById('importEraseOption');
                 if (eraseOption) {
                     eraseOption.style.display = 'block';
                 }
 
-                let html = `<div style="line-height: 1.8;">`;
-                html += `<strong style="color: #7a8bdc;">JSON Manifest Detected</strong><br>`;
-                if (manifest.name) html += `Name: <strong>${manifest.name}</strong><br>`;
-                if (manifest.version) html += `Version: <strong>${manifest.version}</strong><br>`;
-                if (manifest.chip) html += `Chip: <strong>${manifest.chip}</strong><br>`;
+                /* Check if we have dropped files to match against */
+                if (importFiles.length > 0) {
+                    /* Update preview with matching information */
+                    await updateImportPreviewWithMatching();
+                } else {
+                    /* Show regular preview without file matching */
+                    let html = `<div style="line-height: 1.8;">`;
+                    html += `<strong style="color: #7a8bdc;">JSON Manifest Detected</strong><br>`;
+                    if (manifest.name) html += `Name: <strong>${manifest.name}</strong><br>`;
+                    if (manifest.version) html += `Version: <strong>${manifest.version}</strong><br>`;
+                    if (manifest.chip) html += `Chip: <strong>${manifest.chip}</strong><br>`;
 
-                // Show selected build info
-                if (availableBuilds.length > 0) {
-                    const selectedBuild = manifest.builds[0]; // We used index 0 above after auto-selection
-                    html += `Build: <strong>${selectedBuild.chipFamily || 'Unknown'}</strong>`;
-                    if (availableBuilds.length > 1) {
-                        html += ` <span style="color: #888; font-size: 0.9em;">(${availableBuilds.length} builds available)</span>`;
+                    /* Show selected build info */
+                    if (availableBuilds.length > 0) {
+                        const selectedBuild = manifest.builds[0]; /* We used index 0 above after auto-selection */
+                        html += `Build: <strong>${selectedBuild.chipFamily || 'Unknown'}</strong>`;
+                        if (availableBuilds.length > 1) {
+                            html += ` <span style="color: #888; font-size: 0.9em;">(${availableBuilds.length} builds available)</span>`;
+                        }
+                        html += `<br>`;
                     }
-                    html += `<br>`;
+
+                    html += `<br><strong>Flash Entries (${flashEntries.length}):</strong><br>`;
+
+                    for (let i = 0; i < flashEntries.length; i++) {
+                        const entry = flashEntries[i];
+                        const addr = `0x${entry.address.toString(16).toUpperCase()}`;
+                        const filename = getFilename(entry.path || entry.url);
+                        html += `${i + 1}. ${addr}: ${filename}`;
+                        if (entry.isApp) html += ` <span style="color: #ffa726;">(app)</span>`;
+                        html += `<br>`;
+                    }
+
+                    html += `</div>`;
+                    previewDiv.innerHTML = html;
+
+                    if (applyBtn) applyBtn.disabled = false;
                 }
-
-                html += `<br><strong>Flash Entries (${flashEntries.length}):</strong><br>`;
-
-                for (let i = 0; i < flashEntries.length; i++) {
-                    const entry = flashEntries[i];
-                    const addr = `0x${entry.address.toString(16).toUpperCase()}`;
-                    const filename = entry.path.split('/').pop();
-                    html += `${i + 1}. ${addr}: ${filename}`;
-                    if (entry.isApp) html += ` <span style="color: #ffa726;">(app)</span>`;
-                    html += `<br>`;
-                }
-
-                html += `</div>`;
-                previewDiv.innerHTML = html;
-
-                if (applyBtn) applyBtn.disabled = false;
 
             } catch (error) {
                 console.error('JSON parse error:', error);
@@ -3823,8 +4008,11 @@
                 popup.style.display = 'none';
             }
             importFile = null;
+            importFiles = [];
             importIsJson = false;
             importJsonData = null;
+            importJsonFile = null;
+            importFileMatches = {};
             importBaseUrl = null;
             importRangeStart = 0;
             importRangeLength = 0;
@@ -3857,6 +4045,17 @@
             const previewDiv = document.getElementById('importPreview');
             const applyBtn = document.getElementById('importApplyBtn');
             const addressInput = document.getElementById('importAddress');
+
+            /* Show address input for binary files */
+            if (addressInput && addressInput.parentElement) {
+                addressInput.parentElement.style.display = 'block';
+            }
+
+            /* Hide erase option for single binary files */
+            const eraseOption = document.getElementById('importEraseOption');
+            if (eraseOption) {
+                eraseOption.style.display = 'none';
+            }
 
             if (!importFile || !addressInput || !previewDiv) {
                 if (previewDiv) previewDiv.innerHTML = 'Select a file and enter an address to see preview';
@@ -3896,7 +4095,7 @@
             html += `End: <strong>0x${endAddress.toString(16).toUpperCase()}</strong><br>`;
             html += `Allowed: <strong>0x${allowedStart.toString(16).toUpperCase()} - 0x${allowedEnd.toString(16).toUpperCase()}</strong><br>`;
 
-            // Check if it fits in device flash
+            /* Check if it fits in device flash */
             if (endAddress > deviceSize) {
                 html += `<br><span style="color: #ff6b6b;">⚠️ Warning: File extends beyond device flash size (0x${deviceSize.toString(16).toUpperCase()})</span>`;
                 if (applyBtn) applyBtn.disabled = true;
@@ -3904,7 +4103,7 @@
                 html += `<br><span style="color: #ff6b6b;">⚠️ Warning: File exceeds allowed range</span>`;
                 if (applyBtn) applyBtn.disabled = true;
             } else {
-                // Check which partitions will be affected
+                /* Check which partitions will be affected */
                 const affectedPartitions = [];
                 if (parser.partitions) {
                     for (const part of parser.partitions) {
@@ -3930,54 +4129,113 @@
         }
 
         async function applyImport() {
+            /* Create parser if it doesn't exist (when importing without loading firmware first) */
             if (!parser) {
-                return;
+                console.log('Creating new parser for import');
+                const sparse = new SparseImage(deviceFlashSizeBytes);
+                parser = new ESP32Parser(sparse, {
+                    sizeHint: deviceFlashSizeBytes,
+                    logMessage: (...args) => console.log('[Parser]', ...args),
+                    logWarning: (...args) => console.warn('[Parser WARNING]', ...args),
+                    logError: (...args) => console.error('[Parser ERROR]', ...args),
+                    logDebug: (...args) => { },
+                });
+                parser.sparseImage.dataUpdatedCallback = () => {
+                    updateMemoryMap();
+                };
+                displaySourceInfo({
+                    name: 'Imported from JSON + files',
+                    size: deviceFlashSizeBytes,
+                    type: 'import',
+                    lastModified: Date.now()
+                });
             }
 
-            // Handle JSON manifest
+            /* Handle JSON manifest */
             if (importIsJson && importJsonData) {
                 try {
-                    // Check if erase flash is requested
+                    /* Check if erase flash is requested */
                     const eraseFlashCheckbox = document.getElementById('importEraseFlash');
                     const shouldEraseFlash = eraseFlashCheckbox && eraseFlashCheckbox.checked;
 
                     if (shouldEraseFlash) {
                         setDeviceStatus('Erasing flash...', 'loading');
                         const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
-                        // Clear existing write buffers first, then fill with 0xFF
+                        /* Clear existing write buffers first, then fill with 0xFF */
                         parser.sparseImage.writeBuffer = [];
                         parser.sparseImage.fill(0xFF, 0, deviceSize);
                         console.log(`Erased flash: 0x0 - 0x${deviceSize.toString(16).toUpperCase()}`);
                     }
 
-                    setDeviceStatus('Downloading and importing manifest files...', 'loading');
+                    /* Determine if we have matched files or need to download */
+                    const hasMatchedFiles = Object.keys(importFileMatches).length > 0;
+                    if (hasMatchedFiles) {
+                        setDeviceStatus('Importing matched local files...', 'loading');
+                    } else {
+                        setDeviceStatus('Downloading and importing manifest files...', 'loading');
+                    }
 
                     let importCount = 0;
                     const rangeStart = importRangeStart;
                     const rangeEnd = importRangeStart + importRangeLength;
                     const deviceSize = parser.sparseImage ? parser.sparseImage.size : deviceFlashSizeBytes;
-                    for (const entry of importJsonData.flashEntries) {
-                        let url = entry.url || entry.path;
+                    const failedEntries = [];
 
-                        // Resolve relative URLs
-                        if (importBaseUrl && !url.startsWith('http://') && !url.startsWith('https://')) {
-                            url = importBaseUrl + '/' + url;
+                    for (const entry of importJsonData.flashEntries) {
+                        const jsonFilename = getFilename(entry.path || entry.url).toLowerCase();
+                        let data = null;
+                        let sourceDesc = '';
+
+                        /* First, try to use matched dropped file */
+                        if (importFileMatches[jsonFilename]) {
+                            try {
+                                const matchedFile = importFileMatches[jsonFilename];
+                                const arrayBuffer = await matchedFile.arrayBuffer();
+                                data = new Uint8Array(arrayBuffer);
+                                sourceDesc = `(local: ${matchedFile.name})`;
+                                console.log(`Using matched file ${matchedFile.name} for address 0x${entry.address.toString(16).toUpperCase()}`);
+                            } catch (err) {
+                                console.warn(`Failed to read matched file: ${err.message}`);
+                                failedEntries.push(entry);
+                                continue;
+                            }
+                        } else {
+                            /* Fall back to downloading from URL */
+                            let url = entry.url || entry.path;
+
+                            /* Resolve relative URLs */
+                            if (importBaseUrl && !url.startsWith('http://') && !url.startsWith('https://')) {
+                                url = importBaseUrl + '/' + url;
+                            }
+
+                            if (!url) {
+                                console.warn('Skipping entry without URL:', entry);
+                                failedEntries.push(entry);
+                                continue;
+                            }
+
+                            try {
+                                console.log(`Downloading ${url} for address 0x${entry.address.toString(16).toUpperCase()}`);
+                                sourceDesc = `(download: ${url})`;
+
+                                const response = await fetch(url);
+                                if (!response.ok) {
+                                    throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
+                                }
+
+                                const arrayBuffer = await response.arrayBuffer();
+                                data = new Uint8Array(arrayBuffer);
+                            } catch (err) {
+                                console.warn(`Failed to download ${url}: ${err.message}`);
+                                failedEntries.push(entry);
+                                continue;
+                            }
                         }
 
-                        if (!url) {
-                            console.warn('Skipping entry without URL:', entry);
+                        if (!data) {
+                            failedEntries.push(entry);
                             continue;
                         }
-
-                        console.log(`Downloading ${url} for address 0x${entry.address.toString(16).toUpperCase()}`);
-
-                        const response = await fetch(url);
-                        if (!response.ok) {
-                            throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
-                        }
-
-                        const arrayBuffer = await response.arrayBuffer();
-                        const data = new Uint8Array(arrayBuffer);
 
                         const entryStart = entry.address >>> 0;
                         const entryEnd = entryStart + data.length;
@@ -3988,26 +4246,40 @@
                             throw new Error(`Entry at 0x${entryStart.toString(16).toUpperCase()} exceeds allowed range 0x${rangeStart.toString(16).toUpperCase()} - 0x${rangeEnd.toString(16).toUpperCase()}`);
                         }
 
-                        // Write data to sparse image
+                        /* Write data to sparse image */
                         await parser.sparseImage.write(entry.address, data);
 
-                        console.log(`Imported ${formatBytes(data.length)} at 0x${entry.address.toString(16).toUpperCase()}`);
+                        console.log(`Imported ${formatBytes(data.length)} at 0x${entry.address.toString(16).toUpperCase()} ${sourceDesc}`);
                         importCount++;
                     }
 
                     const didErase = shouldEraseFlash;
                     const eraseMsg = didErase ? ' (flash erased and rebuilt)' : '';
-                    setDeviceStatus(`Imported ${importCount} files from manifest${eraseMsg}.`, 'success');
+                    let statusMsg = `Imported ${importCount} files from manifest${eraseMsg}.`;
+                    if (failedEntries.length > 0) {
+                        statusMsg += ` (${failedEntries.length} files failed)`;
+                    }
+                    setDeviceStatus(statusMsg, failedEntries.length === 0 ? 'success' : 'warning');
 
                     if (importCallback) {
                         await importCallback();
                     }
 
+                    /* Show file info section after import */
+                    const fileInfo = document.getElementById('fileInfo');
+                    if (fileInfo) {
+                        fileInfo.classList.add('visible');
+                    }
+
+                    /* Hide drop zone after successful import */
+                    const dropZone = document.getElementById('dropZone');
+                    if (dropZone) dropZone.style.display = 'none';
+
                     hideImportPopup();
                 } catch (error) {
                     console.error('Manifest import error:', error);
 
-                    // Check if it's a CORS error
+                    /* Check if it's a CORS error */
                     if (error.message.includes('CORS') || error.message.includes('cross-origin') ||
                         error.name === 'TypeError' && !error.message.includes('HTTP')) {
                         const corsMsg = 'CORS Error: The server does not allow cross-origin requests.\n\n' +
@@ -4028,10 +4300,32 @@
                 return;
             }
 
-            // Handle single binary file
+            /* Handle single binary file */
             if (!importFile) {
                 console.error('No import file selected');
                 return;
+            }
+
+            /* Create parser if it doesn't exist */
+            if (!parser) {
+                console.log('Creating new parser for single file import');
+                const sparse = new SparseImage(deviceFlashSizeBytes);
+                parser = new ESP32Parser(sparse, {
+                    sizeHint: deviceFlashSizeBytes,
+                    logMessage: (...args) => console.log('[Parser]', ...args),
+                    logWarning: (...args) => console.warn('[Parser WARNING]', ...args),
+                    logError: (...args) => console.error('[Parser ERROR]', ...args),
+                    logDebug: (...args) => { },
+                });
+                parser.sparseImage.dataUpdatedCallback = () => {
+                    updateMemoryMap();
+                };
+                displaySourceInfo({
+                    name: 'Imported: ' + importFile.name,
+                    size: deviceFlashSizeBytes,
+                    type: 'import',
+                    lastModified: Date.now()
+                });
             }
 
             console.log(`Importing file ${importFile.name}`);
@@ -4069,10 +4363,21 @@
                 const arrayBuffer = await importFile.arrayBuffer();
                 const data = new Uint8Array(arrayBuffer);
 
-                // Write data to sparse image
+                /* Write data to sparse image */
                 await parser.sparseImage.write(address, data);
 
                 setDeviceStatus(`Imported ${formatBytes(fileSize)} at 0x${address.toString(16).toUpperCase()}. Use "Write to Device" to flash.`, 'success');
+                
+                /* Show file info section after import */
+                const fileInfo = document.getElementById('fileInfo');
+                if (fileInfo) {
+                    fileInfo.classList.add('visible');
+                }
+
+                /* Hide drop zone after successful import */
+                const dropZone = document.getElementById('dropZone');
+                if (dropZone) dropZone.style.display = 'none';
+                
                 if (importCallback) {
                     await importCallback();
                 }
@@ -4080,6 +4385,113 @@
             } catch (error) {
                 console.error('Import error:', error);
                 alert('Error importing file: ' + error.message);
+            }
+        }
+
+        /* Helper function to extract filename without path */
+        function getFilename(path) {
+            return path.split('/').pop().split('\\').pop();
+        }
+
+        /* Helper function to match dropped files with JSON entries */
+        function matchDroppedFilesWithJson() {
+            importFileMatches = {};
+            if (!importJsonData || !importJsonData.flashEntries) return;
+
+            const droppedFileNames = {};
+            importFiles.forEach(file => {
+                const name = getFilename(file.name).toLowerCase();
+                droppedFileNames[name] = file;
+            });
+
+            /* Match each JSON entry with a dropped file */
+            for (const entry of importJsonData.flashEntries) {
+                const jsonFilename = getFilename(entry.path || entry.url).toLowerCase();
+                if (droppedFileNames[jsonFilename]) {
+                    importFileMatches[jsonFilename] = droppedFileNames[jsonFilename];
+                }
+            }
+        }
+
+        /* Update import preview to show file matching status */
+        async function updateImportPreviewWithMatching() {
+            const previewDiv = document.getElementById('importPreview');
+            const applyBtn = document.getElementById('importApplyBtn');
+
+            if (!importJsonData || !importJsonData.flashEntries) {
+                if (previewDiv) previewDiv.innerHTML = 'Select a file and enter an address to see preview';
+                if (applyBtn) applyBtn.disabled = true;
+                return;
+            }
+
+            matchDroppedFilesWithJson();
+
+            let html = `<div style="line-height: 1.8;">`;
+            html += `<strong style="color: #7a8bdc;">JSON Manifest Detected</strong><br>`;
+            if (importJsonData.name) html += `Name: <strong>${importJsonData.name}</strong><br>`;
+            if (importJsonData.version) html += `Version: <strong>${importJsonData.version}</strong><br>`;
+            if (importJsonData.chip) html += `Chip: <strong>${importJsonData.chip}</strong><br>`;
+
+            /* Show selected build info */
+            if (importJsonData.availableBuilds && importJsonData.availableBuilds.length > 0) {
+                const selectedBuild = importJsonData.builds[0];
+                html += `Build: <strong>${selectedBuild.chipFamily || 'Unknown'}</strong>`;
+                if (importJsonData.availableBuilds.length > 1) {
+                    html += ` <span style="color: #888; font-size: 0.9em;">(${importJsonData.availableBuilds.length} builds available)</span>`;
+                }
+                html += `<br>`;
+            }
+
+            html += `<br><strong>Flash Entries (${importJsonData.flashEntries.length}):</strong><br>`;
+
+            let hasMatches = true;
+            let allMatched = true;
+            for (let i = 0; i < importJsonData.flashEntries.length; i++) {
+                const entry = importJsonData.flashEntries[i];
+                const addr = `0x${entry.address.toString(16).toUpperCase()}`;
+                const filename = getFilename(entry.path || entry.url);
+                const isMatched = !!importFileMatches[filename.toLowerCase()];
+
+                if (!isMatched) {
+                    allMatched = false;
+                    hasMatches = false;
+                }
+
+                const matchIcon = isMatched ? '✓' : '✗';
+                const matchColor = isMatched ? '#6ec589' : '#ff6b6b';
+                const matchStyle = isMatched ? 'color: ' + matchColor + '; font-weight: bold;' : 'color: ' + matchColor + '; font-weight: bold;';
+
+                html += `<div style="margin: 5px 0;">`;
+                html += `<span style="${matchStyle}">${matchIcon}</span> ${i + 1}. ${addr}: ${filename}`;
+                if (entry.isApp) html += ` <span style="color: #ffa726;">(app)</span>`;
+                if (isMatched) {
+                    html += ` <span style="color: #6ec589; font-size: 0.9em;">(matched)</span>`;
+                } else {
+                    html += ` <span style="color: #ff6b6b; font-size: 0.9em;">(not found in dropped files)</span>`;
+                }
+                html += `</div>`;
+            }
+
+            if (importFiles.length > 0) {
+                html += `<br><strong style="color: #7a8bdc;">Dropped Files (${importFiles.length}):</strong><br>`;
+                for (const file of importFiles) {
+                    if (file.name.toLowerCase() !== importJsonFile?.name.toLowerCase()) {
+                        html += `<div style="margin: 5px 0; color: #c8c8c8;">📄 ${file.name} (${formatBytes(file.size)})</div>`;
+                    }
+                }
+            }
+
+            /* Show warning if not all entries are matched */
+            if (!allMatched && importFiles.length > 0) {
+                html += `<br><span style="color: #ffa726;">⚠️ Warning: Some files from JSON not found in dropped files</span>`;
+            }
+
+            html += `</div>`;
+            previewDiv.innerHTML = html;
+
+            /* Enable apply button if at least some files match */
+            if (applyBtn) {
+                applyBtn.disabled = !hasMatches;
             }
         }
 
@@ -4092,19 +4504,42 @@
             if (importFileInput) {
                 importFileInput.addEventListener('change', async (e) => {
                     if (e.target.files.length > 0) {
-                        importFile = e.target.files[0];
+                        /* Handle multiple file selection */
+                        importFiles = Array.from(e.target.files);
+                        const fileNames = importFiles.map(f => f.name).join(', ');
                         const fileNameSpan = document.getElementById('importFileName');
-                        if (fileNameSpan) fileNameSpan.textContent = importFile.name;
+                        if (fileNameSpan) fileNameSpan.textContent = fileNames;
 
-                        // Check if JSON
-                        if (importFile.name.toLowerCase().endsWith('.json')) {
-                            importBaseUrl = null; // No base URL for local files
-                            await handleJsonManifest(importFile);
-                        } else {
+                        /* Separate JSON and binary files */
+                        const jsonFiles = importFiles.filter(f => f.name.toLowerCase().endsWith('.json'));
+                        const binFiles = importFiles.filter(f => !f.name.toLowerCase().endsWith('.json'));
+
+                        if (jsonFiles.length > 0) {
+                            /* Process the first JSON file */
+                            importJsonFile = jsonFiles[0];
+                            importBaseUrl = null;
+                            await handleJsonManifest(importJsonFile);
+                            /* If we have binary files too, update preview with matching */
+                            if (binFiles.length > 0) {
+                                await updateImportPreviewWithMatching();
+                            }
+                        } else if (binFiles.length === 1) {
+                            /* Single binary file, process as before */
+                            importFile = binFiles[0];
                             importIsJson = false;
                             importJsonData = null;
+                            importJsonFile = null;
+                            importFileMatches = {};
                             importBaseUrl = null;
                             updateImportPreview();
+                        } else if (binFiles.length > 1) {
+                            /* Multiple binary files without JSON - show error */
+                            const previewDiv = document.getElementById('importPreview');
+                            if (previewDiv) {
+                                previewDiv.innerHTML = '<span style="color: #ff6b6b;">Multiple .bin files without a JSON manifest. Please also drop a JSON file to specify addresses.</span>';
+                            }
+                            const applyBtn = document.getElementById('importApplyBtn');
+                            if (applyBtn) applyBtn.disabled = true;
                         }
                     }
                 });
@@ -4136,25 +4571,48 @@
 
                     const files = e.dataTransfer.files;
                     if (files.length > 0) {
-                        importFile = files[0];
+                        /* Handle multiple dropped files */
+                        importFiles = Array.from(files);
+                        const fileNames = importFiles.map(f => f.name).join(', ');
                         const fileNameSpan = document.getElementById('importFileName');
-                        if (fileNameSpan) fileNameSpan.textContent = importFile.name;
+                        if (fileNameSpan) fileNameSpan.textContent = fileNames;
 
-                        // Check if JSON
-                        if (importFile.name.toLowerCase().endsWith('.json')) {
-                            importBaseUrl = null; // No base URL for local files
-                            await handleJsonManifest(importFile);
-                        } else {
+                        /* Separate JSON and binary files */
+                        const jsonFiles = importFiles.filter(f => f.name.toLowerCase().endsWith('.json'));
+                        const binFiles = importFiles.filter(f => !f.name.toLowerCase().endsWith('.json'));
+
+                        if (jsonFiles.length > 0) {
+                            /* Process the first JSON file */
+                            importJsonFile = jsonFiles[0];
+                            importBaseUrl = null;
+                            await handleJsonManifest(importJsonFile);
+                            /* If we have binary files too, update preview with matching */
+                            if (binFiles.length > 0) {
+                                await updateImportPreviewWithMatching();
+                            }
+                        } else if (binFiles.length === 1) {
+                            /* Single binary file, process as before */
+                            importFile = binFiles[0];
                             importIsJson = false;
                             importJsonData = null;
+                            importJsonFile = null;
+                            importFileMatches = {};
                             importBaseUrl = null;
                             updateImportPreview();
+                        } else if (binFiles.length > 1) {
+                            /* Multiple binary files without JSON - show error */
+                            const previewDiv = document.getElementById('importPreview');
+                            if (previewDiv) {
+                                previewDiv.innerHTML = '<span style="color: #ff6b6b;">Multiple .bin files without a JSON manifest. Please also drop a JSON file to specify addresses.</span>';
+                            }
+                            const applyBtn = document.getElementById('importApplyBtn');
+                            if (applyBtn) applyBtn.disabled = true;
                         }
                     }
                 });
             }
 
-            // Close popup when clicking outside
+            /* Close popup when clicking outside */
             const importPopup = document.getElementById('importPopup');
             if (importPopup) {
                 importPopup.addEventListener('click', (e) => {
