@@ -244,6 +244,11 @@ class WebUSBSerial {
         };
         this.logger = null; /* optional {info, error} callbacks for UI logging */
         this.maxTransferSize = 0x10000;
+        /* Initialize logging functions to prevent errors */
+        this.logMessage = (...args) => { };
+        this.logWarning = (...args) => { };
+        this.logError = (...args) => { };
+        this.logDebug = (...args) => { };
     }
 
     /**
