@@ -123,6 +123,7 @@ class ChipDescriptions {
                 }
             },
             "esp32h2": {
+                "mac_efuse_reg": 0x600B0844,
                 "stub":
                 {
                     "entry": 1082132230,
