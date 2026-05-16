@@ -14,8 +14,8 @@ Use at your own risk and keep backups.
 - **Performance feedback**: Read/write speed tracking with slow-link warnings (ESP32-S3/C3 USB can be sluggish) and live progress overlays.
 
 ## Live demos
-- **ESP32 Firmware Viewer** – inspect and edit images (file or live device)
-- **ESP32 Web Flasher** – flashing/test harness designed for embedding and link-stability checks
+- **[ESP32 Firmware Viewer](https://g3gg0.github.io/esp32_flasher/esp32-viewer.html)** – inspect and edit images (file or live device)
+- **[ESP32 Web Flasher](https://g3gg0.github.io/esp32_flasher/flasher.html)** – flashing/test harness designed for embedding and link-stability checks
 
 ## Requirements
 - Chrome or Edge (Web Serial is required for device access)
