@@ -5,8 +5,26 @@ const path = require('path');
 
 function usage() {
     const script = path.basename(process.argv[1] || 'singleclick-flasher-generator.js');
-    console.error(`Usage: node ${script} <infile> <outfile> <title> [<subtitle>]`);
-    console.error(`Example: node ${script} build/flasher_args.json singleclick-flasher.html "Project name" "Optional subtitle"`);
+    console.error('Single Click Flasher Generator');
+    console.error('==============================');
+    console.error('');
+    console.error(`Usage:`);
+    console.error(`  node ${script} <flasher_args> <html> <title> [<subtitle>]`);
+    console.error('');
+    console.error('Arguments:');
+    console.error('  <flasher_args> Path to ESP-IDF flasher_args.json');
+    console.error('  <html>         Path to generated standalone HTML flasher');
+    console.error('  <title>        Main product/device name shown in header and dialogs');
+    console.error('  [<subtitle>]   Optional subtitle line shown under the header title');
+    console.error('');
+    console.error('Examples:');
+    console.error(`  node ${script} ./build/flasher_args.json ./singleclick-flasher.html "My special firmware"`);
+    console.error(`  node ${script} ./build/flasher_args.json ./dist/mes-flasher.html "My special firmware" "Version 1.2.3"`);
+    console.error('');
+    console.error('Notes:');
+    console.error('  - Binary files referenced by flash_files are resolved relative to <infile>.');
+    console.error('  - The output HTML inlines chips.js and flasher.js plus base64 payloads.');
+    console.error('  - Chip verification uses extra_esptool_args.chip when provided.');
 }
 
 function fail(message) {
@@ -677,6 +695,11 @@ ${flasherJs}
 }
 
 function main() {
+    if (process.argv.includes('-h') || process.argv.includes('--help')) {
+        usage();
+        process.exit(0);
+    }
+
     const [, , argsPathArg, outputPathArg, titleArg, subtitleArg = ''] = process.argv;
     if (!argsPathArg || !outputPathArg || !titleArg) {
         usage();
