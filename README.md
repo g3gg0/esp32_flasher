@@ -18,8 +18,13 @@ Use at your own risk and keep backups.
 - **[ESP32 Web Flasher](https://g3gg0.github.io/esp32_flasher/flasher.html)** – flashing/test harness designed for embedding and link-stability checks
 
 ## Requirements
-- Chrome or Edge (Web Serial is required for device access)
+- Chrome or Edge (Web Serial or WebUSB API is required for device access)
 - USB-JTAG or USB-UART adapter wired to ESP32 (RX/TX) if not using native USB
+
+### Connection methods
+The flasher supports two connection methods:
+- **Web Serial API** (recommended): Standard serial port interface
+- **WebUSB**: Direct USB communication (see [WEBUSB-GUIDE.md](WEBUSB-GUIDE.md) for details)
 
 ### Baud-rate note
 Web Serial cannot switch baud mid-session without reopening the port (which can reset the device). ESP32 ROM reset messages appear at 115200 baud. Choose 115200 to see ROM output or a higher baud (e.g., 921600) for speed—native USB/JTAG on ESP32-S series is unaffected.
@@ -27,9 +32,11 @@ Web Serial cannot switch baud mid-session without reopening the port (which can 
 ## Repository layout
 - `esp32-viewer.html` – firmware inspector/editor (file and live device modes)
 - `flasher.html` – embeddable flasher and test suite UI
+- `webusb-example.html` – example demonstrating Web Serial and WebUSB usage
 - `flasher.js` / `chips.js` / `esp32-parser.js` – core logic for bootloader protocol, parsing, and device helpers
 - `esp32.c` – C helpers for NVS sector walking/editing
 - `build.js` – combines assets for distribution; see build steps below
+- `WEBUSB-GUIDE.md` – comprehensive guide for using WebUSB API
 
 ## Quick start (local, no build)
 1. Open `esp32-viewer.html` in Chrome/Edge.
