@@ -754,6 +754,8 @@ class ESPFlasher {
         this.reader = null;
         this.dtrState = true;
         this.rtsState = true;
+        this._serialDisconnectHandler = null;
+        this._portCloseHandler = null;
 
         /* Command execution lock to prevent concurrent command execution */
         this._commandLock = Promise.resolve();
@@ -995,23 +997,26 @@ class ESPFlasher {
                 await this.port.open({ baudRate: this.initialBaudRate });
             }
 
-            // Register for device lost (Web Serial API)
+            /* Register for device lost (Web Serial API) */
             if (navigator.serial) {
-                navigator.serial.addEventListener('disconnect', (event) => {
+                this._serialDisconnectHandler = (event) => {
                     if (event.target === this.port) {
-                        this.logError(`The device was disconnected`);
+                        this.logError('The device was disconnected');
                         this.disconnect();
                     }
-                });
+                };
+                navigator.serial.addEventListener('disconnect', this._serialDisconnectHandler);
             }
 
-            // Register for port closing
+            /* Register for unexpected port closing (Web Serial and WebUSB) */
             if (this.port.addEventListener) {
-                this.port.addEventListener('close', () => {
+                this._portCloseHandler = () => {
                     if (!this._disconnecting) {
                         this.logError('Device disconnected unexpectedly');
+                        this.disconnect();
                     }
-                });
+                };
+                this.port.addEventListener('close', this._portCloseHandler);
             }
 
             resolve();
@@ -1369,7 +1374,10 @@ class ESPFlasher {
         }
         this._disconnecting = true;
 
-        navigator.serial.removeEventListener('disconnect', this.disconnect);
+        if (navigator.serial && this._serialDisconnectHandler) {
+            navigator.serial.removeEventListener('disconnect', this._serialDisconnectHandler);
+            this._serialDisconnectHandler = null;
+        }
 
         if (this.reader) {
             try {
@@ -1384,7 +1392,10 @@ class ESPFlasher {
 
         if (this.port) {
             try {
-                this.port.removeEventListener('close', this.disconnect);
+                if (this._portCloseHandler) {
+                    this.port.removeEventListener('close', this._portCloseHandler);
+                    this._portCloseHandler = null;
+                }
                 await this.port.close();
             } catch (error) {
                 //this.logError('Error during disconnect:', error);
