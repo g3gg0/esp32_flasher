@@ -359,6 +359,153 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             margin-right: 10px;
         }
 
+        .signal-mini-card {
+            display: none;
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid #2c3f6a;
+            background: linear-gradient(145deg, #111a2b 0%, #111722 100%);
+        }
+
+        .signal-mini-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .signal-mini-title {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: #86b8ff;
+        }
+
+        .signal-mini-note {
+            font-size: 11px;
+            color: #8a96a8;
+        }
+
+        .signal-mode-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 3px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid #304669;
+        }
+
+        .signal-mode-label {
+            font-size: 11px;
+            font-weight: 700;
+            color: #9fb4d7;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .signal-mode-switch button {
+            border: none;
+            border-radius: 999px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-weight: 700;
+            color: #bdd2f0;
+            background: transparent;
+            box-shadow: none;
+            cursor: pointer;
+        }
+
+        .signal-mode-switch button.active {
+            color: #eaf3ff;
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+        }
+
+        .signal-mini-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .signal-mode-panel {
+            display: none;
+            width: 100%;
+        }
+
+        .signal-mini-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 6px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .signal-mini-group label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #9fb4d7;
+        }
+
+        .signal-mini-group select {
+            min-width: 70px;
+            padding: 5px 8px;
+            border-radius: 6px;
+            border: 1px solid #385690;
+            background: #101926;
+            color: #d5e4ff;
+            font-size: 12px;
+        }
+
+        .signal-mini-controls button {
+            padding: 7px 12px;
+            font-size: 12px;
+            border-radius: 6px;
+            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            box-shadow: 0 2px 10px rgba(59, 130, 246, 0.35);
+        }
+
+        .signal-mini-current {
+            font-size: 12px;
+            color: #9ec7a5;
+            margin-left: 2px;
+        }
+
+        .signal-combo-list {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .signal-combo-btn {
+            min-width: 64px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid #385690;
+            background: #101926;
+            color: #d5e4ff;
+            font-size: 12px;
+            font-weight: 700;
+            box-shadow: none;
+        }
+
+        .signal-combo-btn:hover:not(:disabled) {
+            transform: none;
+            box-shadow: 0 0 0 1px #4d6fb3 inset;
+        }
+
+        .signal-combo-btn.active {
+            border-color: #59a1ff;
+            color: #eef6ff;
+            background: linear-gradient(135deg, #1e3356 0%, #0f284f 100%);
+            box-shadow: 0 0 0 1px rgba(89, 161, 255, 0.55) inset;
+        }
+
         @keyframes spin {
             0% {
                 transform: rotate(0deg);
@@ -522,6 +669,44 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                                 + RAW packets
                             </label>
                         </div>
+                    </div>
+                </div>
+                <div id="advancedSignalGroup" class="signal-mini-card">
+                    <div class="signal-mini-header">
+                        <span class="signal-mini-title">Direct DTR/RTS</span>
+                        <div class="signal-mode-switch">
+                            <span class="signal-mode-label">mode</span>
+                            <button id="signalModeManualBtn" type="button" class="active">Manual</button>
+                            <button id="signalModeComboBtn" type="button">RTS|DTR List</button>
+                        </div>
+                    </div>
+                    <div class="signal-mini-controls">
+                        <div id="signalManualPanel" class="signal-mode-panel">
+                            <div class="signal-mini-group">
+                                <label for="rtsSignalSelect">RTS</label>
+                                <select id="rtsSignalSelect">
+                                    <option value="true" selected>ON</option>
+                                    <option value="false">OFF</option>
+                                </select>
+                            </div>
+                            <div class="signal-mini-group">
+                                <label for="dtrSignalSelect">DTR</label>
+                                <select id="dtrSignalSelect">
+                                    <option value="true" selected>ON</option>
+                                    <option value="false">OFF</option>
+                                </select>
+                            </div>
+                            <button id="applySignalsBtn" onclick="applySignalControls()" disabled>Set Signals</button>
+                        </div>
+                        <div id="signalComboPanel" class="signal-mode-panel">
+                            <div class="signal-combo-list">
+                                <button type="button" class="signal-combo-btn" data-rts="false" data-dtr="false">0 | 0</button>
+                                <button type="button" class="signal-combo-btn" data-rts="false" data-dtr="true">0 | 1</button>
+                                <button type="button" class="signal-combo-btn" data-rts="true" data-dtr="false">1 | 0</button>
+                                <button type="button" class="signal-combo-btn" data-rts="true" data-dtr="true">1 | 1</button>
+                            </div>
+                        </div>
+                        <span class="signal-mini-current" id="signalCurrentValue">current: --</span>
                     </div>
                 </div>
                 <div class="button-group">
@@ -696,6 +881,9 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         let selectedTransferSize = 4096;
         let selectedInFlightReads = 32;
         let selectedPacketLogging = 'none';
+        let selectedSignalDtr = true;
+        let selectedSignalRts = true;
+        let selectedSignalMode = 'manual';
         let readStartTime = null;
         let writeStartTime = null;
 
@@ -904,6 +1092,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
             if (!isAdvancedMode) {
                 group.style.display = 'none';
+                updateSignalControlVisibility(false);
                 return;
             }
 
@@ -911,6 +1100,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             baudSelect.value = selectedBaudRate.toString();
             transferSizeSelect.value = selectedTransferSize.toString();
             inFlightReadsSelect.value = selectedInFlightReads.toString();
+            setupSignalControls();
+            updateSignalControlVisibility(!!flasher);
 
             baudSelect.addEventListener('change', () => {
                 const nextBaud = parseInt(baudSelect.value, 10);
@@ -949,6 +1140,132 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             });
 
             log('Advanced mode enabled: baud, transfer size, and in-flight controls available', 'info');
+        }
+
+        function setupSignalControls() {
+            const dtrSelect = document.getElementById('dtrSignalSelect');
+            const rtsSelect = document.getElementById('rtsSignalSelect');
+            const modeManualBtn = document.getElementById('signalModeManualBtn');
+            const modeComboBtn = document.getElementById('signalModeComboBtn');
+            const manualPanel = document.getElementById('signalManualPanel');
+            const comboPanel = document.getElementById('signalComboPanel');
+            const comboButtons = document.querySelectorAll('.signal-combo-btn');
+
+            if (!dtrSelect || !rtsSelect || !modeManualBtn || !modeComboBtn || !manualPanel || !comboPanel) {
+                return;
+            }
+
+            const refreshModeUi = () => {
+                const isManual = selectedSignalMode === 'manual';
+                manualPanel.style.display = isManual ? 'flex' : 'none';
+                comboPanel.style.display = isManual ? 'none' : 'block';
+                modeManualBtn.classList.toggle('active', isManual);
+                modeComboBtn.classList.toggle('active', !isManual);
+
+                comboButtons.forEach((btn) => {
+                    const btnRts = btn.dataset.rts === 'true';
+                    const btnDtr = btn.dataset.dtr === 'true';
+                    const active = btnRts === selectedSignalRts && btnDtr === selectedSignalDtr;
+                    btn.classList.toggle('active', active);
+                });
+            };
+
+            dtrSelect.value = selectedSignalDtr ? 'true' : 'false';
+            rtsSelect.value = selectedSignalRts ? 'true' : 'false';
+            refreshModeUi();
+
+            if (!dtrSelect.dataset.bound) {
+                dtrSelect.addEventListener('change', () => {
+                    selectedSignalDtr = dtrSelect.value === 'true';
+                    refreshModeUi();
+                });
+                dtrSelect.dataset.bound = '1';
+            }
+
+            if (!rtsSelect.dataset.bound) {
+                rtsSelect.addEventListener('change', () => {
+                    selectedSignalRts = rtsSelect.value === 'true';
+                    refreshModeUi();
+                });
+                rtsSelect.dataset.bound = '1';
+            }
+
+            if (!modeManualBtn.dataset.bound) {
+                modeManualBtn.addEventListener('click', () => {
+                    selectedSignalMode = 'manual';
+                    refreshModeUi();
+                });
+                modeManualBtn.dataset.bound = '1';
+            }
+
+            if (!modeComboBtn.dataset.bound) {
+                modeComboBtn.addEventListener('click', () => {
+                    selectedSignalMode = 'combo';
+                    refreshModeUi();
+                });
+                modeComboBtn.dataset.bound = '1';
+            }
+
+            comboButtons.forEach((btn) => {
+                if (!btn.dataset.bound) {
+                    btn.addEventListener('click', async () => {
+                        if (!flasher) {
+                            return;
+                        }
+
+                        selectedSignalRts = btn.dataset.rts === 'true';
+                        selectedSignalDtr = btn.dataset.dtr === 'true';
+                        dtrSelect.value = selectedSignalDtr ? 'true' : 'false';
+                        rtsSelect.value = selectedSignalRts ? 'true' : 'false';
+                        selectedSignalMode = 'combo';
+                        refreshModeUi();
+                        await applySignalControls();
+                    });
+                    btn.dataset.bound = '1';
+                }
+            });
+        }
+
+        function updateSignalControlVisibility(connected) {
+            const signalGroup = document.getElementById('advancedSignalGroup');
+            const applyBtn = document.getElementById('applySignalsBtn');
+            const currentLabel = document.getElementById('signalCurrentValue');
+            const comboButtons = document.querySelectorAll('.signal-combo-btn');
+
+            if (!signalGroup || !applyBtn || !currentLabel) {
+                return;
+            }
+
+            const show = isAdvancedMode && connected;
+            signalGroup.style.display = show ? 'block' : 'none';
+            applyBtn.disabled = !show;
+            comboButtons.forEach((btn) => {
+                btn.disabled = !show;
+            });
+
+            if (show) {
+                currentLabel.textContent = `current: DTR=${selectedSignalDtr ? 'ON' : 'OFF'}, RTS=${selectedSignalRts ? 'ON' : 'OFF'}`;
+            } else {
+                currentLabel.textContent = 'current: --';
+            }
+        }
+
+        async function applySignalControls() {
+            if (!flasher) {
+                return;
+            }
+
+            try {
+                const signals = {
+                    dataTerminalReady: selectedSignalDtr,
+                    requestToSend: selectedSignalRts
+                };
+                await flasher.setSignals(signals);
+                log(`Signals set: DTR=${selectedSignalDtr ? 'ON' : 'OFF'}, RTS=${selectedSignalRts ? 'ON' : 'OFF'}`, 'info');
+                updateSignalControlVisibility(true);
+            } catch (error) {
+                log(`Set signals error: ${error.message}`, 'error');
+            }
         }
 
         function updatePacketLogging() {
@@ -1041,6 +1358,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                     document.getElementById('chipType').textContent = 'Not detected';
                     document.getElementById('macAddress').textContent = '--:--:--:--:--:--';
                     document.getElementById('stubStatus').textContent = 'Not loaded';
+                    updateSignalControlVisibility(false);
                     const popup = document.getElementById('devicePopup');
                     if (popup) {
                         popup.style.display = 'none';
@@ -1080,6 +1398,12 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 updateStatus('Connected', 'connected');
 
                 updateButtons(true, false, false);
+
+                if (isAdvancedMode) {
+                    setupSignalControls();
+                    updateSignalControlVisibility(true);
+                    log('Advanced direct signal control is ready. Set DTR/RTS and click "Set Signals".', 'info');
+                }
 
                 // Highlight Hard Reset button to indicate next step
                 const hardResetBtn = document.getElementById('hardResetBtn');
@@ -1184,6 +1508,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 document.getElementById('hardResetBtn').classList.remove('highlighted');
                 document.getElementById('appResetBtn').classList.remove('highlighted');
                 document.getElementById('syncBtn').classList.remove('highlighted');
+                updateSignalControlVisibility(false);
 
                 const popup = document.getElementById('devicePopup');
                 if (popup) {

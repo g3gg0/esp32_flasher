@@ -439,18 +439,11 @@ class WebUSBSerial {
             console.warn('Could not set line coding:', e.message);
         }
 
-        // Assert DTR/RTS
-        try {
-            await this.device.controlTransferOut({
-                requestType: 'class',
-                recipient: 'interface',
-                request: 0x22, // SET_CONTROL_LINE_STATE
-                value: 0x03, // DTR=1, RTS=1
-                index: this.controlInterface
-            });
-        } catch (e) {
-            console.warn('Could not set control lines:', e.message);
-        }
+        const signals = {
+            dataTerminalReady: false,
+            requestToSend: true
+        };
+        await this.setSignals(signals);
 
         // Create streams
         this._createStreams();
@@ -1499,22 +1492,39 @@ class ESPFlasher {
         try {
 
             if (this.isEspressifUsbJtag) {
-                /* Native USB/JTAG interface - use the method described in ESP32-S3 Table 33.4-3. Reset SoC into Download Mode.
-                   This procedure assumes the Windows CDC driver toggles DRT only when RTS is set explicitly. */
+                /* when using WebUSB serial, we have exact control over the lines and can use the sequence from TRM.
+                   however when using Windows CDC driver via WebSerial, the behavior can be different and we need to toggle with a different method. */
 
-                /* set to known state first, but causes an extra reset usually */
-                await this.setDtr(false);
-                await this.setRts(false);
+                if (this.port instanceof WebUSBSerial) {
+                    /* WebUSB-specific control-line sequence as RTS|DTR */
+                    await this.setSignals({ requestToSend: true, dataTerminalReady: true });
+                    await this.setSignals({ requestToSend: false, dataTerminalReady: false });
+                    await this.setSignals({ requestToSend: true, dataTerminalReady: true });
 
-                if (bootloader) {
-                    await this.setDtr(true);
+                    if (bootloader) {
+                        await this.setSignals({ requestToSend: false, dataTerminalReady: true });
+                        await this.setSignals({ requestToSend: true, dataTerminalReady: true });
+                    }
+
+                    await this.setSignals({ requestToSend: true, dataTerminalReady: false });
+                } else {
+                    /* Native USB/JTAG interface - use the method described in ESP32-S3 Table 33.4-3. Reset SoC into Download Mode.
+                    This procedure assumes the Windows CDC driver toggles DTR only when RTS is set explicitly. */
+
+                    /* set to known state first, but causes an extra reset usually */
+                    await this.setDtr(false);
+                    await this.setRts(false);
+
+                    if (bootloader) {
+                        await this.setDtr(true);
+                        await this.setRts(false);
+                        await this.setRts(true);
+                        await this.setDtr(false);
+                    }
+
                     await this.setRts(false);
                     await this.setRts(true);
-                    await this.setDtr(false);
                 }
-
-                await this.setRts(false);
-                await this.setRts(true);
             } else {
                 /* high/low vs. asserted/deasserted logic is a bit pain here:
                    EN pin (RTS) - active low - to reset, pull low (EN high means RTS=false)
