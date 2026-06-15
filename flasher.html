@@ -592,16 +592,166 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             color: #fff;
             animation: blink-red 1s linear infinite;
         }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 6px;
+            }
+
+            .container {
+                border-radius: 8px;
+            }
+
+            .header {
+                padding: 12px;
+            }
+
+            .header h1 {
+                font-size: 1.3em;
+                margin-bottom: 4px;
+            }
+
+            .header p {
+                font-size: 0.8em;
+            }
+
+            .content {
+                padding: 12px;
+            }
+
+            .section {
+                padding: 12px;
+                margin-bottom: 12px;
+            }
+
+            .section h2 {
+                font-size: 1.1em;
+                margin-bottom: 10px;
+            }
+
+            .radio-group {
+                flex-wrap: wrap;
+                gap: 10px;
+                padding: 10px;
+            }
+
+            .button-group {
+                gap: 8px;
+            }
+
+            .button-group button,
+            button,
+            .file-input-label {
+                width: 100%;
+                max-width: none;
+                padding: 10px 12px;
+                font-size: 14px;
+            }
+
+            .file-input-wrapper {
+                display: block;
+                width: 100%;
+            }
+
+            .input-group input[type="text"],
+            .input-group input[type="number"],
+            .input-group select {
+                max-width: none;
+                width: 100%;
+            }
+
+            #advancedBaudGroup > div {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 8px;
+                text-align: left;
+            }
+
+            #advancedBaudGroup label {
+                display: block;
+                margin-top: 4px;
+            }
+
+            #advancedBaudGroup select {
+                width: 100%;
+                max-width: none;
+            }
+
+            .signal-mini-header {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .signal-mode-switch {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .signal-mini-controls {
+                gap: 6px;
+            }
+
+            #signalManualPanel {
+                width: 100%;
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+
+            .signal-mini-group {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .signal-mini-group select {
+                min-width: 110px;
+            }
+
+            .signal-combo-list {
+                width: 100%;
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 6px;
+            }
+
+            .signal-combo-btn {
+                width: 100%;
+            }
+
+            .info-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+            }
+
+            .info-value {
+                word-break: break-word;
+            }
+
+            .log-container {
+                max-height: 220px;
+                font-size: 12px;
+            }
+
+            .device-popup {
+                top: 8px;
+                left: 8px;
+                right: 8px;
+                max-width: none;
+                width: auto;
+                font-size: 13px;
+            }
+        }
     </style>
 </head>
 
 <body>
     <div class="container">
         <div class="header">
-            <h1>🔧 ESP32 Flasher Test Suite</h1>
-            <p>Comprehensive testing tool for ESP devices</p>
+            <h1>ESP32 Flasher Test Suite</h1>
+            <p>Flashing tool for ESP32 devices</p>
             <div style="font-size: 0.75em; margin-top: 12px; opacity: 0.7;">
-                <a href="#advanced" onclick="isAdvancedMode = !isAdvancedMode; setupAdvancedControls()">[Advanced mode]</a> &nbsp;&nbsp;&nbsp;
+                <a href="#" onclick="toggleAdvancedMode(event)">[Advanced mode]</a> &nbsp;&nbsp;&nbsp;
                 <a href="https://www.g3gg0.de">[g3gg0.de]</a> &nbsp;&nbsp;&nbsp;
                 <a href="esp32-viewer.html">[ESP32 Editor]</a>
             </div>
@@ -611,7 +761,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             <!-- Connection Section -->
             <div class="section">
                 <h2>📡 Connection</h2>
-                <div class="radio-group">
+                <div class="radio-group" id="connectionTypeGroup" style="display:none;">
                     <strong>Connection Type:</strong>
                     <label>
                         <input type="radio" name="connectionType" value="webserial" checked>
@@ -887,6 +1037,44 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
         let readStartTime = null;
         let writeStartTime = null;
 
+        function isAndroidMode() {
+            return /Android/i.test(navigator.userAgent);
+        }
+
+        function getPreferredConnectionType() {
+            return isAndroidMode() ? 'webusb' : 'webserial';
+        }
+
+        function applyPreferredConnectionDefault() {
+            const preferred = getPreferredConnectionType();
+            const preferredRadio = document.querySelector(`input[name="connectionType"][value="${preferred}"]`);
+            if (preferredRadio) {
+                preferredRadio.checked = true;
+            }
+        }
+
+        function setupConnectionTypeControls() {
+            const connectionTypeGroup = document.getElementById('connectionTypeGroup');
+            if (!connectionTypeGroup) {
+                return;
+            }
+
+            connectionTypeGroup.style.display = isAdvancedMode ? 'flex' : 'none';
+            applyPreferredConnectionDefault();
+        }
+
+        function syncAdvancedModeFromHash() {
+            isAdvancedMode = window.location.hash === '#advanced';
+        }
+
+        function updateAdvancedHash() {
+            if (isAdvancedMode) {
+                window.location.hash = 'advanced';
+            } else if (window.location.hash === '#advanced') {
+                history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+        }
+
         // Register presets for each chip type
         const registerPresets = {
             'esp32': [
@@ -995,7 +1183,7 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
                 devicePopupContent = message;
             }
 
-            popup.innerHTML = '<strong>Device Info</strong><br>' + devicePopupContent.replace(/\n/g, '<br>');
+            popup.innerHTML = '<strong>Boot Message</strong><br>' + devicePopupContent.replace(/\n/g, '<br>');
             if (state === 'secure') {
                 popup.classList.add('secure-warning');
             } else {
@@ -1088,6 +1276,8 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             if (!group || !baudSelect || !transferSizeSelect || !inFlightReadsSelect) {
                 return;
             }
+
+            setupConnectionTypeControls();
 
 
             if (!isAdvancedMode) {
@@ -1298,7 +1488,11 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
 
         async function connectDevice() {
             try {
-                const connectionType = document.querySelector('input[name="connectionType"]:checked').value;
+                const selectedConnection = document.querySelector('input[name="connectionType"]:checked');
+                const preferredConnection = getPreferredConnectionType();
+                const connectionType = isAdvancedMode
+                    ? (selectedConnection ? selectedConnection.value : preferredConnection)
+                    : preferredConnection;
 
                 log(`Requesting ${connectionType === 'webusb' ? 'WebUSB' : 'Web Serial'} port...`, 'info');
                 flasher = new ESPFlasher();
@@ -1850,21 +2044,38 @@ This does not apply to native USB/JTAG interfaces on ESP32-S series devices.
             }
         }
 
-        function toggleAdvancedMode() {
-            if (flasher) {
-                flasher.devMode = !flasher.devMode;
-                log(`Advanced mode ${flasher.devMode ? 'ENABLED' : 'DISABLED'}`, 'info');
-            } else {
-                log('Connect to a device first', 'warn');
+        function toggleAdvancedMode(event) {
+            if (event) {
+                event.preventDefault();
             }
+
+            isAdvancedMode = !isAdvancedMode;
+            updateAdvancedHash();
+
+            if (flasher) {
+                flasher.devMode = isAdvancedMode;
+            }
+
+            setupAdvancedControls();
+            log(`Advanced mode ${isAdvancedMode ? 'ENABLED' : 'DISABLED'}`, 'info');
         }
 
         // Initialize
         window.onload = () => {
+            applyPreferredConnectionDefault();
+            syncAdvancedModeFromHash();
             log('ESP32 Flasher Test Suite initialized', 'info');
             log('Supported chips: ESP32, ESP32-S2, ESP32-S3, ESP32-C3, ESP32-C6', 'info');
             updateButtons(false, false, false);
             setupAdvancedControls();
+
+            window.addEventListener('hashchange', () => {
+                syncAdvancedModeFromHash();
+                if (flasher) {
+                    flasher.devMode = isAdvancedMode;
+                }
+                setupAdvancedControls();
+            });
         };
     </script>
 </body>

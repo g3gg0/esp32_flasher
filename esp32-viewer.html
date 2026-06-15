@@ -714,6 +714,8 @@
             align-items: center;
             justify-content: center;
             z-index: 10001;
+            overflow-y: auto;
+            padding: 20px;
         }
 
         .import-popup-box {
@@ -1036,6 +1038,134 @@
             color: #fff;
             animation: blink-red 1s linear infinite;
         }
+
+        /* Mobile action buttons shown inside the partition details popup */
+        .mobile-actions {
+            display: none;
+        }
+
+        /* Lock background scroll while any modal popup is open */
+        body.popup-open {
+            overflow: hidden;
+        }
+
+        /* Partition mobile action popup */
+        .partition-popup-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 2000;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 12px;
+            overflow-y: auto;
+        }
+
+        .partition-popup-box {
+            background: #2a2a2a;
+            border: 1px solid #4a4f70;
+            border-radius: 10px;
+            width: 100%;
+            max-width: 560px;
+            margin-top: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+        }
+
+        .partition-popup-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 14px;
+            background: linear-gradient(135deg, #3d4565 0%, #3a2e4a 100%);
+            border-radius: 10px 10px 0 0;
+        }
+
+        .partition-popup-header h3 {
+            margin: 0;
+            font-size: 1.1em;
+            color: #e0e0e0;
+            word-break: break-word;
+        }
+
+        .partition-popup-close {
+            background: transparent;
+            border: none;
+            color: #e0e0e0;
+            font-size: 1.5em;
+            line-height: 1;
+            cursor: pointer;
+            padding: 0 4px;
+        }
+
+        .partition-popup-content {
+            padding: 14px;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 6px;
+            }
+
+            .header {
+                padding: 12px;
+            }
+
+            .header h1 {
+                font-size: 1.3em;
+                margin-bottom: 4px;
+            }
+
+            .header p {
+                font-size: 0.8em;
+            }
+
+            .content {
+                padding: 12px;
+            }
+
+            th,
+            td {
+                padding: 8px 6px;
+            }
+
+            .partition-table .col-hide-mobile {
+                display: none;
+            }
+
+            .mobile-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-bottom: 14px;
+            }
+
+            .mobile-actions button {
+                flex: 1 1 calc(50% - 8px);
+            }
+
+            .info-grid {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+
+            .details-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .import-popup-box {
+                min-width: 0;
+                width: 100%;
+                max-width: 100%;
+                padding: 18px;
+            }
+
+            .import-popup-title {
+                font-size: 20px;
+                margin-bottom: 14px;
+            }
+        }
     </style>
 </head>
 
@@ -1050,6 +1180,16 @@
         <div class="write-overlay-box">
             <div class="write-overlay-title">Writing to Device…</div>
             <div class="write-overlay-text" id="writeOverlayText">Please wait</div>
+        </div>
+    </div>
+
+    <div id="partitionMobilePopup" class="partition-popup-overlay" onclick="if (event.target === this) closePartitionMobilePopup()">
+        <div class="partition-popup-box">
+            <div class="partition-popup-header">
+                <h3 id="partitionMobilePopupTitle">Partition</h3>
+                <button type="button" class="partition-popup-close" onclick="closePartitionMobilePopup()">×</button>
+            </div>
+            <div class="partition-popup-content" id="partitionMobilePopupContent"></div>
         </div>
     </div>
 
@@ -1115,9 +1255,9 @@
     <div class="container">
         <div class="header">
             <h1>ESP32 Firmware Editor</h1>
-            <p>Reverse engineering & firmware analysis</p>
+            <p>Reverse engineering & analysis helper</p>
             <div style="font-size: 0.75em; margin-top: 12px; opacity: 0.7;">
-                <a href="#advanced" onclick="isAdvancedMode = !isAdvancedMode; setupAdvancedControls()">[Advanced mode]</a> &nbsp;&nbsp;&nbsp;
+                <a href="#" onclick="toggleAdvancedMode(event)">[Advanced mode]</a> &nbsp;&nbsp;&nbsp;
                 <a href="https://www.g3gg0.de">[g3gg0.de]</a> &nbsp;&nbsp;&nbsp;
                 <a href="flasher.html">[Flasher]</a>
             </div>
@@ -1134,6 +1274,17 @@
                 </div>
                 <div id="advancedBaudGroup" style="display:none; margin-top:10px; text-align:center;">
                     <div style="margin-top:6px;">
+                        <div class="radio-group" id="connectionTypeGroup" style="display:none; margin-bottom:10px; justify-content:center;">
+                            <strong>Connection Type:</strong>
+                            <label>
+                                <input type="radio" name="connectionType" value="webserial" checked>
+                                Web Serial
+                            </label>
+                            <label>
+                                <input type="radio" name="connectionType" value="webusb">
+                                WebUSB
+                            </label>
+                        </div>
                         <label for="advancedBaudSelect" style="font-size:0.9em; color:#a0a0a0;">Baud Rate:</label>
                         <select id="advancedBaudSelect"
                             style="padding:8px 10px; border-radius:6px; border:1px solid #5a6bb8; background:#252525; color:#c8c8c8;">
@@ -1347,6 +1498,53 @@
             await toggleDeviceSession();
         }
 
+        function syncAdvancedModeFromHash() {
+            isAdvancedMode = window.location.hash === '#advanced';
+        }
+
+        function updateAdvancedHash() {
+            if (isAdvancedMode) {
+                window.location.hash = 'advanced';
+            } else if (window.location.hash === '#advanced') {
+                history.replaceState(null, '', window.location.pathname + window.location.search);
+            }
+        }
+
+        function isAndroidMode() {
+            return /Android/i.test(navigator.userAgent);
+        }
+
+        function getPreferredConnectionType() {
+            return isAndroidMode() ? 'webusb' : 'webserial';
+        }
+
+        function applyPreferredConnectionDefault() {
+            const preferred = getPreferredConnectionType();
+            const preferredRadio = document.querySelector(`input[name="connectionType"][value="${preferred}"]`);
+            if (preferredRadio) {
+                preferredRadio.checked = true;
+            }
+        }
+
+        function setupConnectionTypeControls() {
+            const connectionTypeGroup = document.getElementById('connectionTypeGroup');
+            if (!connectionTypeGroup) {
+                return;
+            }
+
+            connectionTypeGroup.style.display = isAdvancedMode ? 'flex' : 'none';
+            applyPreferredConnectionDefault();
+        }
+
+        function toggleAdvancedMode(event) {
+            if (event) {
+                event.preventDefault();
+            }
+            isAdvancedMode = !isAdvancedMode;
+            updateAdvancedHash();
+            setupAdvancedControls();
+        }
+
         async function toggleDeviceSession() {
             const btn = document.getElementById('connectToggleBtn');
             const isDisconnect = btn && btn.dataset.state === 'connected';
@@ -1395,16 +1593,20 @@
                     }
                 };
 
-                /* Detect Android and use WebUSB (Web Serial not available on Android) */
-                const isAndroid = /Android/i.test(navigator.userAgent);
-                if (isAndroid) {
-                    console.log('Android device detected, using WebUSB');
-                    setDeviceStatus('Android detected - using WebUSB', 'info');
+                const selectedConnection = document.querySelector('input[name="connectionType"]:checked');
+                const preferredConnection = getPreferredConnectionType();
+                const connectionType = isAdvancedMode
+                    ? (selectedConnection ? selectedConnection.value : preferredConnection)
+                    : preferredConnection;
+
+                if (connectionType === 'webusb') {
+                    if (!isAdvancedMode) {
+                        setDeviceStatus('Android detected - using WebUSB', 'info');
+                    }
                     const port = await WebUSBSerial.requestPort();
                     await flasher.openPortWithPort(port);
                 } else {
-                    console.log('Desktop detected, using Web Serial API');
-                    await flasher.openPort(); // Use Web Serial (default)
+                    await flasher.openPort();
                 }
                 setDeviceButtons({ connected: true });
 
@@ -2088,6 +2290,8 @@
                 return;
             }
 
+            setupConnectionTypeControls();
+
             if (!isAdvancedMode) {
                 group.style.display = 'none';
                 if (packetLoggingGroup) packetLoggingGroup.style.display = 'none';
@@ -2192,7 +2396,7 @@
                 devicePopupContent = message;
             }
 
-            popup.innerHTML = '<strong>Device Info</strong><br>' + devicePopupContent.replace(/\n/g, '<br>');
+            popup.innerHTML = '<strong>Boot Message</strong><br>' + devicePopupContent.replace(/\n/g, '<br>');
             if (state === 'secure') {
                 popup.classList.add('secure-warning');
             } else {
@@ -2630,7 +2834,13 @@
 
         console.log('Setting up drop zone handlers. dropZone:', dropZone ? 'found' : 'NOT FOUND');
 
+        syncAdvancedModeFromHash();
         setupAdvancedControls();
+
+        window.addEventListener('hashchange', () => {
+            syncAdvancedModeFromHash();
+            setupAdvancedControls();
+        });
 
         dropZone.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -3268,6 +3478,17 @@
             const content = document.getElementById('partitionsContent');
             const partitions = parser.partitions;
 
+            /* Reset the mobile action popup before re-rendering to avoid stale detached content */
+            const mobilePopup = document.getElementById('partitionMobilePopup');
+            if (mobilePopup) {
+                mobilePopup.style.display = 'none';
+                document.body.classList.remove('popup-open');
+                const mobilePopupBox = document.getElementById('partitionMobilePopupContent');
+                if (mobilePopupBox) {
+                    mobilePopupBox.innerHTML = '';
+                }
+            }
+
             if (partitions.length === 0) {
                 content.innerHTML = '<div class="error">No partitions found in this firmware image.</div>';
                 return;
@@ -3302,8 +3523,8 @@
                 html += `<div class="info-item"><label>Flash Offset:</label><span class="mono">0x${partitionTableOffset.toString(16).toUpperCase().padStart(4, '0')}</span></div>`;
                 html += '</div>';
             }
-            html += '<table><thead><tr>';
-            html += '<th>#</th><th>Label</th><th>Type</th><th>Offset</th><th>End Offset</th><th>Size</th><th>Actions</th>';
+            html += '<table class="partition-table"><thead><tr>';
+            html += '<th class="col-hide-mobile">#</th><th>Label</th><th>Type</th><th class="col-hide-mobile">Offset</th><th class="col-hide-mobile">End Offset</th><th class="col-hide-mobile">Size</th><th class="col-hide-mobile">Actions</th>';
             html += '</tr></thead><tbody>';
 
             for (let idx = 0; idx < partitions.length; idx++) {
@@ -3330,13 +3551,13 @@
                 }
 
                 html += `<tr class="expandable" onclick="togglePartitionDetails(${idx})">`;
-                html += `<td>${part.num}</td>`;
+                html += `<td class="col-hide-mobile">${part.num}</td>`;
                 html += `<td><strong>${part.label}${magicIndicator}</strong></td>`;
                 html += `<td><span class="badge ${badgeClass}">${part.typeName}</span></td>`;
-                html += `<td class="mono">0x${part.offset.toString(16).toUpperCase().padStart(6, '0')}</td>`;
-                html += `<td class="mono">0x${(part.offset + part.length).toString(16).toUpperCase().padStart(6, '0')}</td>`;
-                html += `<td>${formatBytes(part.length)}</td>`;
-                html += `<td>
+                html += `<td class="mono col-hide-mobile">0x${part.offset.toString(16).toUpperCase().padStart(6, '0')}</td>`;
+                html += `<td class="mono col-hide-mobile">0x${(part.offset + part.length).toString(16).toUpperCase().padStart(6, '0')}</td>`;
+                html += `<td class="col-hide-mobile">${formatBytes(part.length)}</td>`;
+                html += `<td class="col-hide-mobile">
                     <button class="hex-btn" onclick="event.stopPropagation(); viewPartitionHex(${idx})">Hex View</button>
                     <button class="download-btn" onclick="event.stopPropagation(); downloadPartition(${idx})">Download</button>
                     <button class="replace-btn" onclick="event.stopPropagation(); replacePartition(${idx})">Replace</button>
@@ -3347,6 +3568,12 @@
                 // Details row
                 html += `<tr class="details-row" id="details-${idx}">`;
                 html += `<td colspan="7"><div class="details-content">`;
+                html += `<div class="mobile-actions">
+                    <button class="hex-btn" onclick="event.stopPropagation(); viewPartitionHex(${idx})">Hex View</button>
+                    <button class="download-btn" onclick="event.stopPropagation(); downloadPartition(${idx})">Download</button>
+                    <button class="replace-btn" onclick="event.stopPropagation(); replacePartition(${idx})">Replace</button>
+                    <button class="replace-btn" onclick="event.stopPropagation(); clearPartition(${idx})">Clear</button>
+                </div>`;
                 html += `<div class="details-grid">`;
                 html += `<div class="detail-item"><strong>Type Code:</strong> 0x${part.type.toString(16).toUpperCase()}</div>`;
                 html += `<div class="detail-item"><strong>SubType Code:</strong> 0x${part.subType.toString(16).toUpperCase()}</div>`;
@@ -3998,6 +4225,7 @@
             }
             if (popup) {
                 popup.style.display = 'flex';
+                document.body.classList.add('popup-open');
                 updateImportPreview();
             }
         }
@@ -4007,6 +4235,7 @@
             if (popup) {
                 popup.style.display = 'none';
             }
+            document.body.classList.remove('popup-open');
             importFile = null;
             importFiles = [];
             importIsJson = false;
@@ -4623,9 +4852,57 @@
             }
         });
 
+        function isPartitionMobileView() {
+            return window.matchMedia('(max-width: 768px)').matches;
+        }
+
         function togglePartitionDetails(idx) {
+            if (isPartitionMobileView()) {
+                openPartitionMobilePopup(idx);
+                return;
+            }
             const row = document.getElementById(`details-${idx}`);
             row.classList.toggle('visible');
+        }
+
+        function openPartitionMobilePopup(idx) {
+            const detailsRow = document.getElementById(`details-${idx}`);
+            if (!detailsRow) {
+                return;
+            }
+            const content = detailsRow.querySelector('.details-content');
+            const popup = document.getElementById('partitionMobilePopup');
+            const box = document.getElementById('partitionMobilePopupContent');
+            const titleEl = document.getElementById('partitionMobilePopupTitle');
+            if (!content || !popup || !box) {
+                return;
+            }
+
+            const part = parser && parser.partitions ? parser.partitions[idx] : null;
+            titleEl.textContent = part ? part.label : 'Partition';
+
+            content.dataset.originIdx = idx;
+            box.appendChild(content);
+            popup.style.display = 'flex';
+            document.body.classList.add('popup-open');
+        }
+
+        function closePartitionMobilePopup() {
+            const popup = document.getElementById('partitionMobilePopup');
+            const box = document.getElementById('partitionMobilePopupContent');
+            if (!popup || !box) {
+                return;
+            }
+            const content = box.querySelector('.details-content');
+            if (content) {
+                const idx = content.dataset.originIdx;
+                const detailsRow = document.getElementById(`details-${idx}`);
+                if (detailsRow) {
+                    detailsRow.appendChild(content);
+                }
+            }
+            popup.style.display = 'none';
+            document.body.classList.remove('popup-open');
         }
 
         async function parseOTADataPartition(idx) {
