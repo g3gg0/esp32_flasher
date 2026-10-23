@@ -1226,15 +1226,18 @@ class ESPFlasher {
     }
 
 
+    get skipMagicRead() {
+        return this.current_chip === 'esp8266' || this.current_chip === 'esp32p4';
+    }
+
     /**
      * Detect if stub loader is running on device
      * @async
      * @returns {Promise<boolean>} True if stub loader active, false if ROM bootloader
-     * @throws {Error} If detection fails
-     * @description Distinguishes stub loader from ROM bootloader by magic address response size
+     * @description Uses tracked mode for chips with skipMagicRead and a register probe otherwise
      */
     async isStubLoader() {
-        if (this.current_chip === 'esp8266') {
+        if (this.skipMagicRead) {
             return this.stubLoaded;
         }
 
@@ -1495,6 +1498,9 @@ class ESPFlasher {
         }
 
         this.synced = false;
+        if (this.skipMagicRead) {
+            this.stubLoaded = false;
+        }
         this.consoleBuffer = '';
         this._preSyncState = 'idle';
 
@@ -1624,10 +1630,15 @@ class ESPFlasher {
         const syncTimeoutMs = 300; /* Timeout for each individual sync attempt */
         let synchronized = false;
 
+        if (this.skipMagicRead) {
+            this.stubLoaded = false;
+        }
         this.logDebug(`Attempting to synchronize (${maxRetries} attempts)...`);
 
         const syncData = new Uint8Array([0x07, 0x07, 0x12, 0x20, ...Array(32).fill(0x55)]);
         const syncPacket = this.buildCommandPacket(SYNC, syncData);
+        let syncModeDetected = false;
+        let syncStubDetected = false;
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             this.logDebug(`Sync attempt ${attempt}...`);
@@ -1635,9 +1646,10 @@ class ESPFlasher {
                 await this.executeCommand(
                     syncPacket,
                     async (resolve, reject, responsePacket) => {
-                        // The ROM bootloader responds to SYNC with 0x08 0x00 status - check value maybe?
-                        // For now, just receiving *any* response to SYNC is considered success here.
-                        // If the command times out, the catch block below handles it.
+                        if (!syncModeDetected && responsePacket && Number.isInteger(responsePacket.value)) {
+                            syncStubDetected = responsePacket.value === 0;
+                            syncModeDetected = true;
+                        }
                         resolve(); // Signal success for this attempt
                     },
                     null, // No default callback needed here
@@ -1677,6 +1689,11 @@ class ESPFlasher {
             this.current_chip = CHIP_ID_MAP[this.securityInfo.chip_id_hex >>> 0] || "unknown";
 
             this.logDebug(`Security Info: Flags=${this.securityInfo.flags_hex}, Flash Crypt=${this.securityInfo.flash_crypt_cnt}, Chip ID=${this.securityInfo.chip_id_hex} (${this.current_chip}), ECO=${this.securityInfo.eco_version_hex}`);
+
+            if (this.skipMagicRead && syncModeDetected) {
+                /* The SYNC response identifies stub mode without a register probe. */
+                this.stubLoaded = syncStubDetected;
+            }
 
             /* Log enabled security features */
             const enabledFlags = Object.entries(this.securityInfo.flags_decoded)
@@ -1739,6 +1756,9 @@ class ESPFlasher {
         if (!chipDetected) {
             this.logError(`Synced, but chip magic value 0x${currentValue.toString(16)} is unknown.`);
             this.current_chip = "unknown"; // Mark as unknown
+        }
+        if (this.skipMagicRead && syncModeDetected) {
+            this.stubLoaded = syncStubDetected;
         }
     }
 
