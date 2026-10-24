@@ -195,6 +195,33 @@
             description: 'Violettes SuperMini-Layout, USB-C oben. Zusatzpads sind unter dem Foto schematisch dargestellt; Positionen auf der Unterseite prüfen.'
         },
         {
+            id: 'toniebox-esp32', chip: 'esp32s3', name: 'Toniebox ESP32', subtitle: 'Toniebox V1/V2 - ESP32-S3 - Debug- und Peripherie-Pins',
+            image: 'assets/toniebox-pcb.jpg', imageSize: { width: 800, height: 600 }, crop: { x: 130, y: 65, width: 550, height: 470 }, maskBackground: true,
+            pins: columns([...Array(22).keys()], [...Array(23)].map((_, index) => index + 26), 130, 680, 90, 19),
+            notes: {
+                0: 'BOOT; Jumper J100.',
+                1: 'TRF7962A SPI Chip Select.', 2: 'TRF7962A SPI MOSI.', 3: 'TRF7962A SPI MISO.', 4: 'TRF7962A SPI Clock.',
+                5: 'I2C SDA zum LIS3DH-Beschleunigungssensor und DAC3100.', 
+                6: 'I2C SCL zum LIS3DH-Beschleunigungssensor und DAC3100.',
+                7: 'Wake-Eingang: Tasten-/Ladezustand; HIGH = keine Taste gedrueckt / kein Ladegeraet. Steuert auch NFC-Einschalten und DAC-Reset.',
+                8: 'Ladezustandsmessung ueber Spannungsteiler (ADC).', 9: 'Batteriespannungsmessung ueber Spannungsteiler (ADC).',
+                10: 'DAC3100 DIN.', 11: 'DAC3100 BCLK.', 12: 'DAC3100 WCLK.',
+                13: 'TRF7962A IRQ.', 14: 'LIS3DH IRQ.',
+                17: 'Blaue Status-LED.', 18: 'Gruene Status-LED.', 19: 'Rote Status-LED.',
+                20: 'Grosses Ohr, LOW = active.', 21: 'Kleines Ohr, LOW = active.',
+                26: 'DAC3100 Reset, aktiv HIGH.',
+                33: 'MicroSD: DAT2.', 34: 'MicroSD: DAT3.', 35: 'MicroSD: CLK.', 36: 'MicroSD: DAT0.', 37: 'MicroSD: DAT1.',
+                38: 'MicroSD: CMD; J102.', 39: 'JTAG TCK; J102.', 40: 'JTAG TDO; J102.', 41: 'JTAG TDI; J102.', 42: 'JTAG TMS; J102.',
+                43: 'UART TX; J103.', 44: 'UART RX; J103.',
+                45: 'Supply LIS3DH, DAC und blaue LED; HIGH = active.',
+                46: 'J101; GPIO am Debug/Test-Anschluss.', 47: 'Supply SD-/NFC; LOW = active.',
+                48: 'DAC3100: GPIO1-Leitung.'
+            },
+            source: 'https://tonies-wiki.revvox.de/docs/wiki/esp32/pinout/',
+            attribution: 'PCB-Foto: Gambrius Tech Blog; Pinbelegung: Toniebox Hacking Wiki',
+            description: 'Toniebox V1/V2 Hauptplatine mit ESP32-S3. GPIO-Pinmarker stehen generisch links und rechts neben dem Platinenbild und markieren keine einzelnen PCB-Pads. Pin-Kommentare dokumentieren Debug-Anschluesse und die Verbindungen zu NFC, Audio, LEDs, Tastern, Batterie-/Ladeueberwachung und microSD. Boardrevisionen koennen abweichen.'
+        },
+        {
             id: 'ai-s3', chip: 'esp32s3', name: 'AI-S3', subtitle: '36 GPIOs · 2 × 22 Pins · USB + UART',
             image: 'assets/ai-s3-pinout.jpg', imageSize: { width: 1584, height: 1080 }, crop: { x: 685, y: 95, width: 280, height: 685 },
             pins: columns(['3V3', '3V3', 'RST', 4, 5, 6, 7, 15, 16, 17, 18, 8, 3, 46, 9, 10, 11, 12, 13, 14, '5V', 'GND'],
@@ -253,6 +280,8 @@
         } else if (config.id === 's3-supermini') boards.splice(boards.findIndex(board => board.id === 'ai-s3'), 0, config);
         else boards.push(config);
     }
+    const tonieboxIndex = boards.findIndex(board => board.id === 'toniebox-esp32');
+    if (tonieboxIndex >= 0) boards.push(boards.splice(tonieboxIndex, 1)[0]);
     function raw(chip) {
         return { id: `raw-${chip.id}`, chip: chip.id, name: `${chip.name} · roher Chip`, subtitle: 'Alle logischen GPIOs',
             description: 'Logische GPIO-Ansicht, keine Gehäuse-Padnummern. Verfügbarkeit hängt von Package, Modul und Speicherbestückung ab. Speicher- und Transportpins bleiben reserviert.',
