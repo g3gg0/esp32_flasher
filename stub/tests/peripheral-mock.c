@@ -4,25 +4,28 @@
 #include "protocol.h"
 static uint8_t spi_data[64];
 static unsigned rx_count, i2c_error;
+static bool bus_busy, stopping;
 static int mode(const char *name) { const char *m = getenv("IO_TEST_MODE"); return m && !strcmp(m, name); }
 unsigned hw_i2c_count(void) { return 2; }
 unsigned hw_i2c_fifo(void) { return mode("fifo16") ? 16 : 32; }
 uint32_t hw_i2c_clock(void) { return 40000000; }
 void hw_i2c_info(unsigned p, uint32_t v[8]) { (void)p; for (unsigned i=0;i<8;i++) v[i]=0; v[5]=hw_i2c_fifo(); v[6]=2; }
-void hw_i2c_config(unsigned p, unsigned speed) { (void)p; (void)speed; }
+void hw_i2c_config(unsigned p, unsigned speed) { (void)p; (void)speed; bus_busy=false; stopping=false; }
 void hw_i2c_release(unsigned p) { (void)p; }
-bool hw_i2c_idle(unsigned p) { (void)p; return !mode("busy"); }
+bool hw_i2c_idle(unsigned p) { (void)p; return !mode("busy")&&!bus_busy; }
 void hw_i2c_begin(unsigned p, const io_i2c_cmd_t *cmds, unsigned count, const uint8_t *tx, unsigned size) {
-    (void)p; (void)tx; (void)size; rx_count=0; i2c_error=0;
+    (void)p; (void)size; rx_count=0; i2c_error=0;
     if (!count || cmds[count-1].op != IO_STOP) abort();
     for (unsigned i=0;i<count;i++) if (cmds[i].op==IO_READ) {
         rx_count+=cmds[i].count;
         if ((i+1==count-1 && (!cmds[i].nack || cmds[i].count!=1)) || (i+1<count-1 && cmds[i].nack)) abort();
     }
-    if (mode("nack") && count>1) i2c_error=RPC_PERIPHERALERRORS_NACK;
+    if ((mode("nack")||mode("stop-timeout")||(mode("probe-nack")&&size&&(tx[0]>>1)==3)) && count>1) { i2c_error=RPC_PERIPHERALERRORS_NACK; bus_busy=true; }
     if (mode("arbitration")) i2c_error=RPC_PERIPHERALERRORS_ARBITRATION;
 }
 int hw_i2c_poll(unsigned p, unsigned last) { (void)p; (void)last; return mode("timeout") ? 0 : i2c_error ? -(int)i2c_error : 1; }
+void hw_i2c_stop_begin(unsigned p) { (void)p; if(!bus_busy||i2c_error!=RPC_PERIPHERALERRORS_NACK)abort();stopping=true; }
+int hw_i2c_stop_poll(unsigned p) { (void)p;if(!stopping)abort();if(mode("stop-timeout"))return 0;bus_busy=false;return 1; }
 unsigned hw_i2c_read(unsigned p, uint8_t *data, unsigned size) { (void)p; if (mode("short")) return size+1; if(size!=rx_count) abort(); for(unsigned i=0;i<size;i++) data[i]=0xa0+i; return size; }
 unsigned hw_spi_count(void) { return 2; }
 uint32_t hw_spi_clock(void) { return 40000000; }

@@ -53,6 +53,14 @@ class PeripheralTest(unittest.TestCase):
         r=self.exchange(cfg,request('SPI',2,1,[1],b'a'),request('SPI',2,1,[1],b'a'),mode='timeout')
         self.assertEqual(self.error(r[1]),2); self.assertEqual(self.error(r[2]),5)
 
+    def test_scan_nack_stop_without_complete_irq_then_next_device_read(self):
+        # STOP releases BUS_BUSY while the original NACK remains latched;
+        # no new TRANS_COMPLETE/command-DONE event is required by IDF.
+        r=self.exchange(request('I2C',1,args=[100000]),request('I2C',2,args=[3,0,0]),request('I2C',2,args=[0x18,0,1]),mode='probe-nack')
+        self.assertEqual(self.error(r[1]),1);self.assertEqual(self.status(r[2]),0);self.assertEqual(r[2][56:],b'\xa0')
+        r=self.exchange(request('I2C',1,args=[100000]),request('I2C',2,args=[3,0,0]),mode='stop-timeout')
+        self.assertEqual(self.error(r[1]),7);self.assertEqual(len(r[1]),56)
+
     def test_ledc_shared_timer_conflict_release_and_full_duty(self):
         r=self.exchange(request('PWM',1,0,[1000,10,0,1000]),request('PWM',1,1,[2000,10,0,500]),request('PWM',1,1,[1000,10,0,0]),request('PWM',3,0),request('PWM',2,1,[1000]),request('PWM',3,1),request('PWM',1,2,[2000,10,0,500]))
         self.assertEqual([self.status(x)==0 for x in r],[True,False,True,True,True,True,True]); self.assertEqual(self.error(r[1]),6)

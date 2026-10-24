@@ -10,7 +10,7 @@
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.5.0",
+  "buildVersion": "0.5.1",
   "header": [
     [
       "magic",

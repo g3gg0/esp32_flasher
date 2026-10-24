@@ -12,6 +12,8 @@ void hw_i2c_release(unsigned port);
 bool hw_i2c_idle(unsigned port);
 void hw_i2c_begin(unsigned port, const io_i2c_cmd_t *cmds, unsigned count, const uint8_t *tx, unsigned tx_len);
 int hw_i2c_poll(unsigned port, unsigned last);
+void hw_i2c_stop_begin(unsigned port);
+int hw_i2c_stop_poll(unsigned port);
 unsigned hw_i2c_read(unsigned port, uint8_t *data, unsigned size);
 unsigned hw_spi_count(void);
 void hw_spi_info(unsigned port, uint32_t values[8]);
