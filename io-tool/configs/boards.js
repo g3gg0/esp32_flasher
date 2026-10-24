@@ -4,6 +4,23 @@
         ...left.map((label, index) => ({ label: String(label), gpio: typeof label === 'number' ? label : null, x: xLeft, y: y + index * step, side: 'left' })),
         ...right.map((label, index) => ({ label: String(label), gpio: typeof label === 'number' ? label : null, x: xRight, y: y + index * step, side: 'right' }))
     ];
+    // ESPboards pinout diagrams are CC BY-NC 4.0; keep the attribution with each board.
+    const importedBoards = [
+        ['xiao-esp32c5', 'esp32c5', 'XIAO ESP32C5', 'Seeed Studio · 11 GPIOs · 2 × 7 Pins', 'xiao-esp32c5-pinout.png', [1,0,25,7,23,24,11,10,9,8,12], 'Thumb-sized C5 board with dual-band Wi-Fi 6, BLE, native USB-C and LiPo charging. D2/GPIO25 and D3/GPIO7 have boot-time roles; other listed GPIOs are the safer starting points.'],
+        ['esp32-h2-super-mini', 'esp32h2', 'ESP32-H2 Super Mini', 'Generic · 19 GPIOs · compact USB-C board', 'esp32h2-super-mini-pinout.png', [0,1,2,3,4,5,8,9,10,11,12,13,14,22,24,23,25,26,27], 'Compact H2 board for BLE and 802.15.4 Thread/Zigbee mesh projects. GPIO0–5, 8, 9 and 25 are strapping pins; GPIO13 and GPIO8 are shared with onboard LEDs.'],
+        ['esp32-h2-devkitm-1', 'esp32h2', 'ESP32-H2-DevKitM-1', 'Espressif · 19 GPIOs · 2 × 15 pins', 'esp32-h2-devkitm-1-pinout.png', [0,1,2,3,13,14,4,5,24,23,10,11,25,12,8,22,9,27,26], 'Official Espressif H2 development board with accessible 2.54 mm headers, native USB Serial/JTAG and an onboard RGB LED. Check strapping pins and GPIO26/27 USB use before assigning them.'],
+        ['xiao-esp32c6', 'esp32c6', 'XIAO ESP32C6', 'Seeed Studio · 11 GPIOs · 2 × 7 Pins', 'xiao-esp32c6-pinout.png', [0,1,2,21,22,23,16,18,20,19,17], 'Small C6 board with Wi-Fi 6, BLE 5.3, Thread/Zigbee, USB-C and LiPo charging. GPIO22/23 provide I²C, GPIO16/17 UART, and GPIO18–20 SPI; the diagram lists alternate SDIO functions.'],
+        ['esp32-c6-devkitm-1', 'esp32c6', 'ESP32-C6-DevKitM-1', 'Espressif · 22 GPIOs · 2 × 15 pins', 'esp32-c6-devkitm-1-pinout.png', [2,3,4,5,0,1,8,6,7,14,16,17,23,22,21,20,19,18,15,9,13,12], 'Official C6 development board with 2.4 GHz Wi-Fi 6, BLE, Thread/Zigbee and native USB. GPIO8 drives the RGB LED, GPIO9 is BOOT, and GPIO12/13 carry native USB Serial/JTAG.'],
+        ['esp32-c6-super-mini', 'esp32c6', 'ESP32-C6 Super Mini', 'Generic · 22 GPIOs · compact USB-C board', 'esp32-c6-super-mini-pinout.png', [16,17,0,1,2,3,4,5,6,7,8,9,12,13,14,15,18,19,20,21,22,23], 'Compact C6 board with Wi-Fi 6, BLE 5.3 and Thread/Zigbee. GPIO8 is shared with the RGB LED, GPIO15 with a status LED, and GPIO4–9 have boot-time strapping roles.'],
+        ['esp32-c6-zero-mini', 'esp32c6', 'ESP32-C6 Zero Mini', 'Waveshare · 22 GPIOs · 25 pads', 'esp32-c6-zero-mini-pinout.png', [16,17,0,1,2,3,4,5,6,7,8,9,12,13,14,15,18,19,20,21,22,23], 'Waveshare C6 Zero board with USB-C and a compact 25-pad layout. GPIO8 is used by the onboard LED, GPIO9 by BOOT, and GPIO4–9 are strapping pins; compare the physical revision with the diagram.'],
+        ['xiao-esp32c3', 'esp32c3', 'XIAO ESP32C3', 'Seeed Studio · 11 GPIOs · 2 × 7 Pins', 'esp32c3-pinout.png', [2,3,4,5,6,7,21,10,9,8,20], 'Tiny C3 board with USB-C, BLE 5, Wi-Fi and LiPo charging. GPIO2/4/5/6/7/8/9 have boot-time or peripheral roles; Seeed recommends D0–D2 for analog input.'],
+        ['esp32-c3-devkitm-1', 'esp32c3', 'ESP32-C3-DevKitM-1', 'Espressif · 15 GPIOs · 2 × 15 pins', 'esp32-c3-devkitm-1-pinout.png', [2,3,0,1,10,21,20,9,8,7,6,5,4,18,19], 'Official C3 development board with USB-UART bridge, Micro-USB and native USB Serial/JTAG pins. GPIO9 is BOOT, GPIO8 drives the RGB LED, and GPIO4–7 are strapping/JTAG pins.']
+    ].map(([id, chip, name, subtitle, diagram, gpios, description]) => ({
+        id, chip, name, subtitle, diagram: `assets/${diagram}`,
+        pins: gpios.map((gpio, index) => ({ gpio, label: String(gpio), side: index < Math.ceil(gpios.length / 2) ? 'left' : 'right', x: index < Math.ceil(gpios.length / 2) ? 0 : 100, y: index % Math.ceil(gpios.length / 2) * 12 })),
+        source: `https://www.espboards.dev/esp32/${id}/`,
+        attribution: 'Pinout-Diagramm: ESPboards · CC BY-NC 4.0', description
+    }));
     // Photo crops are rendered using SVG viewBox, without changing the images.
     // Coordinates use the original source pixels. Power pads remain visible but
     // are never treated as GPIOs. Raw-chip view uses logical GPIO numbers.
@@ -84,6 +101,7 @@
             description: 'Waveshare ESP32-P4-ETH, USB-C oben / RJ45 unten. Onboard-Peripherie bleibt elektrisch an den jeweiligen Pins angeschlossen. GPIO39–48 liegen in der LDO4-Domäne und benötigen eine separate Stromversorgung; GPIO-Konfiguration allein versorgt sie nicht.'
         }
     ];
+    boards.push(...importedBoards);
     function raw(chip) {
         return { id: `raw-${chip.id}`, chip: chip.id, name: `${chip.name} · roher Chip`, subtitle: 'Alle logischen GPIOs',
             description: 'Logische GPIO-Ansicht, keine Gehäuse-Padnummern. Verfügbarkeit hängt von Package, Modul und Speicherbestückung ab. Speicher- und Transportpins bleiben reserviert.',
