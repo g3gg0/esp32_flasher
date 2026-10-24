@@ -1,0 +1,12 @@
+{
+  "cpu": "riscv32",
+  "cores": 1,
+  "compiler": "riscv32-esp-elf-",
+  "text": "0x40380000",
+  "data": "0x3fca4000",
+  "textBudget": 16384,
+  "dataBudget": 8192,
+  "stack": 2048,
+  "registerStart": "0x60000000",
+  "registerEnd": "0x60100000"
+}

@@ -19,11 +19,33 @@
     class SDError extends Error {
         constructor(message, code = 'SD_PROTOCOL') { super(message); this.name = 'SDError'; this.code = code; }
     }
+    // Bounded disk writes avoid one File System Access call per 512-byte RPC.
+    // On a write failure truncate to the last acknowledged batch, then close.
+    class SDFileWriter {
+        constructor(file) { this.file = file; this.buffer = new Uint8Array(64 * 1024); this.pending = 0; this.saved = 0; this.failed = false; }
+        async write(data) {
+            if (this.failed) throw new Error('SD-Dateiausgabe ist fehlgeschlagen.');
+            if (!(data instanceof Uint8Array) || data.length !== 512) throw new Error('Nur vollständige 512-Byte-Sektoren speichern.');
+            this.buffer.set(data, this.pending); this.pending += data.length;
+            if (this.pending === this.buffer.length) await this.flush();
+        }
+        async flush() {
+            if (!this.pending || this.failed) return;
+            try { await this.file.write(this.buffer.subarray(0, this.pending)); this.saved += this.pending; this.pending = 0; }
+            catch (error) { this.failed = true; throw error; }
+        }
+        async close() {
+            try { await this.flush(); }
+            finally {
+                try { if (this.failed) await this.file.truncate(this.saved); }
+                finally { await this.file.close(); }
+            }
+        }
+    }
     function validateSDConfig(chip, pins, config) {
         if (!sdProfiles[chip.id]) throw new Error('SD-Steuerung für diesen Chip noch nicht implementiert.');
         if (![1, 4].includes(config.width)) throw new Error('SD-Busbreite muss 1 oder 4 sein.');
-        const power = config.power || 'external';
-        if (!['external', 'p4-eth'].includes(power) || (power === 'p4-eth' && !sdProfiles[chip.id].onboardPower)) throw new Error('SD-Versorgung für diesen Chip nicht verfügbar.');
+        if (config.power && config.power !== 'external') throw new Error('Versorgung separat im LDO4-Block und über GPIO steuern; SDMMC schaltet keine Versorgung.');
         const mapped = {}, used = new Set();
         for (const role of roles) {
             const id = config.pins?.[role];
@@ -36,11 +58,9 @@
             if (used.has(id)) throw new Error(`GPIO${id} ist mehrfach zugewiesen.`);
             used.add(id); mapped[role] = id;
         }
-        if (power === 'p4-eth') {
-            if (!pins.has(45) || used.has(45) || chip.pins.find(p => p.id === 45)?.reserved) throw new Error('Onboard-Versorgung benötigt GPIO45 als separaten Enable-Pin.');
-            mapped.enable = 45;
-        }
-        return { pins: mapped, width: config.width, power };
+        const clockHz = config.clockHz ?? 400000;
+        if (![400000, 1000000, 5000000, 20000000].includes(clockHz) || (chip.id !== 'esp32p4' && clockHz !== 400000)) throw new Error('Lesetakt für diesen Chip nicht unterstützt.');
+        return { pins: mapped, width: config.width, clockHz };
     }
     function responseBits(words, shift, length) {
         let value = 0n;
@@ -82,7 +102,8 @@
     }
 
     // The GPIO controller owns the single register queue and all pin leases.
-    // No DMA buffers, interrupts, flash commands or card block writes are used.
+    // Accelerated P4 executes complete commands/DMA locally in the RAM stub.
+    // Legacy transports retain the register backend. No card block writes.
     class SDHost {
         constructor(controller, { onCommand = () => {}, timeoutMs = 1500 } = {}) {
             this.controller = controller; this.transport = controller.transport;
@@ -90,6 +111,9 @@
             this.timeoutMs = timeoutMs; this.saved = new Map(); this.pinStates = new Map();
             this.config = null; this.ready = false; this.card = null; this.rca = 0; this.width = 1;
             this.needsReset = false; this.padsTouched = false;
+            this.rpcSD = controller.chip.id === 'esp32p4' && !!this.transport.supports?.('SDMMC');
+            this.rpcReady = false;
+            this.clockHz = this.profile?.clockHz;
         }
         async remember(address, mask = 0xffffffff) {
             mask >>>= 0;
@@ -134,13 +158,15 @@
             await this.wait(r.command, value => !(value & f.start), 'SD-Taktübernahme', signal);
             if (await this.transport.read(r.events) & 1 << 12) throw new SDError('SD-Taktübernahme: Hardware Lock Error.');
         }
-        async clockOn(signal) {
+        async clockOn(signal, clockHz = this.profile.clockHz) {
             const r = this.profile.registers;
             await this.set(r.clockEnable, 0, 2 | 2 << 16);
             await this.updateClock(signal);
             await this.set(r.clockSource, 1 << 2, 3 << 2);
-            await this.set(r.clockDivider, this.profile.cardDivider << 8, 255 << 8);
+            const divider = this.profile.cardDivider * this.profile.clockHz / clockHz;
+            await this.set(r.clockDivider, divider << 8, 255 << 8);
             await this.updateClock(signal);
+            this.clockHz = clockHz;
             await this.set(r.clockEnable, 2, 2 | 2 << 16); // continuous clock, including idle initialization clocks
             await this.updateClock(signal);
         }
@@ -165,11 +191,11 @@
                     // matrix/OE fields needed to release a partial setup.
                     const g = c.chip.gpio;
                     for (const [role, id] of Object.entries(checked.pins)) {
+                        // Supply availability is enforced by the GPIO controller.
                         const pin = c.descriptor(id), bank = g.banks[Math.floor(id / 32)], bit = 2 ** (id % 32);
                         for (const [address, mask] of [[bank.enable, bit], [g.matrix + id * 4, g.matrixMask], [pin.mux, g.muxMask], [g.pinConfig + id * 4, g.pinConfigMask], ...pin.digitalRoute.map(op => [op.address, op.mask])]) await this.remember(address, mask);
-                        if (['d3', 'enable'].includes(role)) await this.remember(bank.output, bit);
+                        if (role === 'd3') await this.remember(bank.output, bit);
                     }
-                    if (checked.power === 'p4-eth') for (const op of this.profile.onboardPower) await this.set(op.address, op.value, op.mask);
                     for (const op of this.profile.init) await this.set(op.address, op.value, op.mask);
                     const latch = this.profile.latchClock;
                     if (latch) {
@@ -192,11 +218,11 @@
                         await this.set(bank.enable, 0, bit);
                         for (const op of pin.digitalRoute) await this.set(op.address, 0, op.mask);
                         await this.set(g.pinConfig + id * 4, 0, g.pinConfigMask);
-                        await this.set(pin.mux, g.muxGPIO | (!['clk', 'enable'].includes(role) ? g.pullUp : 0), g.muxMask);
-                        if (!['clk', 'enable'].includes(role)) await this.set(m.inputBase + m.signals[role] * 4, id | m.inputEnable, m.inputMask);
+                        await this.set(pin.mux, g.muxGPIO | (role !== 'clk' ? g.pullUp : 0), g.muxMask);
+                        if (role !== 'clk') await this.set(m.inputBase + m.signals[role] * 4, id | m.inputEnable, m.inputMask);
                         // D3 stays HIGH during CMD0, ensuring native SD mode.
-                        if (role === 'd3' || role === 'enable') {
-                            await this.set(bank.output, role === 'd3' ? bit : 0, bit);
+                        if (role === 'd3') {
+                            await this.set(bank.output, bit, bit);
                             await this.set(g.matrix + id * 4, g.matrixGPIO, g.matrixMask);
                         } else await this.set(g.matrix + id * 4, m.signals[role], g.matrixMask);
                         await this.set(bank.enable, bit, bit);
@@ -207,6 +233,13 @@
                     }
                     await this.set(this.profile.registers.width, 0, 2 | 2 << 16);
                     await this.clockOn(signal); await sleep(10); abort(signal);
+                    if (this.rpcSD) {
+                        // Keep the same leases/restoration path; reserve every
+                        // configuration register touched by the local DMA driver.
+                        const r = this.profile.registers;
+                        for (const [address, mask] of [[r.blockSize, 0xffff], [r.byteCount, 0xffffffff], [r.fifoThreshold, 0xffffffff], [r.descriptorList, 0xffffffff], [r.dma, 0xfffffffe], [r.dmaStatus + 4, 0xffffffff]]) await this.remember(address, mask);
+                        await this.transport.sdmmcConfigure(); this.rpcReady = true;
+                    }
                     this.ready = true; this.needsReset = false;
                 } catch (error) {
                     try { await this.closeUnqueued(); } catch (restore) { throw new AggregateError([error, restore], 'SD-Initialisierung und Freigabe fehlgeschlagen.'); }
@@ -217,6 +250,7 @@
         async command(spec, argument, signal) {
             abort(signal);
             if (spec.index === 7 && argument === 0) spec = { ...spec, response: 'none' };
+            if (this.rpcSD) return this.commandRPC(spec, argument, signal);
             const { registers: r, flags: f, slot } = this.profile;
             let flags = f.start | f.hold | slot << 16 | spec.index;
             flags |= spec.index === 0 ? f.initialClocks : f.waitData;
@@ -248,6 +282,33 @@
                 return entry;
             } catch (error) { entry.error = error.message; this.needsReset = true; throw error; }
             finally { entry.finishedAt = this.controller.clock(); this.onCommand(entry); }
+        }
+        async commandRPC(spec, argument, signal) {
+            const entry = { command: `${spec.app ? 'ACMD' : 'CMD'}${spec.index}`, argument: argument >>> 0, responseType: spec.response, startedAt: this.controller.clock(), accelerated: true };
+            const capture = result => {
+                entry.events = result.events;
+                entry.response = spec.response === 'none' ? [] : spec.response === 'r2' ? [result.response0, result.response1, result.response2, result.response3] : [result.response0];
+                if (spec.dataBytes) { entry.dataEvents = result.data_events; entry.dma = { transferred: result.transferred, descriptor: result.descriptor, status: result.dma_status }; }
+            };
+            try {
+                const result = await this.transport.sdmmcCommand(spec, argument, Math.min(1500000, Math.max(100, Math.round(this.timeoutMs * 1000))));
+                capture(result); abort(signal);
+                if (spec.response === 'r1' || spec.response === 'r1b') checkR1(result.response0, entry.command);
+                if (spec.response === 'r6' && (result.response0 & 0xe000)) throw new SDError(`${entry.command}: R6-Fehler.`, 'SD_CARD_STATUS');
+                if (spec.dataBytes) {
+                    if (result.transferred !== spec.dataBytes || result.descriptor & 0xc0000000 || result.data.length !== spec.dataBytes || !(result.data_events & 8) || result.data_events & 0xae80 || result.dma_status & 0x34) throw new SDError('SD-DMA unvollständig/fehlerhaft. Sektor wird nicht gespeichert.', 'SD_SHORT_DATA');
+                    entry.data = result.data;
+                }
+                return entry;
+            } catch (error) {
+                if (error.response) {
+                    capture(error.response);
+                    const e = (typeof module === 'object' && module.exports ? require('../stub/protocol.js') : root.ESPIO.rpcProtocol).sdmmcErrors;
+                    const codes = { [e.RESPONSE_TIMEOUT]: 'SD_RESPONSE_TIMEOUT', [e.COMMAND_TIMEOUT]: 'SD_TIMEOUT', [e.RESPONSE_CRC]: 'SD_CRC', [e.DATA_CRC]: 'SD_DATA', [e.DATA_TIMEOUT]: 'SD_DATA', [e.SHORT_DATA]: 'SD_SHORT_DATA', [e.CARD_STATUS]: 'SD_CARD_STATUS', [e.BUSY_TIMEOUT]: 'SD_TIMEOUT', [e.DMA]: 'SD_DATA', [e.HOST]: 'SD_HOST_ERROR', [e.NOT_CONFIGURED]: 'SD_HOST_ERROR' };
+                    error = new SDError(`${entry.command}: SDMMC RPC ${codes[error.response.sd_error] || error.message} · IRQ ${hex(entry.events)}${entry.dma ? ` · ${entry.dma.transferred}/${spec.dataBytes} Bytes` : ''}`, codes[error.response.sd_error] || 'SD_HOST_ERROR');
+                }
+                entry.error = error.message; this.needsReset = true; throw error;
+            } finally { entry.finishedAt = this.controller.clock(); this.onCommand(entry); }
         }
         async appCommand(spec, argument, signal) {
             const prefix = await this.command(specs.cmd55, this.rca << 16, signal);
@@ -313,30 +374,31 @@
                 return await this.run(async () => {
                     if (!this.card || this.needsReset) throw new Error('Karte vor dem Download erneut identifizieren.');
                     const r = this.profile.registers;
-                    await this.set(r.fifoThreshold, 1, 0x77ff0fff); // DMA request per word, single transfers
+                    if (!this.rpcSD) await this.set(r.fifoThreshold, 1, 0x77ff0fff); // DMA request per word, single transfers
                     if (!(this.card.ocr & 0x40000000)) await this.command({ index: 16, response: 'r1' }, 512, signal);
-                    await this.set(r.blockSize, 512, 0xffff); await this.set(r.byteCount, 512);
+                    if (!this.rpcSD) { await this.set(r.blockSize, 512, 0xffff); await this.set(r.byteCount, 512); }
                     report();
                     try {
                         for (let sector = range.start; sector <= range.end; sector++) {
                             abort(signal);
                             const argument = this.card.ocr & 0x40000000 ? sector : sector * 512;
                             if (argument > 0xffffffff) throw new Error('SD-Byteadresse überschreitet 32 Bit.');
-                            await this.armDMA(512, signal);
+                            if (!this.rpcSD) await this.armDMA(512, signal);
                             const entry = await this.command({ index: 17, response: 'r1', dataBytes: 512 }, argument, signal);
                             abort(signal);
                             await write(entry.data); // backpressure; never buffer the entire card
                             completed++; report();
                             if (completed % 8 === 0) await sleep(0);
                         }
-                    } finally { if (this.ready) await this.disarmDMA(); }
+                    } finally { if (this.ready && !this.rpcSD) await this.disarmDMA(); }
                     return { ...range, completed, bytesWritten: completed * 512 };
                 }, signal);
             } finally {
                 this.downloading = false;
                 if (resume && c.active && !c.fault) c.start();
             }
-        }        run(callback, signal) {
+        }
+        run(callback, signal) {
             return this.controller.queue.run(async () => {
                 if (!this.ready || !this.controller.active || this.controller.fault) throw new Error('SD-Port zuerst aktivieren.');
                 try { return await callback(); }
@@ -362,6 +424,8 @@
             return this.run(async () => {
                 this.card = null; this.rca = 0; this.width = 1;
                 if (this.needsReset) { await this.reset(signal); await this.clockOn(signal); }
+                else if (this.clockHz !== this.profile.clockHz) await this.clockOn(signal);
+                if (this.rpcSD) await this.transport.sdmmcConfigure();
                 this.needsReset = false;
                 await this.set(this.profile.registers.width, 0, 2 | 2 << 16);
                 await this.holdD3High();
@@ -396,9 +460,10 @@
                 }
                 const status = (await this.command(specs.cmd13, this.rca << 16, signal)).response[0];
                 if (((status >>> 9) & 15) !== 4 || !(status & 256)) throw new SDError(`Karte nicht bereit im Transferzustand: ${hex(status)}.`);
+                if (this.config.clockHz !== this.profile.clockHz) await this.clockOn(signal, this.config.clockHz);
                 return this.card = { rca: this.rca, ocr, type: ocr & 0x40000000 ? 'SDHC / SDXC' : 'SDSC',
                     cid: decodeCID(cid), csd: decodeCSD(csd), rawCID: cid, rawCSD: csd,
-                    status, width: this.width, clockHz: this.profile.clockHz };
+                    status, width: this.width, clockHz: this.clockHz };
             }, signal);
         }
         close() { return this.controller.queue.run(() => this.closeUnqueued()); }
@@ -411,6 +476,10 @@
         }
         async closeUnqueued() {
             const c = this.controller, errors = [], attempt = async fn => { try { await fn(); } catch (error) { errors.push(error); } };
+            if (this.rpcReady) {
+                await attempt(() => this.transport.sdmmcRelease());
+                this.rpcReady = false;
+            }
             // Disconnect peripheral OE before touching/restoring any pad state.
             for (const id of this.padsTouched ? this.pinStates.keys() : []) {
                 const bank = c.chip.gpio.banks[Math.floor(id / 32)], bit = 2 ** (id % 32);
@@ -500,7 +569,7 @@
         };
         return model;
     }
-    const api = { SDHost, sdProfiles, sdCommands: specs, sdRoles: roles, validateSDConfig, decodeCID, decodeCSD, sectorRange, createSDModel };
+    const api = { SDHost, SDFileWriter, sdProfiles, sdCommands: specs, sdRoles: roles, validateSDConfig, decodeCID, decodeCSD, sectorRange, createSDModel };
     if (typeof module === 'object' && module.exports) module.exports = api;
     else Object.assign(root.ESPIO ||= {}, api);
 })(globalThis);

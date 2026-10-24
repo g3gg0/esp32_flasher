@@ -64,13 +64,24 @@
             image: 'assets/p4-pinout.jpg', imageSize: { width: 960, height: 969 }, crop: { x: 239, y: 85, width: 223, height: 849 },
             pins: columns([54, 19, 'GND', 18, 17, 16, 15, 'GND', 14, 6, 5, 4, 'GND', 3, 2, 8, 7, 'GND', 24, 25],
                 ['VBUS', 'VSYS', 'GND', 'EN', '3V3', 20, 21, 'GND', 22, 23, 'RUN', 26, 'GND', 27, 32, 33, 46, 'GND', 47, 48], 254, 446, 153, 27),
-            notes: { 7: 'I²C SDA', 8: 'I²C SCL', 39: 'SD Data 0', 40: 'SD Data 1', 41: 'SD Data 2', 42: 'SD Data 3', 43: 'SD CLK', 44: 'SD CMD', 45: 'SD /EN' },
+            notes: { 7: 'I²C SDA', 8: 'I²C SCL',
+                39: 'SD Data 0 · LDO4-Domäne, separate Stromversorgung',
+                40: 'SD Data 1 · LDO4-Domäne, separate Stromversorgung',
+                41: 'SD Data 2 · LDO4-Domäne, separate Stromversorgung',
+                42: 'SD Data 3 · LDO4-Domäne, separate Stromversorgung',
+                43: 'SD CLK · LDO4-Domäne, separate Stromversorgung',
+                44: 'SD CMD · LDO4-Domäne, separate Stromversorgung',
+                45: 'SD /EN (aktiv LOW) · LDO4-Domäne, separate Stromversorgung',
+                46: 'LDO4-Domäne, separate Stromversorgung',
+                47: 'LDO4-Domäne, separate Stromversorgung',
+                48: 'LDO4-Domäne, separate Stromversorgung' },
             extra: [39, 40, 41, 42, 43, 44, 45],
             i2c: { sda: 7, scl: 8 },
-            sd: { pins: { d0: 39, d1: 40, d2: 41, d3: 42, clk: 43, cmd: 44 }, power: 'p4-eth',
+            sd: { pins: { d0: 39, d1: 40, d2: 41, d3: 42, clk: 43, cmd: 44 },
+                note: 'Onboard-Slot: LDO4-Domäne separat mit 3,3 V versorgen und GPIO45 manuell als Output LOW setzen.',
                 source: 'https://files.waveshare.com/wiki/ESP32-P4-ETH/ESP32-P4-ETH-datasheet.pdf' },
             source: 'https://docs.waveshare.com/ESP32-P4-ETH', attribution: 'Boardfoto und Pinbelegung: Waveshare',
-            description: 'Waveshare ESP32-P4-ETH, USB-C oben / RJ45 unten. Onboard-Peripherie bleibt elektrisch an den jeweiligen Pins angeschlossen.'
+            description: 'Waveshare ESP32-P4-ETH, USB-C oben / RJ45 unten. Onboard-Peripherie bleibt elektrisch an den jeweiligen Pins angeschlossen. GPIO39–48 liegen in der LDO4-Domäne und benötigen eine separate Stromversorgung; GPIO-Konfiguration allein versorgt sie nicht.'
         }
     ];
     function raw(chip) {

@@ -24,24 +24,26 @@
     let lastFrame = 0;
     let scanAbort = null, scanResults = [], scanMetadata = null;
     let sdHost = null, sdAbort = null, sdLog = [], sdCardResult = null;
-    let sdDownloadActive = false;
+    let sdDownloadActive = false, sdLastLogUI = 0;
     const sdDrafts = new Map();
     function sdDraft() {
         const key = `${chip.id}:${board.id}`;
-        if (!sdDrafts.has(key)) sdDrafts.set(key, { pins: Object.fromEntries(sdRoles.map(role => [role, null])), width: 1, power: 'external' });
+        if (!sdDrafts.has(key)) sdDrafts.set(key, { pins: Object.fromEntries(sdRoles.map(role => [role, null])), width: 1, clockHz: 400000 });
         return sdDrafts.get(key);
     }
-    function sdRole(id) { return Object.entries(sdHost?.ready ? sdHost.config.pins : { ...sdDraft().pins, enable: sdDraft().power === 'p4-eth' ? 45 : null }).find(([, pin]) => pin === id)?.[0]; }
+    function sdRole(id) { return Object.entries(sdHost?.ready ? sdHost.config.pins : sdDraft().pins).find(([, pin]) => pin === id)?.[0]; }
     const isAnalog = () => controller?.readMode === 'adc';
+    const accelerated = () => transport instanceof ESPIO.AcceleratedTransport;
+    const rpcModuleReason = module => accelerated() && !transport.supports(module) ? `${module} RPC is not available in this stub. Load a current build for this chip.` : '';
     const adcChannel = id => adcProfiles[chip.id]?.channels[id];
     const i2cPanel = ESPIO.createI2CPanel({ controller: () => controller, chip: () => chip, board: () => board, pins: exposedPins,
-        session: () => session, blocked: () => busy || operation, gpioOption, log,
+        session: () => session, blocked: () => busy || operation || accelerated(), backendReason: () => rpcModuleReason('I2C'), gpioOption, log,
         setOperation: value => { operation = value; updateControls(); }, update: updateControls });
 
     function gpioOption(id) {
         const pin = chip.pins.find(pin => pin.id === id);
-        const text = [`GPIO ${id}`, board.notes?.[id], pin.reserved ? 'reserviert' : !pin.output ? 'nur Input' : ''].filter(Boolean).join(' · ');
-        const option = new Option(text, String(id)); option.title = text; option.disabled = !!pin.reserved || !pin.output; return option;
+        const text = [`GPIO ${id}`, board.notes?.[id], pinReason(id) || (!pin.output ? 'nur Input' : '')].filter(Boolean).join(' · ');
+        const option = new Option(text, String(id)); option.title = text; option.disabled = !!pinReason(id) || !pin.output; return option;
     }
     function peripheralRole(id) { return controller?.pinOwners.get(id)?.startsWith('I²C') ? i2cPanel.role(id) : sdRole(id) || i2cPanel.role(id); }
 
@@ -69,7 +71,9 @@
         svg('image', { href: config.image, x: 0, y: 0, width: config.imageSize.width, height: config.imageSize.height }, nested);
     }
     function availableBoards() { return [...boardConfigs.boards.filter(item => item.chip === chip.id), boardConfigs.raw(chip)]; }
-    function pinReason(id) { return chip.pins.find(pin => pin.id === id)?.reserved || ''; }
+    function pinReason(id) {
+        return chip.pins.find(pin => pin.id === id)?.reserved || '';
+    }
     function exposedPins() { return [...new Set([...board.pins.map(pin => pin.gpio), ...(board.extra || [])].filter(id => id !== null))]; }
     function supported(fn) { return chip.peripherals.some(block => fn.blocks.includes(block.id)); }
 
@@ -152,7 +156,7 @@
         const id = pad.gpio;
         svg('path', { class: 'pin-connector', d: `M${edge} ${traceY} L${left ? x - 14 : x + 14} ${y}` }, drawing);
         const g = svg('g', { class: 'pin-hit', tabindex: 0, role: 'button', 'aria-label': `GPIO ${id}`, 'data-pin': id }, drawing);
-        svg('title', {}, g, `GPIO${id}${pinReason(id) ? ` · ${pinReason(id)}` : ''}`);
+        svg('title', {}, g, [`GPIO${id}`, board.notes?.[id], pinReason(id)].filter(Boolean).join(' · '));
         // Large transparent hit area remains comfortable even on dense headers.
         svg('circle', { cx: x, cy: y, r: 15, style: 'fill:transparent;stroke:none' }, g);
         svg('circle', { cx: x, cy: y, r: 8 }, g);
@@ -172,11 +176,12 @@
             pin.g.classList.toggle('selected', selectedPin === pin.id);
             pin.g.classList.toggle('high', state?.read != null && state.read >= .5);
             pin.g.classList.toggle('reserved-pin', !!pinReason(pin.id));
+            pin.g.querySelector('title').textContent = [`GPIO${pin.id}`, board.notes?.[pin.id], pinReason(pin.id)].filter(Boolean).join(' · ');
             const role = peripheralRole(pin.id);
             pin.g.classList.toggle('sd-pin', !!sdRole(pin.id)); pin.g.classList.toggle('i2c-pin', !!i2cPanel.role(pin.id));
             const label = pin.g.querySelector('text'); if (label) label.textContent = `IO${pin.id}${role ? ` · ${role.toUpperCase()}` : ''}`;
             pin.g.setAttribute('aria-pressed', String(selectedPin === pin.id));
-            pin.toggle.hidden = state?.mode !== 'output'; pin.toggle.disabled = busy || operation || !controller?.running || controller?.pinOwners.has(pin.id);
+            pin.toggle.hidden = state?.mode !== 'output'; pin.toggle.disabled = busy || operation || !!pinReason(pin.id) || !controller?.running || controller?.pinOwners.has(pin.id);
             pin.toggle.textContent = state?.level ? '1' : '0';
         }
     }
@@ -198,8 +203,8 @@
         if (!pin) return;
         const state = controller?.pins.get(selectedPin), reason = pinReason(selectedPin), owner = controller?.pinOwners.get(selectedPin);
         $('pin-name').textContent = `GPIO ${selectedPin}`;
-        $('pin-subtitle').textContent = owner ? `${owner}-Port · ${peripheralRole(selectedPin)?.toUpperCase() || ''}` : reason ? 'Reservierter Pin · keine Konfiguration' : pin.output ? 'Digitaler Ein- / Ausgang' : 'Nur digitaler Eingang';
-        $('pin-state').textContent = reason ? 'RESERVIERT' : state ? labels[state.mode] : 'VORSCHAU';
+        $('pin-subtitle').textContent = owner ? `${owner}-Port · ${peripheralRole(selectedPin)?.toUpperCase() || ''}` : reason ? 'Nicht verfügbar · keine Konfiguration' : pin.output ? 'Digitaler Ein- / Ausgang' : 'Nur digitaler Eingang';
+        $('pin-state').textContent = reason ? pin.reserved ? 'RESERVIERT' : 'NICHT VERFÜGBAR' : state ? labels[state.mode] : 'VORSCHAU';
         const stale = !controller?.running || state?.read == null || performance.now() - (state?.lastRead || 0) > Math.max(250, (state?.samplePeriod || Number($('interval').value)) * 4);
         $('read-label').textContent = isAnalog() ? 'ADC · ROHWERT / 4095' : 'GELESEN';
         $('read-level').textContent = isAnalog() && !adcChannel(selectedPin) ? 'kein ADC' : stale ? '—' : isAnalog() ? String(state.adcRaw) : state.read ? '1 / HIGH' : '0 / LOW';
@@ -226,14 +231,15 @@
     }
     function renderPeripherals() {
         $('peripherals').replaceChildren();
-        for (const fn of [{ id: 'gpio', name: 'GPIO' }, ...functions.filter(supported)]) {
+        for (const fn of [{ id: 'gpio', name: 'GPIO' }, ...(ESPIO.ldo4Profiles[chip.id] ? [{ id: 'ldo4', name: 'LDO4', blocks: ['pmu'] }] : []), ...functions.filter(supported)]) {
             const button = document.createElement('button'); button.textContent = fn.name; button.dataset.peripheral = fn.id;
             button.className = fn.id === peripheral ? 'active' : '';
-            const small = document.createElement('small'); small.textContent = fn.id === 'gpio' || (fn.id === 'adc' && adcProfiles[chip.id]) || (fn.id === 'sd' && sdProfiles[chip.id]) || (fn.id === 'i2c' && ESPIO.i2cProfiles[chip.id]) ? 'AKTIV' : 'GEPLANT'; button.append(small);
+            const small = document.createElement('small'); small.textContent = ['gpio', 'ldo4'].includes(fn.id) || (fn.id === 'adc' && adcProfiles[chip.id]) || (fn.id === 'sd' && sdProfiles[chip.id]) || (fn.id === 'i2c' && ESPIO.i2cProfiles[chip.id]) ? 'AKTIV' : 'GEPLANT'; button.append(small);
             button.addEventListener('click', () => {
-                peripheral = ['sd', 'i2c'].includes(fn.id) && peripheral === fn.id ? 'gpio' : fn.id;
+                peripheral = ['sd', 'i2c', 'ldo4'].includes(fn.id) && peripheral === fn.id ? 'gpio' : fn.id;
                 $('register-block').value = fn.id === 'gpio' ? 'gpio' : chip.peripherals.find(block => fn.blocks.includes(block.id))?.id || '*';
                 $('peripheral-description').textContent = fn.id === 'i2c' && ESPIO.i2cProfiles[chip.id] ? 'I²C-Port: SDA/SCL zuordnen, Adressen scannen und Bytes übertragen.' : fn.id === 'sd' ? 'SD-Port: Pins zuordnen und die Karte über den nativen Host identifizieren.' : fn.id === 'gpio' ? 'GPIO Input / Output: Registerzugriffe aktiv.' : fn.id === 'adc' && adcProfiles[chip.id] ? 'ADC verfügbar: Messquelle im Live-Pinout auf ADC umschalten. 12-Bit-Rohwerte, sequenziell, ohne Spannungskalibrierung.' : `${fn.name} ist als Erweiterung vorgesehen. Der Registerkatalog ist verfügbar; es werden keine Peripherieregister geschrieben.`;
+                if (fn.id === 'ldo4') $('peripheral-description').textContent = ESPIO.ldo4Profiles[chip.id].description;
                 renderPeripherals(); renderCatalog();
             });
             $('peripherals').append(button);
@@ -244,6 +250,7 @@
         for (const block of chip.peripherals) $('register-block').add(new Option(`${block.name} (${block.registerCount})`, block.id));
         $('register-block').value = chip.peripherals.some(block => block.id === previous) ? previous : 'gpio';
         renderSD();
+        updateLDO4Controls();
         i2cPanel.render(peripheral === 'i2c');
     }
     async function loadCatalog() {
@@ -283,6 +290,13 @@
     }
 
     function updateControls() {
+        $('load-accelerated').hidden = session !== 'hardware';
+        $('load-accelerated').disabled = busy || operation || accelerated() || !ESPIO.acceleratedTargets[chip.id] || !!controller?.fault;
+        $('load-accelerated').textContent = accelerated() ? 'Accelerated stub active' : 'Load accelerated stub';
+        $('load-accelerated').title = 'Release I/O, return to ROM, upload to RAM and request SYNC. Starts with ESP32-C3/P4.';
+        const identity = accelerated() ? transport.identity : null;
+        $('accelerated-info').hidden = !identity;
+        if (identity) $('accelerated-info').textContent = `${identity.chip} · ${identity.cpu} / ${identity.cpu_cores} cores · MAC ${identity.flags & ESPIO.rpcProtocol.identityFlags.MAC_VALID ? Array.from(identity.mac, byte => byte.toString(16).padStart(2, '0')).join(':') : 'unknown'} · stub ${identity.build} / IDF ${identity.idf} · protocol ${identity.protocol_major}.${identity.protocol_minor} · flash unprobed · GPIO/ADC${transport.supports('SDMMC') ? ' · accelerated SDMMC sector reads' : ''}.`;
         $('connect').hidden = session !== 'offline'; $('connect').disabled = busy;
         $('disconnect').hidden = session === 'offline'; $('disconnect').disabled = busy || operation;
         $('disconnect').textContent = session === 'demo' ? 'Demo beenden' : 'Trennen & Reset';
@@ -302,6 +316,7 @@
         renderDevices(); updateInspector(); updateMapState();
         updateScanControls();
         updateSDControls();
+        updateLDO4Controls();
         i2cPanel.update();
     }
     async function initializeBoard() {
@@ -328,8 +343,9 @@
             }
         });
         controller = current;
-        await current.initialize(exposedPins().filter(id => !pinReason(id)));
+        await current.initialize(exposedPins().filter(id => !chip.pins.find(pin => pin.id === id)?.reserved));
         if (token !== boardRequest || !transport || session === 'offline') { await current.close(); return; }
+        renderSD(); i2cPanel.render(peripheral === 'i2c');
         current.start(Number($('interval').value));
     }
     async function chooseBoard(config) {
@@ -397,6 +413,30 @@
         catch (error) { await failure(error); }
         finally { busy = false; updateControls(); }
     }
+    async function loadAccelerated() {
+        if (busy || operation || session !== 'hardware' || accelerated() || controller?.fault) return;
+        busy = true; updateControls();
+        let handoff = false;
+        try {
+            status('Checking accelerated RAM stub…');
+            // Fetch and validate before disturbing the existing session.
+            const manifest = await ESPIO.prepareAccelerated(chip.id);
+            handoff = true;
+            status('Releasing I/O and loading accelerated stub into RAM…');
+            await controller.release(); await controller.close(); controller = null;
+            transport.close(); transport = null;
+            sdHost = null; i2cPanel.reset(); clearScan();
+            transport = await ESPIO.startAccelerated(flasher, manifest);
+            await initializeBoard();
+            const id = transport.identity;
+            log(`SYNC → IDEN: ${id.chip}, stub ${id.build}, protocol ${id.protocol_major}.${id.protocol_minor}, capabilities 0x${id.capabilities.toString(16)}`);
+            status(`Accelerated RAM stub active · SYNC verified · GPIO/ADC ready${transport.supports('SDMMC') ? ' · SDMMC sector reads ready.' : '.'}`);
+        } catch (error) {
+            if (handoff) await shutdown(true);
+            status(`Accelerated stub: ${error.message || error}${handoff ? ' Reconnect to use the legacy stub.' : ''}`, 'error');
+            log('Accelerated stub:', error.message || error);
+        } finally { busy = false; updateControls(); }
+    }
     async function shutdown(reset = true) {
         disconnecting = true; ++boardRequest;
         const oldController = controller, oldTransport = transport, device = flasher;
@@ -440,6 +480,34 @@
         finally { operation = false; updateControls(); }
     }
 
+    function updateLDO4Controls() {
+        $('ldo4-panel').hidden = peripheral !== 'ldo4' || !ESPIO.ldo4Profiles[chip.id];
+        const state = controller?.ldo4?.state;
+        const occupied = [...(controller?.pinOwners.keys() || [])].some(id => controller.ldo4?.affects(id));
+        const blocked = !controller?.ldo4 || controller.fault || busy || operation;
+        $('ldo4-state').textContent = !state ? 'UNBEKANNT' : !state.enabled ? 'AUS' : state.bypass ? 'EIN · 3,3-V-BYPASS' : 'EIN · ANDERE EINSTELLUNG';
+        $('ldo4-apply').disabled = blocked || occupied;
+        $('ldo4-refresh').disabled = blocked;
+        $('ldo4-mode').disabled = blocked || occupied;
+        $('ldo4-note').textContent = occupied ? 'Vor dem Umschalten Peripherieports der Versorgungsdomäne freigeben.' : state ?
+            `PMU CTRL=${hex(state.control)}, ANA=${hex(state.analog)}. Keine Spannungsmessung; GPIOs bleiben unabhängig konfigurierbar.` :
+            'Zustand noch nicht gelesen. Lesen und Schalten nur auf Anforderung; GPIOs bleiben unabhängig konfigurierbar.';
+    }
+    async function changeLDO4(mode) {
+        if (!controller?.ldo4 || busy || operation || controller.fault) return;
+        operation = true; updateControls();
+        try {
+            await controller.updateLDO4(mode);
+            log(`LDO4: ${mode || 'Zustand gelesen'}`);
+            status(mode ? 'LDO4-Einstellung übernommen. GPIO-Konfiguration unverändert.' : 'LDO4-Zustand gelesen.');
+        } catch (error) {
+            status(error.message || String(error), 'error'); log('LDO4:', error.message || error);
+        } finally {
+            operation = false;
+            renderSD(); i2cPanel.render(peripheral === 'i2c');
+            updateControls();
+        }
+    }
     function clearSDResults() {
         sdLog = []; sdCardResult = null;
         $('sd-progress').textContent = ''; $('sd-progress').className = '';
@@ -450,7 +518,7 @@
         $('sd-panel').hidden = peripheral !== 'sd';
         const profile = sdProfiles[chip.id];
         $('sd-configuration').hidden = !profile;
-        $('sd-backend').textContent = profile ? `${chip.name} · nativer SDMMC-Host · Slot ${profile.slot} / GPIO-Matrix · 400 kHz · 3,3 V` : chip.peripherals.some(p => p.id === 'sdmmc') ? 'Nativer SDMMC-Host vorhanden. Die Steuerung ist bisher für P4 und S3 implementiert.' : 'SD über SPI vorgesehen: CLK = SCK, CMD = MOSI, D0 = MISO, D3 = CS. Für diesen Chip noch nicht implementiert.';
+        $('sd-backend').textContent = profile ? `${chip.name} · ${accelerated() && transport.supports('SDMMC') ? 'Accelerated RPC / DMA · 512 Bytes pro Sektor' : 'Register-Polling'} · Slot ${profile.slot} / GPIO-Matrix · 400 kHz · 3,3 V` : chip.peripherals.some(p => p.id === 'sdmmc') ? 'Nativer SDMMC-Host vorhanden. Die Steuerung ist bisher für P4 und S3 implementiert.' : 'SD über SPI vorgesehen: CLK = SCK, CMD = MOSI, D0 = MISO, D3 = CS. Für diesen Chip noch nicht implementiert.';
         const draft = sdDraft();
         for (const role of sdRoles) {
             const select = $(`sd-${role}`);
@@ -461,20 +529,25 @@
             select.value = draft.pins[role] === null ? '' : String(draft.pins[role]);
         }
         $('sd-width').value = String(draft.width);
-        $('sd-power').replaceChildren(new Option('Vorhandene / externe 3,3 V', 'external'));
-        if (board.sd?.power === 'p4-eth') $('sd-power').add(new Option('P4-ETH · LDO4 3,3 V + GPIO45 LOW', 'p4-eth'));
-        $('sd-power').value = draft.power;
+        $('sd-clock-field').hidden = chip.id !== 'esp32p4';
+        $('sd-clock').value = String(draft.clockHz);
         $('sd-board-preset').hidden = !board.sd;
         updateSDControls(); renderSDCard();
     }
     function updateSDControls() {
-        const ready = !!sdHost?.ready, blocked = !controller || controller.fault || busy || operation;
+        const ready = !!sdHost?.ready, blocked = !controller || controller.fault || busy || operation || !!rpcModuleReason('SDMMC');
         let invalid = '';
-        try { ESPIO.validateSDConfig(chip, new Set(exposedPins()), sdDraft()); } catch (error) { invalid = error.message; }
+        try {
+            ESPIO.validateSDConfig(chip, new Set(exposedPins()), sdDraft());
+            invalid = Object.values(sdDraft().pins).filter(id => id !== null).map(pinReason).find(Boolean) || '';
+        } catch (error) { invalid = error.message; }
         for (const role of sdRoles) $(`sd-${role}`).disabled = ready || busy || operation;
         $('sd-width').disabled = ready || busy || operation;
-        $('sd-power').disabled = ready || busy || operation; $('sd-board-preset').disabled = ready || busy || operation;
-        $('sd-power-note').textContent = sdDraft().power === 'p4-eth' ? 'Onboard-Versorgung: LDO4 im 3,3-V-Rail-Bypass, GPIO45 LOW. Betrifft die I/O-Domäne GPIO39–48. Pin- und LDO-Felder werden bei Freigabe wiederhergestellt.' : 'Vorhandene / externe 3,3 V, gemeinsame Masse und externe 10-kΩ-Pull-ups an CMD und DAT0–DAT3, auch unverbundenen DAT-Pins im 1-Bit-Modus. Die Versorgung wird nicht geschaltet. Weitere Pins sind in der Chipansicht wählbar.';
+        $('sd-clock').disabled = ready || busy || operation;
+        $('sd-board-preset').disabled = ready || busy || operation;
+        $('sd-power-note').textContent = 'SDMMC schaltet keine Versorgung und keinen Power-GPIO. ' +
+            (board.sd?.note ? `${board.sd.note} ` : '') +
+            'Gemeinsame Masse und externe Pull-ups an CMD/DAT, auch D3 im 1-Bit-Modus, erforderlich.';
         $('sd-apply').disabled = blocked || ready || !!invalid;
         $('sd-release').hidden = !ready; $('sd-release').disabled = blocked;
         $('sd-identify').disabled = blocked || !!invalid;
@@ -482,7 +555,7 @@
         $('sd-command').disabled = busy || operation; $('sd-argument').disabled = busy || operation;
         $('sd-cancel').hidden = !sdAbort || sdDownloadActive; $('sd-cancel').disabled = sdAbort?.signal.aborted || false;
         $('sd-state').textContent = sdAbort ? 'LÄUFT' : ready ? `${session === 'demo' ? 'SIMULATION · ' : ''}AKTIV · ${sdHost.width} BIT` : 'NICHT AKTIV';
-        $('sd-config-note').textContent = ready ? 'Pins sind dem SD-Port zugewiesen. GPIO-Steuerung, ADC-Abtastung und Usage-Scan dieser Pins sind ausgesetzt.' : invalid || 'Pinzuordnung vollständig. Aktivieren oder direkt die Karte identifizieren.';
+        $('sd-config-note').textContent = rpcModuleReason('SDMMC') || (ready ? 'Pins sind dem SD-Port zugewiesen. GPIO-Steuerung, ADC-Abtastung und Usage-Scan dieser Pins sind ausgesetzt.' : invalid || 'Pinzuordnung vollständig. Aktivieren oder direkt die Karte identifizieren.');
         $('sd-config-note').className = 'sd-note';
         $('sd-clear').disabled = !!sdAbort;
         let rangeError = '', range;
@@ -491,7 +564,7 @@
         if (range && !window.showSaveFilePicker && range.bytes > 64 * 1024 * 1024) rangeError = 'Für große Abbilder Chrome/Edge mit direkter Dateiausgabe verwenden; dieser Browser kann bis 64 MiB puffern.';
         $('sd-download-range').textContent = rangeError || `LBA ${range.start.toLocaleString('de-DE')}–${range.end.toLocaleString('de-DE')} · ${range.sectors.toLocaleString('de-DE')} Sektoren · ${range.bytes.toLocaleString('de-DE')} Bytes · Rohabbild${!window.showSaveFilePicker ? ' · Browserpuffer bis 64 MiB' : ' · direkte Dateiausgabe'}`;
         $('sd-download').disabled = blocked || !ready || !!rangeError;
-        for (const id of ['sd-download-start', 'sd-download-end', 'sd-download-all']) $(id).disabled = busy || operation;
+        for (const id of ['sd-download-start', 'sd-download-end', 'sd-download-all', 'sd-download-mib', 'sd-download-size']) $(id).disabled = busy || operation;
         $('sd-download-cancel').hidden = !sdDownloadActive;
         $('sd-download-cancel').disabled = sdAbort?.signal.aborted || false;
     }
@@ -520,7 +593,7 @@
         $('sd-argument').value = hex(spec?.rca ? (sdHost?.rca || 0) << 16 : spec?.argument || 0);
     }
     async function sdAction(action) {
-        if (!controller || operation || busy || controller.fault) return;
+        if (!controller || operation || busy || controller.fault || rpcModuleReason('SDMMC')) return;
         operation = true; sdAbort = new AbortController();
         const signal = sdAbort.signal;
         $('sd-progress').className = ''; $('sd-progress').textContent = action === 'release' ? 'SD-Port wird freigegeben …' : 'SD-Port vorbereiten …';
@@ -533,6 +606,9 @@
                 if (!sdHost?.ready) {
                     sdHost = new SDHost(controller, { onCommand: entry => {
                         sdLog.push({ ...entry, simulation: session === 'demo' }); if (sdLog.length > 150) sdLog.shift();
+                        const now = performance.now();
+                        if (sdDownloadActive && entry.command === 'CMD17' && !entry.error && now - sdLastLogUI < 100) return;
+                        sdLastLogUI = now;
                         renderSDLog(); $('sd-progress').textContent = `${entry.command}${entry.error ? ' fehlgeschlagen' : ' abgeschlossen'} …`;
                     } });
                     await sdHost.open(sdDraft(), signal);
@@ -573,15 +649,15 @@
         } catch (error) { $('sd-download-status').textContent = error.message; return; }
         operation = true; sdDownloadActive = true; sdAbort = new AbortController();
         const signal = sdAbort.signal, chunks = [], prefix = session === 'demo' ? 'SIMULATION · ' : '';
-        let file, saved = 0, finished = false, failure = null, lastUI = 0;
+        let file, fileWriter, saved = 0, finished = false, failure = null, lastUI = 0;
         $('sd-download-progress').max = range.bytes; $('sd-download-progress').value = 0;
         $('sd-download-status').textContent = `${prefix}Dateiziel wählen …`; updateControls();
         const eta = seconds => seconds == null || !Number.isFinite(seconds) ? 'wird ermittelt' : `${Math.floor(seconds / 3600)}:${String(Math.floor(seconds / 60) % 60).padStart(2, '0')}:${String(Math.ceil(seconds) % 60).padStart(2, '0')}`;
         try {
-            if (picker) file = await (await picker).createWritable();
+            if (picker) { file = await (await picker).createWritable(); fileWriter = new ESPIO.SDFileWriter(file); }
             if (signal.aborted) throw new DOMException('SD-Download abgebrochen.', 'AbortError');
             await sdHost.download({ start: range.start, end: range.end, signal,
-                write: async data => { if (file) await file.write(data); else chunks.push(data); saved += data.length; },
+                write: async data => { if (fileWriter) await fileWriter.write(data); else chunks.push(data); saved += data.length; },
                 onProgress: p => {
                     const now = performance.now(); if (now - lastUI < 100 && p.completed !== p.sectors) return; lastUI = now;
                     $('sd-download-progress').value = p.bytesWritten;
@@ -593,7 +669,7 @@
         finally {
             let committed = false;
             try {
-                if (file) { await file.close(); committed = true; }
+                if (fileWriter) { try { await fileWriter.close(); committed = true; } finally { saved = fileWriter.saved; } }
                 else if (saved) {
                     const url = URL.createObjectURL(new Blob(chunks, { type: 'application/octet-stream' }));
                     const link = document.createElement('a'); link.href = url; link.download = filename.replace('.img', finished ? '.img' : '-TEILABBILD.img'); link.click(); setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -603,7 +679,7 @@
             const count = saved / 512;
             $('sd-download-progress').value = saved;
             $('sd-download-status').textContent = `${prefix}${finished ? 'Fertig' : failure?.name === 'AbortError' ? 'Abgebrochen' : 'Fehler'} · ${committed ? `${finished ? 'Abbild' : 'Teilabbild'} gespeichert: ${saved.toLocaleString('de-DE')} Bytes${count ? ` · LBA ${range.start}–${range.start + count - 1}` : ''}` : 'kein vollständiger Sektor gespeichert'}${failure && failure.name !== 'AbortError' ? ` · ${failure.message}` : ''}`;
-            sdAbort = null; sdDownloadActive = false; operation = false; renderSD(); updateControls();
+            sdAbort = null; sdDownloadActive = false; operation = false; renderSDLog(); renderSD(); updateControls();
         }
     }
 
@@ -798,6 +874,7 @@
 
     for (const config of Object.values(chips)) $('preview-chip').add(new Option(config.name, config.id));
     $('connect').addEventListener('click', connect);
+    $('load-accelerated').addEventListener('click', loadAccelerated);
     $('demo').addEventListener('click', demo);
     $('disconnect').addEventListener('click', async () => {
         if (busy) return; busy = true; updateControls();
@@ -851,10 +928,12 @@
         updateSDControls(); updateMapState();
     });
     $('sd-width').addEventListener('change', () => { sdDraft().width = Number($('sd-width').value); updateSDControls(); });
-    $('sd-power').addEventListener('change', () => { if (sdHost?.ready || busy || operation) return; sdDraft().power = $('sd-power').value; updateSDControls(); updateMapState(); });
+    $('sd-clock').addEventListener('change', () => { if (sdHost?.ready || busy || operation) return; sdDraft().clockHz = Number($('sd-clock').value); updateSDControls(); });
+    $('ldo4-apply').addEventListener('click', () => changeLDO4($('ldo4-mode').value));
+    $('ldo4-refresh').addEventListener('click', () => changeLDO4());
     $('sd-board-preset').addEventListener('click', () => {
         if (sdHost?.ready || busy || operation || !board.sd) return;
-        Object.assign(sdDraft(), { pins: { ...board.sd.pins }, power: board.sd.power });
+        Object.assign(sdDraft(), { pins: { ...board.sd.pins } });
         renderSD(); updateMapState();
     });
     for (const [key, spec] of Object.entries(sdCommands)) $('sd-command').add(new Option(spec.name, key));
@@ -865,6 +944,16 @@
     $('sd-clear').addEventListener('click', () => { sdLog = []; renderSDLog(); });
     for (const id of ['sd-download-start', 'sd-download-end']) $(id).addEventListener('input', updateSDControls);
     $('sd-download-all').addEventListener('click', () => { $('sd-download-start').value = '0'; $('sd-download-end').value = 'max'; updateSDControls(); });
+    $('sd-download-size').addEventListener('click', () => {
+        if (busy || operation) return;
+        try {
+            const text = $('sd-download-start').value.trim();
+            if (!/^\d+$/.test(text)) throw new Error('Startsektor als ganze Zahl eingeben.');
+            const start = Number(text), end = start + Number($('sd-download-mib').value) * 2048 - 1;
+            ESPIO.sectorRange(sdHost?.card, start, end);
+            $('sd-download-end').value = String(end); updateSDControls();
+        } catch (error) { $('sd-download-status').textContent = error.message; }
+    });
     $('sd-download').addEventListener('click', downloadSD);
     $('sd-download-cancel').addEventListener('click', () => { sdAbort?.abort(); updateSDControls(); });
     $('catalog-details').addEventListener('toggle', () => { if ($('catalog-details').open) loadCatalog(); });

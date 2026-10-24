@@ -5,6 +5,7 @@
     const adcAPI = typeof module === 'object' && module.exports ? require('./adc.js') : root.ESPIO;
     const sdAPI = typeof module === 'object' && module.exports ? require('./sd.js') : root.ESPIO;
     const i2cAPI = typeof module === 'object' && module.exports ? require('./i2c.js') : root.ESPIO;
+    const ldoAPI = typeof module === 'object' && module.exports ? require('./ldo4.js') : root.ESPIO;
 
     // Uses the existing flasher framing/command queue. Status is checked here
     // because the generic flasher readReg helper does not inspect status bytes.
@@ -66,6 +67,7 @@
             this.fault = false;
             this.pinOwners = new Map(); this.peripheralSessions = new Set();
             this.readMode = 'digital'; this.scanning = false;
+            this.ldo4 = ldoAPI.ldo4Profiles[chip.id] ? new ldoAPI.LDO4(transport, ldoAPI.ldo4Profiles[chip.id]) : null;
             this.adc = adcAPI.adcProfiles[chip.id] ? new adcAPI.ADCReader(transport, adcAPI.adcProfiles[chip.id], { clock }) : null;
         }
         descriptor(id) {
@@ -138,6 +140,13 @@
                     if (!this.active) break;
                     await this.configurePin(id, 'input');
                 }
+            });
+        }
+        updateLDO4(mode) {
+            return this.queue.run(async () => {
+                if (!this.ldo4 || !this.active || this.fault || this.scanning) throw new Error('LDO4 derzeit nicht verfügbar.');
+                if (mode && [...this.pinOwners.keys()].some(id => this.ldo4.affects(id))) throw new Error('Zuerst die Peripherieports der Versorgungsdomäne freigeben.');
+                return mode ? this.ldo4.setMode(mode) : this.ldo4.refresh();
             });
         }
         setLevel(id, level) {

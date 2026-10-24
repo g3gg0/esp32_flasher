@@ -68,8 +68,9 @@ test('GPIO default initialization keeps the output driver disabled and sets inpu
     for (const chip of Object.values(chips)) {
         const transport = new RecordingTransport(chip);
         const controller = new GPIOController(transport, chip);
-        const pins = chip.pins.filter(pin => !pin.reserved).map(pin => pin.id);
-        await controller.initialize(pins);
+        const requested = chip.pins.filter(pin => !pin.reserved).map(pin => pin.id);
+        await controller.initialize(requested);
+        const pins = requested;
         assert.equal(controller.pins.size, pins.length);
         assert.ok([...controller.pins.values()].every(pin => pin.mode === 'input' && pin.level === null));
         for (const bank of chip.gpio.banks) assert.ok(!transport.writes.some(write => write.address === bank.enableSet));
@@ -123,6 +124,7 @@ test('input readback is independent of the requested output, with one read per b
     const chip = chips.esp32p4, transport = new RecordingTransport(chip), controller = new GPIOController(transport, chip);
     await controller.initialize([0, 1, 54]);
     await controller.configure(54, 'output', 'none', 1);
+    transport.reads = [];
     transport.read = async address => { transport.reads.push(address); return 0; };
     await controller.sample();
     assert.deepEqual(transport.reads, chip.gpio.banks.map(bank => bank.input));

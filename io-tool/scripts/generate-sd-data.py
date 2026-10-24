@@ -52,13 +52,6 @@ p = {
     ],
     'latchClock': write('HP_SYS_CLKRST_PERI_CLK_CTRL02_REG', (phase + 'CLK_EDGE_CFG_UPDATE', 1)),
     'reset': write('LP_CLKRST_HP_SDMMC_EMAC_RST_CTRL_REG', ('LP_CLKRST_RST_EN_SDMMC', 1)),
-    # LDO4 is software unit 3, PMU.ext_ldo[4], not the fourth PMU entry.
-    # At 3.3 V the LL selects rail bypass: DREF/MUL are ignored, no voltage trim.
-    'onboardPower': [
-        write('PMU_EXT_LDO_P1_0P2A_ANA_REG', ('PMU_ANA_0P2A_EN_VDET_1', 1)),
-        write('PMU_EXT_LDO_P1_0P2A_REG', ('PMU_0P2A_TIEH_1', 1),
-              ('PMU_0P2A_FORCE_TIEH_SEL_1', 1), ('PMU_0P2A_TIEH_SEL_1', 0), ('PMU_0P2A_XPD_1', 1)),
-    ],
     'fifo': {'countMask': n('SDHOST_FIFO_COUNT_M'), 'countShift': n('SDHOST_FIFO_COUNT_S')},
     # CPU reads do not drain the P4 FIFO (verified on hardware), so sectors are
     # received by the internal DMA like in ESP-IDF. Descriptor + 512 bytes sit
@@ -81,9 +74,9 @@ p = {
         'hal/esp32p4/include/hal/sdmmc_ll.h', 'esp_driver_sdmmc/src/sdmmc_host.c',
         'esp_driver_sdmmc/src/sdmmc_transaction.c', 'soc/esp32p4/register/soc/sdmmc_reg.h',
         'sdmmc/include/sd_protocol_defs.h', 'sdmmc/sdmmc_sd.c',
-        'hal/esp32p4/include/hal/ldo_ll.h', 'hal/esp32p4/include/hal/clk_gate_ll.h')],
+        'hal/esp32p4/include/hal/clk_gate_ll.h')],
     'sourceSha256': {name: hashlib.sha256((folder / name).read_bytes()).hexdigest()
-                     for name in ('sdmmc_reg.h', 'hp_sys_clkrst_reg.h', 'lp_clkrst_reg.h', 'gpio_sig_map.h', 'pmu_reg.h')},
+                     for name in ('sdmmc_reg.h', 'hp_sys_clkrst_reg.h', 'lp_clkrst_reg.h', 'gpio_sig_map.h')},
 }
 profiles = {'esp32p4': p}
 folder = ROOT / 'reference' / 'esp32s3'
@@ -147,6 +140,6 @@ profiles['esp32s3'] = s3
 content = '// Generated from ESP-IDF v5.5.1 (Apache-2.0); scripts/generate-sd-data.py.\n'
 content += "(function(root){'use strict';const profiles=" + json.dumps(profiles, separators=(',', ':')) + ';\n'
 content += "if(typeof module==='object'&&module.exports)module.exports=profiles;else(root.ESPIO ||= {}).sdProfiles=profiles;})(globalThis);\n"
-(ROOT / 'configs' / 'sd.js').write_text(content, encoding='utf-8')
+(ROOT / 'configs' / 'sd.js').write_bytes(content.encode('utf-8'))
 print('Generated SDMMC recipe: ESP32-P4 slot 1, PLL160M / 2 / (2 * 100) = 400 kHz')
 print('Generated SDMMC recipe: ESP32-S3 slot 1, PLL160M / 10 / (2 * 20) = 400 kHz')

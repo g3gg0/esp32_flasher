@@ -20,7 +20,11 @@
     <script src="configs/i2c.js" defer></script>
     <script src="i2c.js" defer></script>
     <script src="i2c-ui.js" defer></script>
+    <script src="configs/ldo4.js" defer></script>
+    <script src="ldo4.js" defer></script>
     <script src="gpio.js" defer></script>
+    <script src="../stub/protocol.js" defer></script>
+    <script src="accelerated.js" defer></script>
     <script src="app.js" defer></script>
 </head>
 <body>
@@ -30,6 +34,7 @@
         <div class="connection-actions">
             <label class="baud-label">Baud<select id="baud"><option>115200</option><option>460800</option><option selected>921600</option></select></label>
             <button id="connect" class="primary">Mit ESP verbinden <span>↗</span></button>
+            <button id="load-accelerated" hidden>Load accelerated stub</button>
             <button id="disconnect" hidden>Trennen &amp; Reset</button>
         </div>
     </header>
@@ -39,6 +44,7 @@
             <div class="legend"><span><i class="dot green"></i> Istwert / gelesen</span><span><i class="dot red"></i> Sollwert / geschrieben</span><small>1 Sekunde Verlauf · zeitbasiertes Polling</small></div>
         </section>
         <div id="status" role="status" aria-live="polite">Bereit. Port auswählen → Chip erkennen → RAM-Stub automatisch starten.</div>
+        <p id="accelerated-info" class="mode-info" hidden></p>
         <section class="device-section panel">
             <div class="section-heading"><div><span class="step">01</span><h2>Device auswählen</h2><span id="chip-badge" class="chip-badge">Vorschau</span></div><label class="preview-label">Vorschau-Chip <select id="preview-chip" aria-label="Vorschau-Chip"></select></label></div>
             <div class="board-cards" id="board-cards"></div>
@@ -50,7 +56,7 @@
                 <div class="trace-toolbar"><span id="sampling">Noch keine Messwerte</span><label>Messquelle <select id="read-mode"><option value="digital">GPIO · digital</option><option value="adc">ADC · 12 Bit</option></select></label><label>Poll-Abstand <select id="interval"><option value="10">10 ms</option><option value="20" selected>20 ms</option><option value="50">50 ms</option><option value="100">100 ms</option></select></label></div>
                 <p id="adc-info" class="mode-info" hidden>ADC-Rohwerte 0–4095 · nicht spannungskalibriert · Kanäle werden nacheinander gelesen. Pins ohne ADC bleiben ohne Messkurve.</p>
                 <div class="map-scroll"><div id="pinmap"><canvas id="map-traces" aria-hidden="true"></canvas><svg id="board-svg" role="group" aria-label="Board mit anklickbaren GPIO-Pins"></svg><div id="quick-controls"></div></div></div>
-                <div class="board-caption"><span>Pin anklicken, um ihn zu konfigurieren. <i class="dot reserved"></i> Reserviert</span><a id="board-source" target="_blank" rel="noreferrer">Bild- und Pinoutquelle ↗</a></div>
+                <div class="board-caption"><span>Pin anklicken, um ihn zu konfigurieren. <i class="dot reserved"></i> Reserviert / nicht verfügbar</span><a id="board-source" target="_blank" rel="noreferrer">Bild- und Pinoutquelle ↗</a></div>
             </section>
             <aside class="inspector panel">
                 <div class="section-heading"><div><span class="step">03</span><h2>Pin konfigurieren</h2></div><span id="pin-state" class="state">—</span></div>
@@ -84,6 +90,13 @@
             <div class="section-heading"><div><h2>Peripherie &amp; Register</h2><span class="muted">GPIO · ADC · SD</span></div><span id="catalog-count" class="chip-badge"></span></div>
             <div class="peripheral-buttons" id="peripherals"></div>
             <p id="peripheral-description" class="muted">GPIO wird per Registerzugriff bedient. Weitere Blöcke lassen sich erkunden; deren Steuerung folgt später.</p>
+            <div id="ldo4-panel" class="sd-panel" hidden>
+                <div class="sd-heading"><div><h3>LDO4 · Separate Stromversorgung</h3><p>PMU · unabhängig von GPIO und SDMMC</p></div><span id="ldo4-state" class="chip-badge">UNBEKANNT</span></div>
+                <p class="sd-note">3,3-V-Rail-Bypass schaltet die vorhandene Versorgung durch. Nur für eine dafür geeignete 3,3-V-Beschaltung verwenden, nicht für 1,8-V-Geräte. Die Einstellung betrifft die gesamte Versorgungsdomäne; Hinweise am Board beachten. Registerzustand, keine Spannungsmessung.</p>
+                <div class="sd-actions"><label>Versorgung <select id="ldo4-mode"><option value="bypass">3,3-V-Rail-Bypass einschalten</option><option value="off">Ausschalten</option></select></label><button id="ldo4-apply">LDO4 übernehmen</button><button id="ldo4-refresh" class="subtle">Zustand lesen</button></div>
+                <p id="ldo4-note" class="sd-note" role="status" aria-live="polite"></p>
+                <p class="sd-note">Vor einer Änderung Peripherieports der Versorgungsdomäne freigeben und GPIO-Ausgänge selbst in einen sicheren Zustand bringen. Die GPIO-Konfiguration bleibt unverändert; keine automatische Sperre bei ausgeschalteter oder unbekannter Versorgung. Die explizite Versorgungseinstellung bleibt beim SD-Freigeben und Boardwechsel erhalten, bis zur nächsten Änderung oder zum Hardware-Reset.</p>
+            </div>
             <div id="i2c-panel" class="sd-panel" hidden>
                 <div class="sd-heading"><div><h3>I²C-Port</h3><p id="i2c-backend"></p></div><span id="i2c-state" class="chip-badge">NICHT AKTIV</span></div>
                 <div id="i2c-configuration">
@@ -116,8 +129,8 @@
                         <label>CMD *<select id="sd-cmd" aria-label="SD CMD"></select></label>
                         <label>CLK *<select id="sd-clk" aria-label="SD CLK"></select></label>
                     </div>
-                    <div class="sd-actions"><label>Busbreite <select id="sd-width"><option value="1">1 Bit</option><option value="4">4 Bit · D0–D3 erforderlich</option></select></label><span>400 kHz · Identifikation</span><button id="sd-apply">SD-Port aktivieren</button><button id="sd-release" hidden>Port freigeben</button></div>
-                    <div class="sd-actions"><label>Versorgung <select id="sd-power"><option value="external">Vorhandene / externe 3,3 V</option></select></label><button id="sd-board-preset" class="subtle" hidden>Onboard-Slot belegen</button></div>
+                    <div class="sd-actions"><label>Busbreite <select id="sd-width"><option value="1">1 Bit</option><option value="4">4 Bit · D0–D3 erforderlich</option></select></label><label id="sd-clock-field">Lesetakt <select id="sd-clock"><option value="400000">400 kHz</option><option value="1000000">1 MHz</option><option value="5000000">5 MHz</option><option value="20000000">20 MHz</option></select></label><span>400 kHz · Identifikation</span><button id="sd-apply">SD-Port aktivieren</button><button id="sd-release" hidden>Port freigeben</button></div>
+                    <div class="sd-actions"><button id="sd-board-preset" class="subtle" hidden>Onboard-Slot belegen</button></div>
                     <p id="sd-config-note" class="sd-note"></p>
                     <p id="sd-power-note" class="sd-note">3,3-V-SD mit gemeinsamer Masse und Pull-ups an CMD/DAT, auch D3 im 1-Bit-Modus. Zugewiesene Pins sind gelb; weitere Pins sind in der Chipansicht wählbar.</p>
                     <div class="sd-command-area">
@@ -128,6 +141,7 @@
                         <div class="sd-download">
                             <h4>SD-Inhalt herunterladen</h4>
                             <div class="sd-actions"><label>Startsektor <input id="sd-download-start" value="0" inputmode="numeric"></label><label>Endsektor (inkl.) <input id="sd-download-end" value="max" placeholder="max"></label><button id="sd-download-all" class="subtle">0–max</button><button id="sd-download">Abbild herunterladen ↓</button><button id="sd-download-cancel" hidden>Abbrechen</button></div>
+                            <div class="sd-actions"><label>Umfang ab Start <select id="sd-download-mib"><option>1</option><option>4</option><option selected>16</option><option>64</option><option>256</option><option>1024</option></select> MiB</label><button id="sd-download-size" class="subtle">Sektorbereich setzen</button></div>
                             <p id="sd-download-range" class="sd-note">Zuerst die Karte identifizieren. Rohabbild mit 512 Bytes pro Sektor.</p>
                             <progress id="sd-download-progress" max="1" value="0" aria-label="SD-Download-Fortschritt"></progress>
                             <p id="sd-download-status" class="sd-note" role="status" aria-live="polite">Noch kein Download.</p>

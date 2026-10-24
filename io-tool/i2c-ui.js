@@ -14,6 +14,7 @@
         };
         const live = () => host?.ready && host.controller === ctx.controller();
         function validation() {
+            if (ctx.backendReason?.()) return ctx.backendReason();
             const d = draft(), pins = ctx.pins(), chip = ctx.chip();
             if (!i2cProfiles[chip.id]) return 'Für diesen Chip noch nicht implementiert.';
             if (d.sda === null || d.scl === null) return 'SDA und SCL auswählen.';

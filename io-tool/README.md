@@ -1,10 +1,26 @@
 # ESP I/O Lab
 
 Lokales HTML-/JavaScript-Werkzeug für GPIO-, ADC-, SD- und Usage-Scan-Zugriffe über den vorhandenen
-ESP-Flasher und seinen RAM-Stub. Kein Compiler, kein eigener Firmware-Build und
-keine Flash-Schreib-/Löschoperationen. `../chips.js` und `../flasher.js` bleiben die
+ESP-Flasher und seinen RAM-Stub. GPIO/ADC benötigen keinen eigenen Firmware-Build;
+es gibt keine Flash-Schreib-/Löschoperationen. `../chips.js` und `../flasher.js` bleiben die
 vorhandene Transport-/Stub-Implementierung; die neuen Registerprofile sind davon
 getrennt.
+
+Optional lädt **Load accelerated stub** nach dem Verbinden den neuen RAM-only-RPC-
+Stub für C3/P4. Builds, Protokoll-JSON, generierte C-/Browser-Definitionen und die
+vorbereiteten weiteren Targets stehen unter [../stub/](../stub/README.md).
+Der Wechsel gibt I/O frei und startet eine neue Sitzung über ROM; GPIO/ADC bleiben
+verfügbar. P4-SDMMC verwendet bei geladenem und entsprechend fähigem Stub
+automatisch RPC: ein kompletter 512-Byte-Sektor pro Anfrage, inklusive lokaler
+DMA-/Timeout-/CRC-Prüfung. Die übrigen Peripherie-RPCs bleiben reserviert.
+
+Für einen SD-Dump die Karte identifizieren und im bestehenden Downloadbereich
+Start-/Endsektor, `0–max` oder einen **MiB-Umfang ab Start** wählen. P4 bietet
+400 kHz / 1 / 5 / 20 MHz Lesetakt; identifiziert wird immer mit 400 kHz.
+Die direkte Dateiausgabe arbeitet mit begrenzten 64-KiB-Blöcken, Fortschritt,
+ETA und Abbruch; große Abbilder liegen nicht vollständig im Browser-RAM.
+Ohne File System Access API bleibt die 64-MiB-Puffergrenze. Physische P4-/SD-
+Validierung steht für den neuen RPC-DMA-Pfad noch aus.
 
 ## Starten
 
@@ -220,6 +236,11 @@ Demo-Ergebnisse bleiben auch nach dem Beenden der Demo als Simulation markiert.
 
 ## SD-Port: zuerst ESP32-P4
 
+Mit geladenem P4-SDMMC-RPC-Stub erfolgen Kommandos und Sektor-DMA lokal im Chip.
+Die folgenden Register-/DMA-Details beschreiben den weiterhin verfügbaren
+Legacy-Backend; der neue RPC-Pfad ist oben und unter [stub/](../stub/README.md)
+beschrieben. Pinzuordnung, Identifikation und Downloadoberfläche werden geteilt.
+
 Unter **Peripherie & Register → SD** klappt das Konfigurationsmenü auf.
 **D0, CMD und CLK sind Pflicht**, D1–D3 sind optional. Jede Zuordnung markiert
 den GPIO oben gelb und ergänzt seine Signalbezeichnung. Die Zuordnung allein
@@ -258,15 +279,37 @@ MOSI, D0 = MISO, CLK = SCK und D3 = CS; deshalb muss CS dort später zusätzlich
 verpflichtend werden. Diese Zuordnung wird nicht als nativer 1-Bit-SD-Bus ausgegeben.
 
 Für den **Waveshare P4-ETH** trägt **Onboard-Slot belegen** D0–D3 = GPIO39–42,
-CLK = GPIO43 und CMD = GPIO44 ein. Die auswählbare Onboard-Versorgung schaltet
-zusätzlich GPIO45 LOW und LDO4 in den 3,3-V-Rail-Bypass. LDO4 versorgt auch
-die I/O-Domäne GPIO39–48; die Änderung betrifft daher diese gesamte Domäne.
-Bei 3,3 V werden die analogen DREF-/MUL-Trimwerte vom LDO umgangen und
-unverändert belassen. GPIO45 wird wie die SD-Signale mitverwaltet und gelb
-markiert. Das ist boardabhängig, keine pauschale Versorgungseinstellung für
-andere P4-Boards. **Vorhandene / externe 3,3 V** ändert weder LDO4 noch einen
-Power-GPIO. Externe SD-Karten benötigen gemeinsame Masse sowie passende
-Pull-ups an CMD/DAT, einschließlich D3 im 1-Bit-Modus.
+CLK = GPIO43 und CMD = GPIO44 ein. **SDMMC schaltet keine Versorgung und
+keinen Power-GPIO.** Vor der SD-Nutzung im Peripherieblock **LDO4** ausdrücklich
+den **3,3-V-Rail-Bypass** einschalten und anschließend **GPIO45 als Output LOW**
+setzen. LDO4 versorgt die gesamte I/O-Domäne **GPIO39–48**; die Änderung betrifft
+also nicht nur die SD-Karte. Nur bei dafür geeigneter 3,3-V-Beschaltung verwenden,
+nicht bei 1,8-V-Geräten. Externe SD-Karten benötigen gemeinsame Masse sowie
+passende Pull-ups an CMD/DAT, einschließlich D3 im 1-Bit-Modus.
+
+### LDO4 · ESP32-P4
+
+Die Boardbeschreibung und Pinnotizen des P4-ETH kennzeichnen GPIO39–48 als
+**LDO4-Domäne mit separater Stromversorgung**. Das ist ein Verdrahtungshinweis,
+keine automatische GPIO-Sperre: Auch bei ausgeschalteter oder unbekannter
+Versorgung bleiben GPIO-Konfiguration, Messung, Usage-Scan und Pinzuordnung
+bedienbar. Funktionierende Signale setzen die passende physische Versorgung voraus.
+
+Beim Verbinden bzw. Boardwechsel wird LDO4 weder gelesen noch geschaltet.
+Der separate LDO4-Block bietet **Aus**, **3,3-V-Rail-Bypass** und **Zustand lesen**,
+ausschließlich auf Anforderung. Register und Domänenzuordnung stammen aus
+`configs/ldo4.js`, nicht aus P4-Sonderfällen im GPIO- oder UI-Code.
+Die Anzeige beruht auf Register-Readback, nicht auf einer Spannungsmessung.
+DREF-/MUL-Trimwerte bleiben unverändert.
+
+Vor einer Änderung müssen Peripherieports der Versorgungsdomäne freigegeben
+und GPIO-Ausgänge manuell in einen sicheren Zustand gebracht werden.
+Der Versorgungsblock verändert keine GPIO-Konfiguration und keine Output-Pegel.
+GPIO45 bleibt separat manuell bedienbar.
+SD-Freigabe und Boardwechsel stellen **keinen alten LDO4-Zustand** wieder her:
+Die explizite Einstellung gilt bis zur nächsten Änderung bzw. zum Hardware-Reset.
+Die Demo simuliert die separate Registersteuerung, nicht den elektrischen
+Einfluss der Versorgung auf GPIO- oder SD-Signale.
 
 Die Identifikation sendet CMD0 mit Initialisierungstakten, prüft CMD8 und
 wartet über CMD55/ACMD41 auf Power-up-Ready. Anschließend liest sie CID,

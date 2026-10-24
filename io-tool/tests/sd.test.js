@@ -321,28 +321,32 @@ test('SD response decoding handles both SD CSD formats and full-width serial num
     assert.equal(decodeCID(words(0xffffffffn << 24n)).serial, '0xffffffff');
 });
 
-test('P4-ETH preset enables LDO4 rail bypass and active-low GPIO45, then restores both', async () => {
+test('P4-ETH SD never reads or changes the separate supply or manual GPIO45', async () => {
     const board = require('../configs/boards.js').boards.find(board => board.id === 'p4-eth');
     const transport = new DemoTransport(chips.esp32p4), c = new GPIOController(transport, chips.esp32p4);
     const cfg = { ...board.sd, width: 4 }, host = new SDHost(c);
     await c.initialize([39, 40, 41, 42, 43, 44, 45]);
-    const [ana, ldo] = host.profile.onboardPower;
-    // H2/P4 PMU layout is not interchangeable: P4 VO4 is PMU.ext_ldo[4].
-    assert.equal(ldo.address, 0x501151d8);
-    const oldLDO = 0x40000020, oldANA = 0xa1000000;
-    transport.registers.set(ldo.address, oldLDO); transport.registers.set(ana.address, oldANA);
+    const p = require('../configs/ldo4.js').esp32p4;
+    await c.configure(45, 'output', 'none', 0);
+    const oldLDO = transport.registers.get(p.control), oldANA = transport.registers.get(p.analog);
+    const writes = [], reads = [], write = transport.write.bind(transport), read = transport.read.bind(transport);
+    transport.write = async (...args) => { writes.push(args); return write(...args); };
+    transport.read = async address => { reads.push(address); return read(address); };
     await host.open(cfg);
-    assert.equal(c.pinOwners.get(45), 'SD');
-    assert.equal((transport.registers.get(ldo.address) & ldo.mask) >>> 0, 0x4180); // rail, software owner, xpd; tieh_sel=0
-    assert.equal(transport.registers.get(ana.address) & 1 << 26, 1 << 26);
+    assert.equal(c.pinOwners.get(45), undefined);
+    await assert.rejects(c.updateLDO4('off'), /freigeben/);
     const bank = c.chip.gpio.banks[1], bit = 1 << (45 - 32);
     assert.ok(transport.registers.get(bank.enable) & bit);
     assert.equal((transport.registers.get(bank.output) || 0) & bit, 0);
     assert.equal((await host.identify()).width, 4);
     await host.close();
-    assert.equal(transport.registers.get(ldo.address), oldLDO);
-    assert.equal(transport.registers.get(ana.address), oldANA);
-    assert.equal((transport.registers.get(bank.enable) || 0) & bit, 0);
+    assert.equal(writes.some(([address]) => [p.control, p.analog].includes(address)), false);
+    assert.equal(reads.some(address => [p.control, p.analog].includes(address)), false);
+    assert.equal(c.ldo4.state, null);
+    assert.equal(transport.registers.get(p.control), oldLDO);
+    assert.equal(transport.registers.get(p.analog), oldANA);
+    assert.ok(transport.registers.get(bank.enable) & bit);
+    assert.equal(c.pins.get(45).mode, 'output');
     assert.equal(c.pinOwners.size, 0);
     await c.release(); await c.close();
 });

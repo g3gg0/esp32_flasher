@@ -1,0 +1,12 @@
+{
+  "cpu": "xtensa",
+  "cores": 2,
+  "compiler": "xtensa-esp-elf-",
+  "text": "0x400be000",
+  "data": "0x3ffcc000",
+  "textBudget": 4096,
+  "dataBudget": 8192,
+  "stack": 2048,
+  "registerStart": "0x3ff00000",
+  "registerEnd": "0x40000000"
+}
