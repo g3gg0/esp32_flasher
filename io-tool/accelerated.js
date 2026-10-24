@@ -63,7 +63,7 @@
             this.tail = pending.catch(() => {});
             return pending;
         }
-        async _request(name, values, responseName, magic, responseMagic, trailing) {
+        async _request(name, values, responseName, magic, responseMagic, trailing, timeoutMs = 2000) {
             if (this.closed) throw new Error('Accelerated session closed; reconnect to recover.');
             const payload = encode(name, values, magic, trailing);
             if (this.identity && payload.length > this.identity.max_packet_length) throw new Error('RPC exceeds the negotiated packet limit.');
@@ -80,7 +80,7 @@
                         if (response.status) throw new RPCError(response.status, responseMagic || layout(responseName).magic, response);
                         resolve(response);
                     } catch (error) { reject(error); }
-                }, 2000);
+                }, timeoutMs);
             } catch (error) {
                 // Without request IDs a late response after timeout cannot be matched
                 // safely. Require reconnect, rather than consuming it as fresh data.
@@ -156,9 +156,9 @@
         captureADCRelease() { return this.captureRequest('capture_command', { operation: protocol.captureOperations.ADC_RELEASE }); }
         async peripheral(module, operation, port, args = [], data = new Uint8Array(), timeoutUs = 100000) {
             const pair = protocol.modules[module];
-            if (!['I2C', 'SPI', 'PWM'].includes(module) || !this.supports(module)) throw new RPCError(protocol.status.UNSUPPORTED, module);
+            if (!['I2C', 'SPI', 'PWM', 'RMT'].includes(module) || !this.supports(module)) throw new RPCError(protocol.status.UNSUPPORTED, module);
             let result, failure;
-            try { result = await this.request('peripheral_command', { operation, port, timeout_us: timeoutUs, args }, 'peripheral_response', pair.command, pair.response, data); }
+            try { result = await this.request('peripheral_command', { operation, port, timeout_us: timeoutUs, args }, 'peripheral_response', pair.command, pair.response, data, module === 'RMT' ? Math.ceil(timeoutUs / 1000) + 2000 : 2000); }
             catch (error) { if (!error.response) throw error; result = error.response; failure = error; }
             if (result.operation !== operation || result.port !== port || ((failure || operation !== protocol.operations.TRANSFER) && result.data.length)) { this.closed = true; throw new Error(`${module} RPC correlation mismatch. Reconnect.`); }
             if (failure) {

@@ -8,7 +8,13 @@ int platform_rx(uint8_t *byte) { (void)byte; return 1; }
 void platform_tx(uint8_t byte) { putchar(byte); }
 void platform_flush(void) {}
 void platform_delay(uint32_t us) { (void)us; }
-uint32_t platform_cycles(void) { static uint32_t cycles; return cycles += 10; }
+uint32_t platform_cycles(void) {
+#ifdef RPC_RMT_TEST
+    extern uint32_t rmt_test_cycles(void);return rmt_test_cycles();
+#else
+    static uint32_t cycles; return cycles += 10;
+#endif
+}
 uint32_t platform_ticks_per_us(void) { return 1; }
 int platform_register_allowed(uint32_t address, int write) {
     (void)write;

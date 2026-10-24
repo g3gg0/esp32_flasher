@@ -12,8 +12,9 @@ P4 and S3 share the accelerated read-only SDMMC sector driver.
 | S3 | UART, USB Serial/JTAG, USB OTG/CDC | Registers, I2C, SPI, LEDC, native SDMMC slot 1 |
 | P4 | UART, USB Serial/JTAG, USB OTG/CDC | Registers, I2C, SPI, LEDC, native SDMMC slot 1 |
 
-GPIO/ADC availability still follows the existing chip profiles. RMT, UART and I2S
-RPC modules remain reserved; loading a stub does not advertise unimplemented
+GPIO/ADC availability still follows the existing chip profiles. All targets
+except C2/C61 also advertise hardware RMT. UART and I2S remain reserved;
+loading a stub does not advertise unimplemented
 hardware or an SPI-SD driver. The table describes implemented code paths, not
 physical-board validation.
 
@@ -114,7 +115,7 @@ before any reply is possible. SLIP escapes binary `C0` and `DB` bytes.
 | `I2CC` | `I2CR` | Bounded I²C master transactions on all targets. |
 | `SPIC` | `SPIR` | Full-duplex SPI master transactions on all targets. |
 | `SDMC` | `SDMR` | P4/S3 slot-1 read-only transactions and 512-byte DMA sectors. |
-| `RMTC` | `RMTR` | RMT envelope, driver reserved. |
+| `RMTC` | `RMTR` | Shared hardware RMT upload and continuous transmission. |
 | `PWMC` | `PWMR` | Low-speed LEDC channels on all targets. |
 | `UARC` | `UARR` | UART envelope, driver reserved. |
 | `I2SC` | `I2SR` | I²S envelope, driver reserved. |
@@ -134,7 +135,7 @@ delay is bounded to 100000 µs. This supports the existing GPIO/ADC code. It
 does not itself accelerate their polling.
 
 All targets advertise I2C, SPI and PWM/LEDC in addition to registers. P4/S3
-also advertise SDMMC. RMT/UART/I2S retain the reserved module envelope and
+also advertise SDMMC. RMT is implemented except on C2/C61; UART/I2S
 return UNSUPPORTED. The browser checks capability bits before selecting an
 accelerated backend. Peripheral controls require the accelerated stub. Classic mode only observes GPIO inputs.
 
@@ -336,9 +337,50 @@ link. Native USB transports can be faster even with the baud setting left at
 115200. No physical update rate is claimed without board measurement.
 
 All images remain RAM-only. Capture and calibration bring total DRAM usage to
-about 6.5-7.6 KiB including the 2-KiB stack. S3 reserves 20 KiB of IRAM for the
-additional native calibration/capture code; other target budgets are unchanged.
+about 6.5-7.6 KiB including the 2-KiB stack without RMT. Build 0.6.0 reserves
+12 KiB DRAM and 20 KiB IRAM on RMT targets (S3: 24 KiB IRAM). C2/C61 keep
+their 8 KiB DRAM / 16 KiB IRAM budgets. No flash or heap is used.
 
 Host-native tests exercise the actual parser/shared driver with mocked
 hardware. Browser QA covers all ten profiles with a simulated serial peer;
 these checks do not validate physical bus timing, electrical behavior or boards.
+
+### Shared RMT streaming (build 0.6.0, protocol 1.4)
+
+ESP32, S2, S3, C3, C5, C6, H2 and P4 share `rmt.c` and an IDF LL adapter
+`rmt_port.c`. C2/C61 have no physical RMT and expose neither RMT nor WS2812.
+One TX channel can be owned at a time. GPIO leasing/routing/restoration uses
+the existing shared peripheral host. INFO returns TX matrix signal, TX channel
+count, hardware memory words, upload capacity (4096), source Hz and encoding
+mask (RAW bit 0, BITMAP bit 1). CONFIGURE takes [requested Hz, idle level]; the
+response reports actual Hz. Only integer CPU/RMT clock ratios are selected.
+
+All operations use `peripheral_command` / `peripheral_response` with RMTC/RMTR:
+
+| Operation | Args / payload |
+| --- | --- |
+| BEGIN (16) | [encoding, symbol count, encoded bytes, dictionary word 0, word 1] |
+| APPEND (17) | [byte offset], followed by contiguous encoded bytes |
+| SEND (18) | [repeat count 1-1000, final idle microseconds 0-1000000] |
+| ABORT (19) | Stop and invalidate the staged sequence |
+
+RAW (0) contains little-endian RMT words: duration0 bits 0-14, level0 bit 15,
+duration1 bits 16-30, level1 bit 31. Both durations must be nonzero. BITMAP (1)
+chooses between two dictionary words using MSB-first packed bits. Capacity is
+1024 arbitrary words or 32768 words from two symbol types. Upload completes
+before output begins, so serial bandwidth cannot introduce output gaps. SEND
+prefills hardware RAM and refills alternating halves while RMT transmits.
+Long streams require at least 1 microsecond per symbol; timeout, hardware error
+or a missed refill deadline returns an error, never a successful partial count.
+This timing bound still needs validation on physical boards.
+
+SEND timeout includes the full sequence, repetitions and final idle pause, up
+to 30 seconds. Success values are [symbols emitted, half refills, duration us,
+uploaded bytes]. Repetition concatenates streams; idle pause follows the last
+repetition. WS2812 GRB symbols and patterns are generated in JavaScript, with
+up to 1365 LEDs per upload. The device implements a generic sequence sender.
+
+I2C address and register scans continue after structured device IO_ERROR/NACK
+and TIMEOUT responses. Register errors remain visible in their table rows.
+Cancellation, broken serial transport and invalid protocol/configuration still
+stop scanning.

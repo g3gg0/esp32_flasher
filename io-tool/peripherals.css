@@ -1,0 +1,18 @@
+.bus-config{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0;align-items:end}
+.sd-panel .bus-config>label{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:0;margin:0;font-size:11px}
+.sd-panel .bus-config select,.sd-panel .bus-config input{box-sizing:border-box;width:100%;min-width:0;max-width:100%;height:38px;margin:0;font-size:12px}
+.sd-panel .bus-config>label:has(input[type=checkbox]){flex-direction:row;align-items:center;gap:9px;min-height:38px}
+.sd-panel .bus-config input[type=checkbox]{width:16px;height:16px;order:-1;flex:none;accent-color:#e3c76b}
+#spi-config>[data-field=clk]{order:0}#spi-config>[data-field=mosi]{order:1}#spi-config>[data-field=miso]{order:2}#spi-config>[data-field=cs]{order:3}#spi-config>[data-field=port]{order:4}#spi-config>[data-field=speed]{order:5}#spi-config>[data-field=mode]{order:6}#spi-config>[data-field=lsb]{order:7}
+.rmt-sequence-field{display:block}.rmt-sequence-field textarea{display:block;box-sizing:border-box;width:100%;margin:8px 0;resize:vertical;background:#0c1318;border:1px solid var(--line);border-radius:5px;color:#d4e0e7;padding:10px;font:12px/1.6 Consolas,monospace}
+.bus-error{color:var(--red)}#i2c-register-body td{padding:6px 12px;font-family:Consolas,monospace}
+.connect-control{position:relative;display:inline-flex;border:1px solid #437864;border-radius:6px;background:#245c48}
+.connect-control>button{border:0;border-radius:0;background:transparent;color:#e9fff4;margin:0;min-height:38px}
+.connect-control>#connect{border-radius:5px 0 0 5px;padding:9px 17px}
+.connect-control>#connection-options{width:34px;padding:8px;border-left:1px solid #ffffff30;border-radius:0 5px 5px 0}
+.connect-control>button:hover:not(:disabled){background:#ffffff12}
+.connection-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:100;min-width:210px;border:1px solid #38534b;border-radius:7px;background:#16221e;box-shadow:0 10px 28px #0007;padding:7px}
+.connection-menu label{display:flex;align-items:center;gap:10px;padding:10px 9px;border-radius:4px;white-space:nowrap;font-size:12px;color:#dce9e3;cursor:pointer}
+.connection-menu label:hover{background:#ffffff09}.connection-menu input{accent-color:#85c9a9;margin:0;width:15px;height:15px}.connection-menu .menu-separator{height:1px;background:#ffffff1a;margin:5px}
+@media(max-width:800px){.bus-config{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
+@media(max-width:420px){.bus-config{grid-template-columns:minmax(0,1fr)}}

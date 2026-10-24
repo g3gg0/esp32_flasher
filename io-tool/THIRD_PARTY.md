@@ -48,6 +48,7 @@ these images is asserted by this project.
 | `assets/esp32c3-pinout.png` | https://cdn.espboards.net/boards/xiao-esp32c3/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
 | `assets/esp32-c3-devkitm-1-pinout.png` | https://cdn.espboards.net/boards/esp32-c3-devkitm-1/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
 | `assets/ai-s3-pinout.jpg` | https://raw.githubusercontent.com/Xylopyrographer/BitsNThings/main/AI-S3%20ESP32-S3%20Dev%20Board/AI-S3%20ESP32-S3%20Dev%20Board%20Pinout.jpg | VCC-GND Studio; AI-S3 compatibility annotation by Xylopyrographer |
+| `assets/toniebox-pcb.jpg` | https://gt-blog.de/wp-content/uploads/2020/01/toniebox_PCB.jpg | Gambrius Tech Blog |
 
 The original images are unmodified. The UI displays the board areas using SVG
 viewport clipping. Additional backside GPIO pads in the ESPboards diagrams are

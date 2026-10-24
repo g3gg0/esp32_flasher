@@ -4,7 +4,7 @@
     const $ = id => document.getElementById(id);
     const NS = 'http://www.w3.org/2000/svg';
     const hex = value => `0x${(value >>> 0).toString(16).padStart(8, '0')}`;
-    const labels = { observe: 'BEOBACHTEN', input: 'INPUT', output: 'OUTPUT', unknown: 'FEHLER', sd: 'SD', i2c: 'I²C', spi: 'SPI', pwm: 'PWM' };
+    const labels = { observe: 'BEOBACHTEN', input: 'INPUT', output: 'OUTPUT', unknown: 'FEHLER', sd: 'SD', i2c: 'I²C', spi: 'SPI', pwm: 'PWM', rmt: 'RMT' };
     const functions = [
         { id: 'i2c', name: 'I²C', blocks: ['i2c'] },
         { id: 'spi', name: 'SPI', blocks: ['spi'] },
@@ -42,12 +42,14 @@
 
     const peripheralPanels = ESPIO.createPeripheralPanels({ controller: () => controller, chip: () => chip, board: () => board, pins: exposedPins, gpioOption, log, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); } });
 
+    const rmtPanel = ESPIO.createRMTPanel({ controller: () => controller, chip: () => chip, board: () => board, pins: exposedPins, gpioOption, log, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); } });
+
     function gpioOption(id) {
         const pin = chip.pins.find(pin => pin.id === id);
         const text = [`GPIO ${id}`, board.notes?.[id], pinReason(id) || (!pin.output ? 'nur Input' : '')].filter(Boolean).join(' · ');
-        const option = new Option(text, String(id)); option.title = text; option.disabled = !!pinReason(id) || !pin.output; return option;
+        const option = new Option(`GPIO ${id}${pinReason(id) ? ' · belegt' : !pin.output ? ' · Input' : ''}`, String(id)); option.title = text; option.disabled = !!pinReason(id) || !pin.output; return option;
     }
-    function peripheralRole(id) { return controller?.pinOwners.get(id)?.startsWith('I²C') ? i2cPanel.role(id) : peripheralPanels.role(id) || sdRole(id) || i2cPanel.role(id); }
+    function peripheralRole(id) { return controller?.pinOwners.get(id)?.startsWith('I²C') ? i2cPanel.role(id) : rmtPanel.role(id) || peripheralPanels.role(id) || sdRole(id) || i2cPanel.role(id); }
 
     function log(...parts) {
         const message = parts.map(part => typeof part === 'string' ? part : JSON.stringify(part)).join(' ');
@@ -69,7 +71,8 @@
     const maskedPhotoCache = new Map();
     function maskedPhoto(config) {
         const { crop } = config;
-        const key = `${config.image}:${crop.x},${crop.y},${crop.width},${crop.height}`;
+        const tolerance = config.maskBackgroundTolerance ?? 3;
+        const key = `${config.image}:${crop.x},${crop.y},${crop.width},${crop.height}:${tolerance}`;
         if (!maskedPhotoCache.has(key)) maskedPhotoCache.set(key, new Promise((resolve, reject) => {
             const source = new Image();
             source.onload = () => {
@@ -79,7 +82,7 @@
                     const context = canvas.getContext('2d', { willReadFrequently: true });
                     context.drawImage(source, -crop.x, -crop.y);
                     const pixels = context.getImageData(0, 0, crop.width, crop.height);
-                    ESPIO.maskBackgroundPixels(pixels);
+                    ESPIO.maskBackgroundPixels(pixels, tolerance);
                     context.putImageData(pixels, 0, 0);
                     resolve(canvas.toDataURL('image/png'));
                 } catch (error) { reject(error); }
@@ -322,13 +325,13 @@
         $('peripherals').replaceChildren();
         for (const fn of [{ id: 'gpio', name: 'GPIO' }, ...(ESPIO.ldo4Profiles[chip.id] ? [{ id: 'ldo4', name: 'LDO4', blocks: ['pmu'] }] : []), ...functions.filter(supported)]) {
             const button = document.createElement('button'); button.textContent = fn.name; button.dataset.peripheral = fn.id;
-            button.className = fn.id === peripheral ? 'active' : ''; button.disabled = fn.id !== 'gpio' && !accelerated();
-            const small = document.createElement('small'); small.textContent = ['gpio', 'ldo4'].includes(fn.id) || (fn.id === 'adc' && adcProfiles[chip.id]) || (fn.id === 'sd' && sdProfiles[chip.id]) || (['i2c', 'spi', 'pwm'].includes(fn.id)) ? 'AKTIV' : 'GEPLANT'; button.append(small);
+            button.className = fn.id === peripheral ? 'active' : ''; button.disabled = fn.id !== 'gpio' && (!accelerated() || (fn.id === 'rmt' && !transport?.supports?.('RMT')));
+            const small = document.createElement('small'); small.textContent = ['gpio', 'ldo4'].includes(fn.id) || (fn.id === 'adc' && adcProfiles[chip.id]) || (fn.id === 'sd' && sdProfiles[chip.id]) || (['i2c', 'spi', 'pwm', 'rmt'].includes(fn.id)) ? 'AKTIV' : 'GEPLANT'; button.append(small);
             button.addEventListener('click', () => {
-                peripheral = ['sd', 'i2c', 'spi', 'pwm', 'ldo4'].includes(fn.id) && peripheral === fn.id ? 'gpio' : fn.id;
+                peripheral = ['sd', 'i2c', 'spi', 'pwm', 'rmt', 'ldo4'].includes(fn.id) && peripheral === fn.id ? 'gpio' : fn.id;
                 $('register-block').value = fn.id === 'gpio' ? 'gpio' : chip.peripherals.find(block => fn.blocks.includes(block.id))?.id || '*';
                 $('peripheral-description').textContent = fn.id === 'i2c' && ESPIO.i2cProfiles[chip.id] ? 'I²C-Port: SDA/SCL zuordnen, Adressen scannen und Bytes übertragen.' : fn.id === 'sd' ? 'SD-Port: Pins zuordnen und die Karte über den nativen Host identifizieren.' : fn.id === 'gpio' ? 'GPIO Input / Output: Registerzugriffe aktiv.' : fn.id === 'adc' && adcProfiles[chip.id] ? 'ADC verfügbar: Messquelle im Live-Pinout auf ADC umschalten. 12-Bit-Rohwerte, sequenziell, ohne Spannungskalibrierung.' : `${fn.name} ist als Erweiterung vorgesehen. Der Registerkatalog ist verfügbar; es werden keine Peripherieregister geschrieben.`;
-                if (['i2c', 'spi', 'pwm'].includes(fn.id)) $('peripheral-description').textContent = fn.name + ': beschleunigter RPC im RAM-Stub.';
+                if (['i2c', 'spi', 'pwm', 'rmt'].includes(fn.id)) $('peripheral-description').textContent = fn.name + ': beschleunigter RPC im RAM-Stub.';
                 if (fn.id === 'ldo4') $('peripheral-description').textContent = ESPIO.ldo4Profiles[chip.id].description;
                 renderPeripherals(); renderCatalog();
             });
@@ -341,7 +344,7 @@
         $('register-block').value = chip.peripherals.some(block => block.id === previous) ? previous : 'gpio';
         renderSD();
         updateLDO4Controls();
-        i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral);
+        i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral);
     }
     async function loadCatalog() {
         const request = ++catalogRequest;
@@ -384,15 +387,18 @@
         $('load-accelerated').disabled = busy || operation || accelerated() || !ESPIO.acceleratedTargets[chip.id] || !!controller?.fault;
         $('load-accelerated').textContent = accelerated() ? 'Accelerated stub active' : 'Load accelerated stub';
         $('load-accelerated').title = 'Release I/O, return to ROM, upload the matching chip stub to RAM and verify SYNC.';
-        for (const key of ['hidden', 'disabled', 'textContent', 'title']) $('load-accelerated-top')[key] = $('load-accelerated')[key];
         const identity = accelerated() ? transport.identity : null;
         $('accelerated-info').hidden = !identity;
         if (identity) $('accelerated-info').textContent = `${identity.chip} · ${identity.cpu} / ${identity.cpu_cores} cores · MAC ${identity.flags & ESPIO.rpcProtocol.identityFlags.MAC_VALID ? Array.from(identity.mac, byte => byte.toString(16).padStart(2, '0')).join(':') : 'unknown'} · stub ${identity.build} / IDF ${identity.idf} · protocol ${identity.protocol_major}.${identity.protocol_minor} · flash unprobed · GPIO/ADC${transport.supports('SDMMC') ? ' · accelerated SDMMC sector reads' : ''}.`;
-        $('connect').hidden = session !== 'offline'; $('connect').disabled = busy;
-        $('disconnect').hidden = session === 'offline'; $('disconnect').disabled = busy || operation;
+        $('connect').hidden = false; $('connect').disabled = busy || operation;
+        $('connect').textContent = session === 'offline' ? 'Verbinden' : 'Trennen';
+        $('disconnect').hidden = true; $('disconnect').disabled = busy || operation;
         $('disconnect').textContent = session === 'demo' ? 'Demo beenden' : 'Trennen & Reset';
         $('demo').hidden = session !== 'offline'; $('demo').disabled = busy;
         $('baud').disabled = session !== 'offline' || busy;
+        $('connection-options').disabled = busy || operation;
+        for (const input of document.querySelectorAll('[name="connection-baud"], #classic-stub')) input.disabled = session !== 'offline' || busy;
+        for (const input of document.querySelectorAll('[name="connection-baud"]')) input.checked = input.value === $('baud').value;
         $('session-badge').className = `session-badge ${session === 'hardware' ? 'live' : session === 'demo' ? 'demo' : ''}`;
         $('session-badge').textContent = session === 'hardware' ? '● LIVE / RAM' : session === 'demo' ? '● DEMO / SIMULATION' : 'OFFLINE';
         $('pause').disabled = !controller || busy || operation || controller.fault;
@@ -408,13 +414,13 @@
         updateScanControls();
         updateSDControls();
         updateLDO4Controls();
-        i2cPanel.update(); peripheralPanels.update();
+        i2cPanel.update(); peripheralPanels.update(); rmtPanel.update();
     }
     async function initializeBoard() {
         const token = ++boardRequest;
         sampleTimes = []; lastPoll = null;
         if (controller) { await controller.release(); await controller.close(); controller = null; }
-        sdHost = null; clearSDResults(); renderSD(); i2cPanel.reset(); peripheralPanels.reset(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral);
+        sdHost = null; clearSDResults(); renderSD(); i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral);
         if (!transport || session === 'offline') return;
         const current = new GPIOController(transport, chip, {
             readOnly: !accelerated(),
@@ -437,7 +443,7 @@
         controller = current;
         await current.initialize(exposedPins().filter(id => !chip.pins.find(pin => pin.id === id)?.reserved));
         if (token !== boardRequest || !transport || session === 'offline') { await current.close(); return; }
-        renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral);
+        renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral);
         current.start(Number($('interval').value));
     }
     async function chooseBoard(config) {
@@ -462,7 +468,7 @@
         if (busy || session !== 'offline') return;
         if (!navigator.serial || !isSecureContext) { status('Web Serial benötigt Chrome/Edge und einen sicheren Kontext (localhost oder HTTPS).', 'error'); return; }
         busy = true; updateControls();
-        let device;
+        let device, autoAccelerate = false;
         try {
             status('Seriellen Port auswählen …');
             device = new ESPFlasher({ initialBaudRate: Number($('baud').value), logMessage: log, logWarning: log, logError: log });
@@ -496,12 +502,14 @@
             status(readOnlyChip ? `${chip.name} erkannt · ROM-Registerzugriff · ${board.name} · ${controller.pins.size} GPIOs beobachten. Polling läuft.` :
                 `${chip.name} erkannt · RAM-Stub aktiv · ${board.name} · ${controller.pins.size} GPIOs als Input. Polling läuft.`);
             log(readOnlyChip ? 'ESP8266: GPIO_IN und RTC_GPIO_IN_DATA werden nur gelesen.' : 'Stub aktiv. Kein Flash-Schreib- oder Löschbefehl wird verwendet.');
+            autoAccelerate = !readOnlyChip && !$('classic-stub').checked;
         } catch (error) {
             const cancelled = error?.name === 'NotFoundError';
             await shutdown(false);
             status(cancelled ? 'Portauswahl abgebrochen.' : `${error.message || error} Falls nötig: BOOT halten, RESET drücken und erneut verbinden.`, cancelled ? '' : 'error');
             if (!cancelled) log('Verbindungsfehler:', error.message || error);
         } finally { busy = false; updateControls(); }
+        if (autoAccelerate) await loadAccelerated();
     }
     async function demo() {
         if (busy || session !== 'offline') return;
@@ -522,7 +530,7 @@
             status('Releasing I/O and loading accelerated stub into RAM…');
             await controller.release(); await controller.close(); controller = null;
             transport.close(); transport = null;
-            sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); clearScan();
+            sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); clearScan();
             transport = await ESPIO.startAccelerated(flasher, manifest);
             $('interval').value = '1';
             await initializeBoard();
@@ -602,7 +610,7 @@
             status(error.message || String(error), 'error'); log('LDO4:', error.message || error);
         } finally {
             operation = false;
-            renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral);
+            renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral);
             updateControls();
         }
     }
@@ -972,9 +980,13 @@
     }
 
     for (const config of Object.values(chips)) $('preview-chip').add(new Option(config.name, config.id));
-    $('connect').addEventListener('click', connect);
+    function closeConnectionMenu() { $('connection-menu').hidden = true; $('connection-options').setAttribute('aria-expanded', 'false'); }
+    $('connection-options').addEventListener('click', () => { const open = $('connection-menu').hidden; $('connection-menu').hidden = !open; $('connection-options').setAttribute('aria-expanded', String(open)); });
+    document.addEventListener('click', event => { if (!event.target.closest('.connect-control')) closeConnectionMenu(); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('connection-menu').hidden) { closeConnectionMenu(); $('connection-options').focus(); } });
+    for (const input of document.querySelectorAll('[name="connection-baud"]')) input.addEventListener('change', () => { if (input.checked && session === 'offline') { $('baud').value = input.value; updateControls(); } });
+    $('connect').addEventListener('click', () => { closeConnectionMenu(); if (session === 'offline') connect(); else $('disconnect').click(); });
     $('load-accelerated').addEventListener('click', loadAccelerated);
-    $('load-accelerated-top').addEventListener('click', loadAccelerated);
     $('demo').addEventListener('click', demo);
     $('disconnect').addEventListener('click', async () => {
         if (busy) return; busy = true; updateControls();

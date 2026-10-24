@@ -26,8 +26,9 @@
         return result;
     }
 
-    function maskBackgroundPixels(imageData) {
+    function maskBackgroundPixels(imageData, tolerance = 3) {
         const { data, width, height } = imageData;
+        tolerance = Number.isFinite(tolerance) ? Math.max(0, tolerance) : 3;
         if (!width || !height) return imageData;
         const counts = new Map();
         function count(x, y) {
@@ -48,9 +49,9 @@
             if (background[index]) return;
             const offset = index * 4;
             if (data[offset + 3] >= 128 && (
-                Math.abs(data[offset] - red) > 18 ||
-                Math.abs(data[offset + 1] - green) > 18 ||
-                Math.abs(data[offset + 2] - blue) > 18)) return;
+                Math.abs(data[offset] - red) > tolerance ||
+                Math.abs(data[offset + 1] - green) > tolerance ||
+                Math.abs(data[offset + 2] - blue) > tolerance)) return;
             background[index] = 1;
             queue[tail++] = index;
         }

@@ -1,5 +1,6 @@
 (function (root) {
     'use strict';
+    const isI2CScanError = error => !!error.response && [4, 5].includes(error.response.status ?? error.status);
     function registerScanOptions({ bits = 8, endian = 'BE', start = '0', end = '255', readLength = 1 } = {}) {
         const number = value => {
             const text = String(value).trim();
@@ -26,11 +27,11 @@
             if (signal?.aborted) throw new DOMException('Register-Scan abgebrochen.', 'AbortError');
             const row = { register, write: encodeI2CRegister(register, o.bits, o.endian), read: new Uint8Array(), error: '' };
             try { row.read = await host.transfer(address, row.write, o.readLength, signal); }
-            catch (error) { row.error = error.message; onRow(row); throw error; }
+            catch (error) { row.error = error.message; if (!isI2CScanError(error)) { onRow(row); throw error; } }
             onRow(row); count++;
         }
         return count;
     }
-    const api = { registerScanOptions, encodeI2CRegister, scanI2CRegisters };
+    const api = { registerScanOptions, encodeI2CRegister, scanI2CRegisters, isI2CScanError };
     if (typeof module === 'object' && module.exports) module.exports = api; else Object.assign(root.ESPIO ||= {}, api);
 })(globalThis);

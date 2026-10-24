@@ -2,6 +2,7 @@
     'use strict';
     const protocol = typeof module === 'object' && module.exports ? require('../stub/protocol.js') : root.ESPIO.rpcProtocol;
     const op = protocol.operations;
+    const { isI2CScanError } = typeof module === 'object' && module.exports ? require('./i2c-registers.js') : root.ESPIO;
     const abort = signal => { if (signal?.aborted) throw new DOMException('Vorgang abgebrochen.', 'AbortError'); };
     // One GPIO lease and restoration path for all accelerated peripherals.
     class PeripheralHost {
@@ -51,7 +52,7 @@
                         await this.transport.write(bank.enable, 0, bit); await this.transport.write(g.matrix + id * 4, g.matrixGPIO, g.matrixMask);
                     }
                     abort(signal); this.rpcReady = true;
-                    const args = this.kind === 'I2C' ? [config.speed ?? 100000] : this.kind === 'SPI' ? [config.speed ?? 1000000, config.mode ?? 0, config.lsb ? 1 : 0] : [config.frequency ?? 1000, config.bits ?? 10, config.timer ?? 0, config.duty ?? 500];
+                    const args = this.kind === 'I2C' ? [config.speed ?? 100000] : this.kind === 'SPI' ? [config.speed ?? 1000000, config.mode ?? 0, config.lsb ? 1 : 0] : this.kind === 'RMT' ? [config.resolution ?? 20000000, config.idle ?? 0] : [config.frequency ?? 1000, config.bits ?? 10, config.timer ?? 0, config.duty ?? 500];
                     this.actualHz = (await this.call(op.CONFIGURE, args)).actual_hz;
                     for (const role of roles) {
                         abort(signal);
@@ -110,12 +111,12 @@
                 finally { entry.finishedAt = this.controller.clock(); this.onTransaction(entry); }
             }, signal);
         }
-        async scan({ signal, onFound = () => {}, onProgress = () => {} } = {}) {
+        async scan({ signal, onFound = () => {}, onProgress = () => {}, onError = () => {} } = {}) {
             const found = [];
             for (let address = 3; address <= 0x77; ++address) {
                 abort(signal);
                 try { await this.transfer(address, new Uint8Array(), 0, signal); found.push(address); onFound(address); }
-                catch (e) { if (e.response?.error !== protocol.peripheralErrors.NACK) throw e; }
+                catch (e) { if (!isI2CScanError(e)) throw e; onError(address, e); }
                 onProgress(address, found.length);
             }
             return found;

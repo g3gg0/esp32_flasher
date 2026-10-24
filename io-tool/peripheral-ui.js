@@ -8,10 +8,10 @@
         const active = kind => hosts[kind]?.ready && hosts[kind].controller === ctx.controller();
         for (const kind of ['spi', 'pwm']) {
             const panel = document.createElement('div'); panel.id = `${kind}-panel`; panel.className = 'sd-panel'; panel.hidden = true;
-            panel.innerHTML = `<div class="sd-heading"><h3>${kind === 'spi' ? 'SPI-Master' : 'PWM / LEDC'}</h3><span id="${kind}-state" class="chip-badge">NICHT AKTIV</span></div><p id="${kind}-note" class="sd-note"></p><div id="${kind}-config" class="sd-actions"></div><div class="sd-actions"><button id="${kind}-apply">Aktivieren</button><button id="${kind}-release" hidden>Freigeben</button></div><div id="${kind}-actions" class="sd-actions"></div><pre id="${kind}-result" class="bus-log" role="status"></pre>`;
+            panel.innerHTML = `<div class="sd-heading"><h3>${kind === 'spi' ? 'SPI-Master' : 'PWM / LEDC'}</h3><span id="${kind}-state" class="chip-badge">NICHT AKTIV</span></div><p id="${kind}-note" class="sd-note"></p><div id="${kind}-config" class="bus-config"></div><div class="sd-actions"><button id="${kind}-apply">Aktivieren</button><button id="${kind}-release" hidden>Freigeben</button></div><div id="${kind}-actions" class="sd-actions"></div><pre id="${kind}-result" class="bus-log" role="status"></pre>`;
             $('i2c-panel').after(panel);
             const field = (name, title, type, values) => {
-                const label = document.createElement('label'); label.textContent = title + ' ';
+                const label = document.createElement('label'); label.textContent = title + ' '; label.dataset.field = name;
                 const input = document.createElement(type === 'select' ? 'select' : 'input'); input.id = `${kind}-${name}`;
                 if (type === 'select') for (const [value, text] of values || []) input.add(new Option(text, value));
                 else input.type = type;

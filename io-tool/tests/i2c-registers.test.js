@@ -14,7 +14,7 @@ test('register scan uses one combined write/read per row and reports exact TX/RX
     assert.deepEqual(calls.map(c => [c[0], [...c[1]], c[2]]), [[80, [35, 1], 2], [80, [36, 1], 2], [80, [37, 1], 2]]);
     assert.equal(rows[2].register, 0x125n); assert.deepEqual([...rows[0].read], [35, 170]);
 });
-test('scan cancellation and bus errors stop subsequent register accesses', async () => {
+test('scan cancellation and link errors stop subsequent register accesses', async () => {
     const cancel = new AbortController(), rows = [];
     let calls = 0;
     const host = { transfer: async () => { calls++; cancel.abort(); return Uint8Array.of(1); } };
@@ -23,6 +23,29 @@ test('scan cancellation and bus errors stop subsequent register accesses', async
     const fail = new Error('NACK');
     await assert.rejects(scanI2CRegisters({ transfer: async () => { throw fail; } }, 20, { end: '3' }, { onRow: r => rows.push(r) }), fail);
     assert.equal(rows.at(-1).error, 'NACK');
+});
+
+test('register scan records NACK and device timeout then continues to later registers', async () => {
+    const rows = [], visited = [];
+    const host = { transfer: async (address, data) => {
+        visited.push(data[0]);
+        if (data[0] === 99 || data[0] === 100) throw Object.assign(new Error('device error'), { response: { status: data[0] === 99 ? 5 : 4 } });
+        return Uint8Array.of(data[0]);
+    } };
+    assert.equal(await scanI2CRegisters(host, 0x18, { start: '97', end: '101' }, { onRow: row => rows.push(row) }), 5);
+    assert.deepEqual(visited, [97, 98, 99, 100, 101]);
+    assert.equal(rows.filter(row => row.error).length, 2);
+    assert.deepEqual([...rows[4].read], [101]);
+});
+
+test('address scan skips device errors but preserves fatal connection errors', async () => {
+    const { RPCI2CHost } = require('../peripheral.js'), host = new RPCI2CHost({ transport: {} });
+    const errors = [], progress = [];
+    host.transfer = async address => { if (address !== 24) throw Object.assign(new Error('NACK'), { response: { status: 5 } }); };
+    assert.deepEqual(await host.scan({ onError: a => errors.push(a), onProgress: a => progress.push(a) }), [24]);
+    assert.equal(progress.length, 117); assert.equal(errors.length, 116); assert.equal(progress.at(-1), 119);
+    host.transfer = async () => { throw new Error('serial disconnected'); };
+    await assert.rejects(host.scan(), /disconnected/);
 });
 test('register scan also uses the existing legacy P4 I2C backend', async () => {
     const chips = require('../configs/chips.js');

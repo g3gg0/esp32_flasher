@@ -44,6 +44,9 @@ async function exercisePeripherals(backend) {
     await wait(`${$('i2c-progress')}.textContent.includes('fertig')`);
     assert.equal(await evaluate(`${$('i2c-register-body')}.children.length`),3);
     assert.ok((await evaluate(`${$('i2c-register-body')}.textContent`)).includes('23 01'));
+    await evaluate(`${$('i2c-register-start')}.value='97';${$('i2c-register-end')}.value='101';${$('i2c-register-scan')}.click();`);
+    await wait(`${$('i2c-progress')}.textContent.includes('fertig') && ${$('i2c-register-body')}.children.length===5`);
+    assert.equal(await evaluate(`${$('i2c-register-body')}.querySelectorAll('.bus-error').length`), 1);
     await evaluate(`${$('i2c-release')}.click()`);await wait(`${$('i2c-release')}.hidden`);
     await evaluate(`document.querySelector('[data-peripheral="spi"]').click();for(const [i,role] of ['clk','mosi','miso','cs'].entries()){const s=document.getElementById('spi-'+role);s.value=String(busPins[i]);s.dispatchEvent(new Event('change'));}${$('spi-apply')}.click();`);
     await wait(`!${$('spi-transfer')}.disabled`);await evaluate(`${$('spi-transfer')}.click()`);await wait(`${$('spi-result')}.textContent.startsWith('RX ')`);
@@ -52,6 +55,15 @@ async function exercisePeripherals(backend) {
     await evaluate(`document.querySelector('[data-peripheral="pwm"]').click();${$('pwm-pin')}.value=String(busPins[0]);${$('pwm-pin')}.dispatchEvent(new Event('change'));${$('pwm-apply')}.click();`);
     await wait(`!${$('pwm-update')}.disabled`);await evaluate(`${$('pwm-duty')}.value='750';${$('pwm-update')}.click()`);await wait(`${$('pwm-result')}.textContent.includes('750')`);
     await evaluate(`${$('pwm-release')}.click()`);await wait(`${$('pwm-release')}.hidden`);
+    if (!['esp32c2','esp32c61'].includes(chip)) {
+        await evaluate(`document.querySelector('[data-peripheral="rmt"]').click();${$('rmt-pin')}.value=String(busPins[0]);${$('rmt-pin')}.dispatchEvent(new Event('change'));${$('rmt-apply')}.click();`);
+        await wait(`!${$('rmt-send')}.disabled`);
+        await evaluate(`${$('rmt-count')}.value='1365';${$('rmt-send')}.click()`);
+        await wait(`${$('rmt-result')}.textContent.startsWith('Gesendet')`);
+        assert.ok((await evaluate(`${$('rmt-result')}.textContent`)).includes('32760'));
+        assert.equal(await evaluate('serialPeer.rmtBytes'), 4095);
+        await evaluate(`${$('rmt-release')}.click()`);await wait(`${$('rmt-release')}.hidden`);
+    } else assert.equal(await evaluate(`!document.querySelector('[data-peripheral="rmt"]') || document.querySelector('[data-peripheral="rmt"]').disabled`), true);
     console.log(`PASS: ${chip} ${backend} I2C register table, SPI full duplex, LEDC duty and release.`);
 }
 try {
@@ -87,16 +99,18 @@ try {
                         await this.processPacket(response);
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SYNC') {
                         const target = ESPIO.acceleratedTargets[window.peerChip];
-                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:3, max_packet_length:1024, capabilities:target.sdmmc ? 303 : 295, chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
+                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:4, max_packet_length:1024, capabilities:(target.sdmmc ? 303 : 295) | (["esp32c2","esp32c61"].includes(window.peerChip)?0:16), chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'IOCC') {
                         await this.processPacket(await this.captureReply(packet));
-                    } else if (['I2CC','SPIC','PWMC'].includes(new TextDecoder().decode(packet.slice(0,4)))) {
+                    } else if (['I2CC','SPIC','PWMC','RMTC'].includes(new TextDecoder().decode(packet.slice(0,4)))) {
                         const tag=new TextDecoder().decode(packet.slice(0,4)),q=ESPIO.rpcDecode(packet,'peripheral_command',tag),v=new Array(8).fill(0);
-                        let data=new Uint8Array();
-                        if(q.operation===4){if(tag==='I2CC'){v.splice(0,8,20,20,21,21,0x60000000,32,2,0);}else if(tag==='SPIC'){v.splice(0,8,22,23,24,25,0x60000000,2,64,0);}else{v.splice(0,8,26,8,4,19,0x3ffff,0,0,0);}}
+                        let data=new Uint8Array(),status=0,error=0;
+                        if(q.operation===4){if(tag==='I2CC'){v.splice(0,8,20,20,21,21,0x60000000,32,2,0);}else if(tag==='SPIC'){v.splice(0,8,22,23,24,25,0x60000000,2,64,0);}else if(tag==='RMTC'){v.splice(0,8,27,8,48,4096,40000000,3,0,0);}else{v.splice(0,8,26,8,4,19,0x3ffff,0,0,0);}}
                         if(q.operation===2&&tag==='I2CC')data=Uint8Array.from({length:q.args[2]},(_,i)=>(q.data[0]||0)+i);
                         if(q.operation===2&&tag==='SPIC')data=Uint8Array.from(q.data,b=>b^255);
-                        await this.processPacket(ESPIO.rpcEncode('peripheral_response',{operation:q.operation,port:q.port,actual_hz:q.args[0]||1000000,values:v},tag.slice(0,3)+'R',data));
+                        if(tag==='I2CC'&&q.operation===2&&q.data[0]===99){status=5;error=9;data=new Uint8Array();}
+                        if(tag==='RMTC'){if(q.operation===16){this.rmtSymbols=q.args[1];this.rmtBytes=0;}if(q.operation===17){if(q.args[0]!==this.rmtBytes)throw new Error('RMT upload offset');this.rmtBytes+=q.data.length;}if(q.operation===18){v[0]=this.rmtSymbols*q.args[0];v[1]=Math.ceil(v[0]/24);v[2]=v[0]*1.25+q.args[1];}}
+                        await this.processPacket(ESPIO.rpcEncode('peripheral_response',{status,error,operation:q.operation,port:q.port,actual_hz:q.args[0]||1000000,values:v},tag.slice(0,3)+'R',data));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SDMC') {
                         await this.processPacket(await this.sdReply(packet));
                     } else {
@@ -152,7 +166,15 @@ try {
         };
     })()`);
     assert.equal(await evaluate(`${$('baud')}.value`), '115200');
-    await evaluate(`${$('baud')}.value='115200';${$('connect')}.click()`);
+    await evaluate(`${$('connection-options')}.click()`);
+    assert.equal(await evaluate(`${$('connection-menu')}.hidden`), false);
+    await evaluate(`document.querySelector('[name="connection-baud"][value="921600"]').click()`);
+    assert.equal(await evaluate(`${$('baud')}.value`), '921600');
+    assert.equal(await evaluate(`document.querySelectorAll('[name="connection-baud"]:checked').length`), 1);
+    await evaluate(`document.querySelector('[name="connection-baud"][value="115200"]').click();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));`);
+    assert.equal(await evaluate(`${$('connection-menu')}.hidden`), true);
+    assert.equal(await evaluate(`${$('session-badge')}.textContent`), 'OFFLINE');
+    await evaluate(`${$('classic-stub')}.checked=true;${$('baud')}.value='115200';${$('connect')}.click()`);
     await wait(`!${$('load-accelerated')}.hidden && !${$('load-accelerated')}.disabled`);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);
     await wait(`!${$('disconnect')}.disabled`);
@@ -160,10 +182,11 @@ try {
     assert.equal(await evaluate(`!!${$('load-accelerated')}.closest('.peripheral-panel')`), true);
     await evaluate(`window.failStubFetch=true;${$('load-accelerated')}.click()`);
     await wait(`${$('status')}.textContent.includes('HTTP 404') && !${$('load-accelerated')}.disabled`);
-    assert.equal(await evaluate(`${$('disconnect')}.hidden`), false, 'failed fetch preserves the legacy session');
+    assert.equal(await evaluate(`${$('connect')}.textContent`), 'Trennen', 'failed fetch preserves the legacy session');
+    assert.equal(await evaluate(`${$('disconnect')}.hidden`), true);
     await evaluate(`window.failStubFetch=false;${$('load-accelerated')}.click()`);
     await wait(`${$('load-accelerated')}.textContent === 'Accelerated stub active' && ${$('status')}.textContent.includes('SYNC verified')`);
-    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.3'));
+    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.4'));
     assert.equal(await evaluate(`${$('load-accelerated')}.disabled`), true);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);
     await wait(`!${$('disconnect')}.disabled`);
@@ -202,6 +225,10 @@ try {
     }
     await evaluate(`${$('disconnect')}.click()`);
     await wait(`${$('load-accelerated')}.hidden && ${$('session-badge')}.textContent === 'OFFLINE'`);
+    await evaluate(`${$('classic-stub')}.checked=false;${$('connect')}.click()`);
+    await wait(`${$('load-accelerated')}.textContent === 'Accelerated stub active' && ${$('status')}.textContent.includes('SYNC verified')`);
+    await evaluate(`${$('connect')}.click()`);
+    await wait(`${$('session-badge')}.textContent === 'OFFLINE'`);
     assert.deepEqual(errors, []);
     console.log(`PASS: ${chip} legacy connect, missing-build recovery, RAM upload/SYNC, identity display, GPIO via RPC and disconnect; simulated serial peer.`);
 } finally { ws.close(); }

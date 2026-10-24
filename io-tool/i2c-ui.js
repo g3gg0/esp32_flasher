@@ -93,12 +93,14 @@
                         await host.open(draft(), signal);
                     }
                     if (kind === 'register-scan') {
+                        let errors = 0;
                         $('i2c-register-body').replaceChildren();
                         await root.ESPIO.scanI2CRegisters(host, address, registerConfig, { signal, onRow: row => {
                             const tr = document.createElement('tr');
+                            if (row.error) { errors++; tr.className = 'bus-error'; }
                             for (const text of [hex(row.register), bytes(Array.from(row.write)), row.error || bytes(Array.from(row.read))]) { const td = document.createElement('td'); td.textContent = text; tr.append(td); }
                             $('i2c-register-body').append(tr);
-                            $('i2c-progress').textContent = `Register ${hex(row.register)} · ${$('i2c-register-body').children.length} Zeilen`;
+                            $('i2c-progress').textContent = `Register ${hex(row.register)} · ${$('i2c-register-body').children.length} Zeilen · ${errors} Fehler`;
                         } });
                         $('i2c-progress').textContent += ' · fertig';
                     } else if (kind === 'scan') {

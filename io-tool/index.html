@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="analog.css">
     <link rel="stylesheet" href="sd.css">
+    <link rel="stylesheet" href="peripherals.css">
     <script src="../chips.js" defer></script>
     <script src="../flasher.js" defer></script>
     <script src="configs/chips.js" defer></script>
@@ -30,6 +31,8 @@
     <script src="../stub/targets.js" defer></script>
     <script src="accelerated.js" defer></script>
     <script src="peripheral.js" defer></script>
+    <script src="rmt.js" defer></script>
+    <script src="rmt-ui.js" defer></script>
     <script src="app.js" defer></script>
 </head>
 <body>
@@ -37,10 +40,17 @@
         <a class="brand" href="./"><span class="brand-mark">⏚</span><span>ESP <b>I/O Lab</b><small>REGISTER WORKBENCH</small></span></a>
         <span class="session-badge" id="session-badge">OFFLINE</span>
         <div class="connection-actions">
-            <label class="baud-label">Baud<select id="baud"><option selected>115200</option><option>460800</option><option>921600</option></select></label>
-            <button id="connect" class="primary">Mit ESP verbinden <span>↗</span></button>
+            <select id="baud" hidden aria-hidden="true"><option selected>115200</option><option>921600</option></select>
+            <div class="connect-control">
+                <button id="connect" class="primary">Verbinden</button><button id="connection-options" aria-label="Verbindungsoptionen" aria-haspopup="true" aria-expanded="false" aria-controls="connection-menu">▾</button>
+                <div id="connection-menu" class="connection-menu" hidden>
+                    <label><input type="radio" name="connection-baud" value="115200" checked>115200 Baud</label>
+                    <label><input type="radio" name="connection-baud" value="921600">921600 Baud</label>
+                    <div class="menu-separator"></div>
+                    <label><input id="classic-stub" type="checkbox">Classic stub</label>
+                </div>
+            </div>
             <button id="disconnect" hidden>Trennen &amp; Reset</button>
-            <button id="load-accelerated-top" hidden>Load accelerated stub</button>
         </div>
     </header>
     <main>
@@ -106,7 +116,7 @@
             <div id="i2c-panel" class="sd-panel" hidden>
                 <div class="sd-heading"><div><h3>I²C-Port</h3><p id="i2c-backend"></p></div><span id="i2c-state" class="chip-badge">NICHT AKTIV</span></div>
                 <div id="i2c-configuration">
-                    <div class="sd-actions">
+                    <div class="bus-config">
                         <label>Controller <select id="i2c-port"><option value="0">I²C0</option><option value="1">I²C1</option></select></label>
                         <label>SDA <select id="i2c-sda" aria-label="I²C SDA"></select></label>
                         <label>SCL <select id="i2c-scl" aria-label="I²C SCL"></select></label>

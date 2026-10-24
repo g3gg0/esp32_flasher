@@ -2,13 +2,13 @@
   "name": "esp-io-rpc",
   "version": {
     "major": 1,
-    "minor": 3
+    "minor": 4
   },
   "byteOrder": "little",
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.5.1",
+  "buildVersion": "0.6.0",
   "header": [
     [
       "magic",
@@ -625,7 +625,10 @@
     "BAD_CLOCK": 9,
     "BAD_SPEED": 10,
     "BAD_TRANSFER": 11,
-    "BAD_TIMEOUT": 12
+    "BAD_TIMEOUT": 12,
+    "BUSY": 13,
+    "BAD_SEQUENCE": 14,
+    "UNDERRUN": 15
   },
   "captureOperations": {
     "GPIO_CONFIGURE": 1,
@@ -651,5 +654,15 @@
     },
     "maxBanks": 4,
     "maxChannels": 24
+  },
+  "rmtOperations": {
+    "BEGIN": 16,
+    "APPEND": 17,
+    "SEND": 18,
+    "ABORT": 19
+  },
+  "rmtEncodings": {
+    "RAW": 0,
+    "BITMAP": 1
   }
 }

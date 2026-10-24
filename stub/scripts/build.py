@@ -43,7 +43,7 @@ def build(target):
     components = idf / "components"
     includes = [out, ROOT / "include", components / "esp_common/include", components / "esp_rom/include", components / f"esp_rom/{target}/include", components / f"soc/{target}/include", components / f"soc/{target}/register", components / f"soc/{target}/register/hw_ver1", components / "soc/include", components / "esp_hw_support/include", components / "esp_hal/include"]
     includes += [components / f'hal/{target}/include', components / 'hal/include', components / 'hal/platform_port/include', components / f'esp_rom/{target}/include/{target}']
-    for name in ('i2c', 'gpspi', 'ledc', 'gpio'):
+    for name in ('i2c', 'gpspi', 'ledc', 'gpio', 'rmt'):
         includes += [components / f'esp_hal_{name}/{target}/include', components / f'esp_hal_{name}/include']
     includes += [p / 'include' for p in components.iterdir() if p.name != 'linux' and (p / 'include').is_dir()]
     text, data = int(cfg["text"], 0), int(cfg["data"], 0)
@@ -71,7 +71,7 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
         # IDF's xtensa-esp32[s2/s3]-elf wrappers select the correct CPU plugin
         # and matching libgcc multilib automatically.
         flags += ["-mlongcalls", "-mtext-section-literals"]
-    flags += ['-DNDEBUG', '-DSTUB_HAS_PERIPHERALS=1']
+    flags += ['-DNDEBUG', '-DSTUB_HAS_PERIPHERALS=1', f'-DSTUB_HAS_RMT={int(target not in ("esp32c2", "esp32c61"))}']
     for inc in includes:
         if inc.is_dir():
             flags += ["-isystem" if inc.is_relative_to(components) else "-I", str(inc)]
@@ -80,10 +80,12 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
         flags += [f"-T{rom / name}"]
     flags += [f'-T{components / f"soc/{target}/ld/{target}.peripherals.ld"}']
     elf = out / "stub.elf"
-    sources = [ROOT / f'src/{name}' for name in ('start.S', 'stub.c', 'platform.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'peripheral.c', 'peripheral_port.c')]
+    sources = [ROOT / f'src/{name}' for name in ('start.S', 'stub.c', 'platform.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'rmt.c', 'rmt_port.c', 'peripheral.c', 'peripheral_port.c')]
     if target == 'esp32':
         sources += [components / 'soc/esp32/dport_access.c']
     sources += [components / f'esp_hal_{name}/{target}/{stem}_periph.c' for name, stem in [('i2c', 'i2c'), ('gpspi', 'spi'), ('ledc', 'ledc')]]
+    if target not in ('esp32c2','esp32c61'):
+        sources += [components / f'esp_hal_rmt/{target}/rmt_periph.c']
     run([prefix + "gcc", *flags, *sources, "-o", elf, "-lgcc"])
     from elftools.elf.elffile import ELFFile
     with elf.open("rb") as stream:

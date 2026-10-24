@@ -27,7 +27,7 @@ class WireTest(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         cls.exe = Path(cls.temp.name) / "wire-test"
-        subprocess.run(['cc', '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-I', str(ROOT / 'include'), '-I', str(ROOT / 'src'), str(ROOT / 'src/stub.c'), str(ROOT / 'src/sdmmc.c'), str(ROOT / 'src/capture.c'), str(ROOT / 'src/adc_calibration.c'), str(ROOT / 'src/peripheral.c'), str(ROOT / 'tests/host-platform.c'), '-o', str(cls.exe)], check=True)
+        subprocess.run(['cc', '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-I', str(ROOT / 'include'), '-I', str(ROOT / 'src'), str(ROOT / 'src/stub.c'), str(ROOT / 'src/sdmmc.c'), str(ROOT / 'src/rmt.c'), str(ROOT / 'src/capture.c'), str(ROOT / 'src/adc_calibration.c'), str(ROOT / 'src/peripheral.c'), str(ROOT / 'tests/host-platform.c'), '-o', str(cls.exe)], check=True)
 
     @classmethod
     def tearDownClass(cls):

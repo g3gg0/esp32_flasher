@@ -447,7 +447,9 @@ Output/Output-Enable verwenden die atomaren W1TS-/W1TC-Register.
 
 I²C, SPI, PWM/LEDC und alle weiteren Moduloperationen erfordern den beschleunigten
 RAM-Stub. Der klassische Stub unterstützt nur GPIO-Beobachtung und Plotting.
-RMT, UART und I²S bleiben Erweiterungen ohne aktive Steuerung.
+RMT bietet mit beschleunigtem Stub kontinuierliche Sequenzausgabe einschließlich
+WS2812. Chips ohne RMT (C2/C61) bieten diese Funktion nicht an. UART und I²S
+bleiben Erweiterungen ohne aktive Steuerung.
 Der Registerkatalog bietet außerdem die übrigen im Profil aufgeführten Blöcke.
 ADC, SD und Usage-Scan nutzen denselben serialisierten Ablauf.
 
@@ -520,8 +522,11 @@ Siehe auch `THIRD_PARTY.md`. Bildnachweise sind direkt im Tool verlinkt.
 Classic mode only logs/plots GPIO inputs. It does not configure pads or drive
 outputs. GPIO control, ADC, supplies, usage scans and all peripheral operations
 are enabled only after loading the accelerated RAM stub. The load button is
-available in both the header and Peripherie & Register. The default baud rate
-is 115200. All accelerated operations use the maintained RPC protocol; classic
+available in Peripherie & Register. The header has a split Connect/Disconnect
+button: the arrow opens mutually exclusive 115200/921600 baud choices and a
+Classic stub checkbox. Default is 115200 and automatic accelerated loading;
+Classic stub selects GPIO observation only until manually upgraded.
+All accelerated operations use the maintained RPC protocol; classic
 register backends and their generated recipes have been removed.
 
 I2C, SPI and PWM/LEDC share native drivers across all ten targets. P4/S3 also
@@ -545,11 +550,22 @@ I2C register scans use the device address, register width (1-64 bits), BE/LE
 byte order, inclusive range and read length. Each row uses one combined
 register-address write/read and displays exact TX/RX bytes. Register 0x123 with
 16 bits sends `01 23` in BE or `23 01` in LE. Reads are 1-32 bytes (C2: 1-16),
-with at most 4096 rows. Cancellation stops before the next transaction; bus
-errors stop the scan and appear in the table. Access may have device-specific
+with at most 4096 rows. Cancellation stops before the next transaction; device
+NACK/IO_ERROR and TIMEOUT appear in the table and scanning continues. Link or
+protocol errors stop scanning. Access may have device-specific
 side effects. Register scans also require the accelerated stub.
 
-Build 0.5.0 retains the cold-ROM P4 clock fix and native SPI completion/reset
+Build 0.6.0 adds shared RMT streaming on ESP32/S2/S3/C3/C5/C6/H2/P4. Patterns
+are built in JavaScript: rainbow, RGB colors or custom pulse pairs in ns.
+The full encoded sequence is uploaded first, then sent continuously using
+alternating hardware RAM halves. Up to 4096 encoded bytes fit: 1024 arbitrary
+symbols or 32768 symbols using two pulse types (1365 WS2812 LEDs). Long streams
+require at least 1 microsecond per symbol. There is no WS2812 software fallback
+on chips without RMT. Actual clock frequency is shown after activation.
+I2C/SPI pin lists are numerically sorted with compact labels and full pin
+descriptions in tooltips; control widths align in a responsive grid.
+
+Build 0.6.0 retains the cold-ROM P4 clock fix and native SPI completion/reset
 fixes from 0.4.1. Automated tests cover native calibration/capture and the UI via
 a simulated serial peer; real electrical behavior and update rates still need
 physical hardware validation. The shared connected browser is never reloaded
