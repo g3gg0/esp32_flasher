@@ -12,33 +12,34 @@
     <link rel="stylesheet" href="peripherals.css?v=0.8.0-ui4">
     <script src="../chips.js?v=0.8.0-ui4" defer></script>
     <script src="../flasher.js?v=0.8.0-ui4" defer></script>
-    <script src="configs/chips.js?v=0.8.0-ui4" defer></script>
-    <script src="configs/boards.js?v=0.8.0-ui4" defer></script>
-    <script src="image-mask.js?v=0.8.0-ui4" defer></script>
-    <script src="configs/adc.js?v=0.8.0-ui4" defer></script>
-    <script src="load-profile.js?v=0.8.0-ui4" defer></script>
-    <script src="adc.js?v=0.8.0-ui4" defer></script>
-    <script src="scope.js?v=0.8.0-ui4" defer></script>
-    <script src="configs/sd.js?v=0.8.0-ui4" defer></script>
-    <script src="sd.js?v=0.8.0-ui4" defer></script>
-    <script src="configs/i2c.js?v=0.8.0-ui4" defer></script>
-    <script src="i2c.js?v=0.8.0-ui4" defer></script>
-    <script src="i2c-registers.js?v=0.8.0-ui4" defer></script>
-    <script src="peripheral-ui.js?v=0.8.0-ui4" defer></script>
-    <script src="i2c-ui.js?v=0.8.0-ui4" defer></script>
-    <script src="configs/ldo4.js?v=0.8.0-ui4" defer></script>
-    <script src="ldo4.js?v=0.8.0-ui4" defer></script>
-    <script src="gpio.js?v=0.8.0-ui4" defer></script>
     <script src="../stub/protocol.js?v=0.8.0-ui4" defer></script>
     <script src="../stub/targets.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/chips.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/boards.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/adc.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/sd.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/ldo4.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/i2c.js?v=0.8.0-ui4" defer></script>
+    <script src="image-mask.js?v=0.8.0-ui4" defer></script>
+    <script src="load-profile.js?v=0.8.0-ui4" defer></script>
     <script src="accelerated.js?v=0.8.0-ui4" defer></script>
+    <script src="adc.js?v=0.8.0-ui4" defer></script>
+    <script src="scope.js?v=0.8.0-ui4" defer></script>
+    <script src="sd.js?v=0.8.0-ui4" defer></script>
+    <script src="i2c.js?v=0.8.0-ui4" defer></script>
+    <script src="i2c-registers.js?v=0.8.0-ui4" defer></script>
+    <script src="i2c-ui.js?v=0.8.0-ui4" defer></script>
+    <script src="ldo4.js?v=0.8.0-ui4" defer></script>
+    <script src="gpio.js?v=0.8.0-ui4" defer></script>
     <script src="peripheral.js?v=0.8.0-ui4" defer></script>
+    <script src="fuses.js?v=0.8.0-ui4" defer></script>
+    <script src="fuses-ui.js?v=0.8.0-ui4" defer></script>
+    <script src="peripheral-ui.js?v=0.8.0-ui4" defer></script>
     <script src="rmt.js?v=0.8.0-ui4" defer></script>
     <script src="rmt-ui.js?v=0.8.0-ui4" defer></script>
     <script src="flash.js?v=0.8.0-ui4" defer></script>
     <script src="flash-ui.js?v=0.8.0-ui4" defer></script>
-    <script src="fuses.js?v=0.8.0-ui4" defer></script>
-    <script src="fuses-ui.js?v=0.8.0-ui4" defer></script>
+
     <script src="app.js?v=0.8.0-ui4" defer></script>
 </head>
 <body>
@@ -46,7 +47,7 @@
         <a class="brand" href="./"><span class="brand-mark">⏚</span><span>ESP <b>I/O Lab</b><small>REGISTER WORKBENCH</small></span></a>
         <span class="session-badge" id="session-badge">OFFLINE</span>
         <div class="connection-actions">
-            <select id="baud" hidden aria-hidden="true"><option selected>115200</option><option>921600</option></select>
+            <select id="baud" hidden aria-hidden="true"><option>115200</option><option selected>921600</option></select>
             <div class="connect-control">
                 <button id="connect" class="primary">Verbinden</button><button id="connection-options" aria-label="Verbindungsoptionen" aria-haspopup="true" aria-expanded="false" aria-controls="connection-menu">▾</button>
                 <div id="connection-menu" class="connection-menu" hidden>
@@ -61,10 +62,9 @@
     </header>
     <main>
         <section class="intro">
-            <div><p class="eyebrow">ESP32 HARDWARE EXPLORER <span>/</span> GPIO</p><h1>Dein Board. Jeder Pegel.</h1><p>Verbinden, Board wählen und Pins direkt über den RAM-Stub bedienen.</p></div>
-            <div class="legend"><span><i class="dot green"></i> Istwert / gelesen</span><span><i class="dot red"></i> Sollwert / geschrieben</span><small>1 Sekunde Verlauf · zeitbasiertes Polling</small></div>
+            <div><p class="eyebrow">ESP32 HARDWARE EXPLORER <span>/</span> GPIO</p><h1>Dein Board. Jeder Pegel.</h1></div>
         </section>
-        <div id="status" role="status" aria-live="polite">Bereit. Port auswählen → Chip erkennen → RAM-Stub automatisch starten.</div>
+        <div id="status" role="status" aria-live="polite">Port auswählen → Chip erkennen → RAM-Stub automatisch starten.</div>
         <p id="accelerated-info" class="mode-info" hidden></p>
         <section class="device-section panel">
             <div class="section-heading"><div><span class="step">01</span><h2>Device auswählen</h2><span id="chip-badge" class="chip-badge">Vorschau</span></div><label class="preview-label">Vorschau-Chip <select id="preview-chip" aria-label="Vorschau-Chip"></select></label></div>
@@ -101,17 +101,18 @@
             <div class="scan-options">
                 <label>Ziel <select id="scan-target"><option value="selected">Ausgewählter Pin</option><option value="all">Alle verfügbaren GPIOs</option></select></label>
                 <label>Messfenster pro Phase <select id="scan-settle"><option value="50" selected>50 ms</option><option value="100">100 ms</option><option value="200">200 ms</option></select></label>
-                <label class="load-profile-toggle"><input id="scan-load-profile" type="checkbox" checked>Lastprofil</label>
+                <label class="load-profile-toggle"><input id="scan-load-profile" type="checkbox" checked>Lastprofil</label>
+
                 <button id="scan-start" disabled>Scan starten</button><button id="scan-cancel" hidden>Abbrechen</button><button id="scan-export" class="subtle" disabled>Messdaten JSON ↓</button>
             </div>
             <p id="scan-info" class="scan-info">LOW → HIGH → LOW mit ADC und digitalem Istwert. Pull- und Output-Durchlauf pro Pin überlagern.</p>
             <p id="scan-progress" role="status" aria-live="polite"></p>
-            <div id="scan-results" class="scan-results"><p>Noch kein Scan. Die bisherige Konfiguration wird nach jedem getesteten Pin wiederhergestellt.</p></div>
+            <div id="scan-results" class="scan-results"></div>
         </section>
         <section class="panel peripheral-panel">
             <div class="section-heading"><div><h2>Peripherie &amp; Register</h2><span class="muted">GPIO · ADC · SD</span></div><button id="load-accelerated" hidden>Load accelerated stub</button><span id="catalog-count" class="chip-badge"></span></div>
             <div class="peripheral-buttons" id="peripherals"></div>
-            <p id="peripheral-description" class="muted">Klassischer Stub: nur GPIO beobachten und plotten. Für GPIO-Steuerung, ADC und Peripherie den beschleunigten Stub laden.</p>
+            <p id="peripheral-description" class="muted"></p>
             <div id="ldo4-panel" class="sd-panel" hidden>
                 <div class="sd-heading"><div><h3>LDO4 · Separate Stromversorgung</h3><p>PMU · unabhängig von GPIO und SDMMC</p></div><span id="ldo4-state" class="chip-badge">UNBEKANNT</span></div>
                 <p class="sd-note">3,3-V-Rail-Bypass schaltet die vorhandene Versorgung durch. Nur für eine dafür geeignete 3,3-V-Beschaltung verwenden, nicht für 1,8-V-Geräte. Die Einstellung betrifft die gesamte Versorgungsdomäne; Hinweise am Board beachten. Registerzustand, keine Spannungsmessung.</p>

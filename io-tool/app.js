@@ -818,7 +818,7 @@
         $('scan-progress').textContent = '';
         $('scan-state').textContent = 'BEREIT';
         $('scan-results').replaceChildren();
-        const p = document.createElement('p'); p.textContent = 'Noch kein Scan. Die bisherige Konfiguration wird nach jedem getesteten Pin wiederhergestellt.'; $('scan-results').append(p);
+        const p = document.createElement('p'); p.textContent = ''; $('scan-results').append(p);
     }
     function scanTargets() {
         const ids = $('scan-target').value === 'all' ? [...(controller?.pins.keys() || [])] : [selectedPin];
