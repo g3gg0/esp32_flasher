@@ -12,6 +12,7 @@
     <script src="../flasher.js" defer></script>
     <script src="configs/chips.js" defer></script>
     <script src="configs/boards.js" defer></script>
+    <script src="image-mask.js" defer></script>
     <script src="configs/adc.js" defer></script>
     <script src="adc.js" defer></script>
     <script src="scope.js" defer></script>
@@ -19,12 +20,16 @@
     <script src="sd.js" defer></script>
     <script src="configs/i2c.js" defer></script>
     <script src="i2c.js" defer></script>
+    <script src="i2c-registers.js" defer></script>
+    <script src="peripheral-ui.js" defer></script>
     <script src="i2c-ui.js" defer></script>
     <script src="configs/ldo4.js" defer></script>
     <script src="ldo4.js" defer></script>
     <script src="gpio.js" defer></script>
     <script src="../stub/protocol.js" defer></script>
+    <script src="../stub/targets.js" defer></script>
     <script src="accelerated.js" defer></script>
+    <script src="peripheral.js" defer></script>
     <script src="app.js" defer></script>
 </head>
 <body>
@@ -49,6 +54,7 @@
             <div class="section-heading"><div><span class="step">01</span><h2>Device auswählen</h2><span id="chip-badge" class="chip-badge">Vorschau</span></div><label class="preview-label">Vorschau-Chip <select id="preview-chip" aria-label="Vorschau-Chip"></select></label></div>
             <div class="board-cards" id="board-cards"></div>
             <div class="device-footer"><p id="board-description"></p><button id="demo" class="subtle">Ohne Hardware ausprobieren →</button></div>
+            <details id="board-diagram" class="board-diagram" hidden><summary>Vollständiges Pinout-Diagramm</summary><figure><img id="board-diagram-image" alt=""><figcaption id="board-diagram-credit"></figcaption></figure></details>
         </section>
         <div class="workspace">
             <section class="panel board-panel">
@@ -113,7 +119,7 @@
                         <div class="sd-actions"><button id="i2c-scan">Adressen scannen · 0x03–0x77</button><button id="i2c-cancel" hidden>Abbrechen</button><span id="i2c-progress" role="status" aria-live="polite"></span></div>
                         <div id="i2c-addresses" class="peripheral-buttons"></div>
                         <div class="sd-actions"><label>7-Bit-Adresse <input id="i2c-address" value="0x18" spellcheck="false"></label><label>Schreiben · Hex-Bytes <input id="i2c-write" placeholder="z. B. 00 A5 FF" spellcheck="false"></label><label>Lesen · Bytes <input id="i2c-read" type="number" min="0" max="32" value="1"></label><button id="i2c-transfer">Übertragen</button></div>
-                        <p class="sd-note">Schreiben + Lesen verwendet Repeated Start ohne STOP dazwischen. Reines Lesen: Schreibfeld leer lassen. Nur Schreiben: 0 Lesebytes. 0 Schreib-/Lesebytes prüft die Adresse. Maximal 31 Schreibbytes, bei kombiniertem Zugriff 30; maximal 32 Lesebytes.</p>
+                        <p id="i2c-limits" class="sd-note"></p>
                         <pre id="i2c-result" class="bus-log" aria-label="I²C-Transaktionsprotokoll">Noch keine Transaktionen.</pre>
                     </div>
                 </div>

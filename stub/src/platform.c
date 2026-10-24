@@ -52,7 +52,11 @@ void platform_init(void) {
 }
 
 int platform_rx(uint8_t *byte) { return esp_rom_output_rx_one_char(byte); }
-void platform_tx(uint8_t byte) { (void) esp_rom_output_tx_one_char(byte); }
+void platform_tx(uint8_t byte) {
+    /* Native USB OTG can report a full software FIFO. Its ROM routine polls
+       USB events; retry instead of silently dropping a binary protocol byte. */
+    while (esp_rom_output_tx_one_char(byte)) esp_rom_delay_us(1);
+}
 void platform_flush(void) { esp_rom_output_flush_tx(serial_port); }
 void platform_delay(uint32_t us) { esp_rom_delay_us(us); }
 uint32_t platform_ticks_per_us(void) { return esp_rom_get_cpu_ticks_per_us(); }

@@ -1,6 +1,7 @@
 (function (root) {
     'use strict';
     const protocol = typeof module === 'object' && module.exports ? require('../stub/protocol.js') : root.ESPIO.rpcProtocol;
+    const acceleratedTargets = typeof module === 'object' && module.exports ? require('../stub/targets.js') : root.ESPIO.acceleratedTargets;
     const decoder = new TextDecoder();
     const sizes = { u8: 1, u16: 2, u32: 4, char: 1 };
     function layout(name) {
@@ -18,7 +19,13 @@
             if (count) {
                 const array = type === 'char' ? Array.from(String(values[field] ?? ''), c => c.charCodeAt(0)) : (values[field] ?? []);
                 if (array.length > count) throw new Error(`${field} is too long`);
-                bytes.set(array, offset);
+                for (let i = 0; i < array.length; i++) {
+                    const value = array[i], max = sizes[type] === 4 ? 0xffffffff : 2 ** (8 * sizes[type]) - 1;
+                    if (!Number.isInteger(value) || value < 0 || value > max) throw new Error(`Invalid ${field}`);
+                    if (type === 'u32') view.setUint32(offset + i * 4, value, true);
+                    else if (type === 'u16') view.setUint16(offset + i * 2, value, true);
+                    else bytes[offset + i] = value;
+                }
             } else {
                 const max = sizes[type] === 4 ? 0xffffffff : 2 ** (8 * sizes[type]) - 1;
                 if (!Number.isInteger(value) || value < 0 || value > max) throw new Error(`Invalid ${field}`);
@@ -36,7 +43,7 @@
         const result = {};
         for (const [field, type, count] of packet.fields) {
             const offset = packet.offsets[field];
-            result[field] = count ? (type === 'char' ? decoder.decode(bytes.subarray(offset, offset + count)).replace(/\0.*$/s, '') : bytes.slice(offset, offset + count)) : type === 'u32' ? view.getUint32(offset, true) : type === 'u16' ? view.getUint16(offset, true) : bytes[offset];
+            result[field] = count ? (type === 'char' ? decoder.decode(bytes.subarray(offset, offset + count)).replace(/\0.*$/s, '') : type === 'u8' ? bytes.slice(offset, offset + count) : Array.from({ length: count }, (_, i) => type === 'u32' ? view.getUint32(offset + i * 4, true) : view.getUint16(offset + i * 2, true))) : type === 'u32' ? view.getUint32(offset, true) : type === 'u16' ? view.getUint16(offset, true) : bytes[offset];
         }
         if (packet.trailing) result.data = bytes.slice(packet.size);
         return result;
@@ -103,6 +110,16 @@
             return response.data;
         }
         supports(module) { return !!(this.identity?.capabilities & (1 << protocol.capabilities[module])); }
+        async peripheral(module, operation, port, args = [], data = new Uint8Array(), timeoutUs = 100000) {
+            const pair = protocol.modules[module];
+            if (!['I2C', 'SPI', 'PWM'].includes(module) || !this.supports(module)) throw new RPCError(protocol.status.UNSUPPORTED, module);
+            let result, failure;
+            try { result = await this.request('peripheral_command', { operation, port, timeout_us: timeoutUs, args }, 'peripheral_response', pair.command, pair.response, data); }
+            catch (error) { if (!error.response) throw error; result = error.response; failure = error; }
+            if (result.operation !== operation || result.port !== port || ((failure || operation !== protocol.operations.TRANSFER) && result.data.length)) { this.closed = true; throw new Error(`${module} RPC correlation mismatch. Reconnect.`); }
+            if (failure) { const detail = Object.keys(protocol.peripheralErrors).find(key => protocol.peripheralErrors[key] === result.error); if (detail) failure.message += ` · ${detail}`; throw failure; }
+            return result;
+        }
         async sdmmcRequest(operation, spec = null, argument = 0, timeoutUs = 1500000) {
             if (!this.supports('SDMMC')) throw new RPCError(protocol.status.UNSUPPORTED, 'SDMMC');
             const values = { operation, port: 1, timeout_us: timeoutUs };
@@ -121,18 +138,14 @@
         sdmmcCommand(spec, argument, timeoutUs) { return this.sdmmcRequest(protocol.operations.TRANSFER, spec, argument, timeoutUs); }
         close() { this.closed = true; }
     }
-    const acceleratedTargets = {
-        esp32c3: { textStart: 0x40380000, textBudget: 0x4000, dataStart: 0x3fc84000, dataBudget: 0x2000 },
-        esp32p4: { textStart: 0x4ff50000, textBudget: 0x4000, dataStart: 0x4ff60000, dataBudget: 0x2000 }
-    };
     async function prepareAccelerated(chip, fetcher = fetch) {
         const bounds = acceleratedTargets[chip];
-        if (!bounds) throw new Error(`${chip}: accelerated build environment prepared; browser loading starts with C3/P4.`);
+        if (!bounds) throw new Error(`${chip}: no accelerated stub target is defined.`);
         const response = await fetcher(`../stub/${chip}/stub.json`, { cache: 'no-store' });
         if (!response.ok) throw new Error(`Build stub/${chip} first (HTTP ${response.status}).`);
         const manifest = await response.json();
         if (manifest.format !== 'esp-io-ram-stub-v1' || manifest.chip !== chip || manifest.protocolMajor !== protocol.version.major || manifest.ramOnly !== true || manifest.requiresRom !== true || !Array.isArray(manifest.segments) || manifest.segments.length !== 2) throw new Error('Invalid RAM stub manifest.');
-        if (!manifest.ram || Object.entries(bounds).some(([key, value]) => manifest.ram[key] !== value) || !Number.isInteger(manifest.ram.dataUsed) || manifest.ram.dataUsed < 2048 || manifest.ram.dataUsed > bounds.dataBudget) throw new Error('Invalid RAM reservation.');
+        if (!manifest.ram || ['textStart', 'textBudget', 'dataStart', 'dataBudget', 'stackBytes'].some(key => manifest.ram[key] !== bounds[key]) || !Number.isInteger(manifest.ram.dataUsed) || manifest.ram.dataUsed < bounds.stackBytes || manifest.ram.dataUsed > bounds.dataBudget) throw new Error('Invalid RAM reservation.');
         let entryFound = false;
         for (const [index, segment] of manifest.segments.entries()) {
             const start = index ? bounds.dataStart : bounds.textStart, budget = index ? bounds.dataBudget : bounds.textBudget;

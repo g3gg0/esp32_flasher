@@ -8,8 +8,8 @@ const { SDHost, SDFileWriter, sdProfiles } = require('../sd.js');
 const { AcceleratedTransport, rpcEncode, rpcDecode } = require('../accelerated.js');
 const protocol = require('../../stub/protocol.js');
 
-async function fixture({ width = 1, legacy = false, clockHz = 400000 } = {}) {
-    const model = new DemoTransport(chips.esp32p4), p = sdProfiles.esp32p4, r = p.registers;
+async function fixture({ chipId = 'esp32p4', width = 1, legacy = false, clockHz = 400000 } = {}) {
+    const model = new DemoTransport(chips[chipId]), p = sdProfiles[chipId], r = p.registers;
     model.sdModel.legacy = legacy;
     const device = new ESPFlasher({ logMessage() {}, logWarning() {}, logError() {} });
     device.port = { writable: true };
@@ -66,8 +66,8 @@ async function fixture({ width = 1, legacy = false, clockHz = 400000 } = {}) {
         }
     };
     const transport = new AcceleratedTransport(device);
-    transport.identity = { chip: 'esp32p4', capabilities: 9, max_packet_length: 1024, protocol_major: 1, protocol_minor: 1 };
-    const controller = new GPIOController(transport, chips.esp32p4);
+    transport.identity = { chip: chipId, capabilities: 9, max_packet_length: 1024, protocol_major: 1, protocol_minor: 1 };
+    const controller = new GPIOController(transport, chips[chipId]);
     const pins = { d0: 4, d1: 5, d2: 6, d3: 14, cmd: 15, clk: 16 };
     await controller.initialize(Object.values(pins));
     const log = [], host = new SDHost(controller, { onCommand: entry => log.push(entry) });
@@ -75,11 +75,13 @@ async function fixture({ width = 1, legacy = false, clockHz = 400000 } = {}) {
     return { host, controller, model, traffic, log, transport };
 }
 
-test('P4 RPC identifies in 1/4-bit mode and dumps 2 MiB with one RPC per sector and bounded file writes', async () => {
+test('P4/S3 share RPC identification and exact 2-MiB dumps in 1/4-bit mode with bounded file writes', async () => {
+    for (const chipId of ['esp32p4', 'esp32s3']) {
     for (const width of [1, 4]) {
-        const { host, controller, traffic, log, model } = await fixture({ width, clockHz: 5000000 });
+        const clockHz = chipId === 'esp32p4' ? 5000000 : 400000;
+        const { host, controller, traffic, log, model } = await fixture({ chipId, width, clockHz });
         const card = await host.identify(); assert.equal(card.width, width); assert.equal(host.rpcSD, true);
-        assert.equal(card.clockHz, 5000000); assert.equal(model.registers.get(host.profile.registers.clockDivider) >>> 8 & 255, 8);
+        assert.equal(card.clockHz, clockHz); assert.equal(model.registers.get(host.profile.registers.clockDivider) >>> 8 & 255, chipId === 'esp32p4' ? 8 : 20);
         const files = [], writer = new SDFileWriter({ write: async data => files.push(data.slice()), close: async () => {} });
         traffic.length = 0;
         const result = await host.download({ start: 17, end: 17 + 4096 - 1, write: data => writer.write(data) });
@@ -93,6 +95,7 @@ test('P4 RPC identifies in 1/4-bit mode and dumps 2 MiB with one RPC per sector 
         assert.equal(traffic.length, 4096); assert.ok(traffic.every(item => item.tag === 'SDMC'));
         assert.ok(log.every(entry => entry.accelerated));
         await host.close(); assert.equal(controller.pinOwners.size, 0); await controller.close();
+    }
     }
 });
 

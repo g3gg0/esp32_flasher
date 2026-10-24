@@ -32,12 +32,24 @@ these images is asserted by this project.
 | `assets/c6-pinout.webp` | https://cdn.shopify.com/s/files/1/0903/0218/5736/files/ESP32C6SuperMiniPinout.webp?v=1749023636 | arduino-projekte.info |
 | `assets/p4-pinout.jpg` | https://www.waveshare.com/img/devkit/ESP32-P4-ETH/ESP32-P4-ETH-details-inter.jpg | Waveshare |
 | `assets/h2-supermini-pinout.png` | https://www.nznelectronics.co.nz/cdn/shop/files/ESP32-H2-SuperMini-Pinout.png?v=1785639285&width=1600 | NZN Electronics; mapping follows the supplier's corrected H2 SuperMini technical datasheet |
-| `assets/s3-supermini-pinout.png` | https://cdn.espboards.net/boards/esp32-s3-super-mini/pinout-682.png | espboards.dev |
+| `assets/esp32-s3-super-mini-pinout.png` | https://cdn.espboards.net/boards/esp32-s3-super-mini/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/heltec-wifi-kit-32-v3-pinout.png` | https://cdn.espboards.net/boards/heltec-wifi-kit-32-v3/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/heltec-wifi-lora-32-v2-pinout.png` | https://cdn.espboards.net/boards/heltec-wifi-lora-32-v2/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/lilygo-t-display-s3-pinout.png` | https://cdn.espboards.net/boards/lilygo-t-display-s3/pinout-1083.png | LilyGo, provided by ESPboards |
+| `assets/xiao-esp32c5-pinout.png` | https://cdn.espboards.net/boards/xiao-esp32c5/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/esp32h2-super-mini-pinout.png` | https://cdn.espboards.net/boards/esp32-h2-super-mini/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/esp32-h2-devkitm-1-pinout.png` | https://cdn.espboards.net/boards/esp32-h2-devkitm-1/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/xiao-esp32c6-pinout.png` | https://cdn.espboards.net/boards/xiao-esp32c6/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/esp32-c6-devkitm-1-pinout.png` | https://cdn.espboards.net/boards/esp32-c6-devkitm-1/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/esp32-c6-super-mini-pinout.png` | https://cdn.espboards.net/boards/esp32-c6-super-mini/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/esp32-c6-zero-mini-pinout.png` | https://cdn.espboards.net/boards/esp32-c6-zero-mini/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/esp32c3-pinout.png` | https://cdn.espboards.net/boards/xiao-esp32c3/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/esp32-c3-devkitm-1-pinout.png` | https://cdn.espboards.net/boards/esp32-c3-devkitm-1/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
 | `assets/ai-s3-pinout.jpg` | https://raw.githubusercontent.com/Xylopyrographer/BitsNThings/main/AI-S3%20ESP32-S3%20Dev%20Board/AI-S3%20ESP32-S3%20Dev%20Board%20Pinout.jpg | VCC-GND Studio; AI-S3 compatibility annotation by Xylopyrographer |
 
-The original images are unmodified. The UI displays only the board part using
-SVG viewport clipping. C6, H2 and S3 SuperMini additional pads are shown separately as a schematic
-list; their drawn positions do not claim to be physical pad coordinates.
+The original images are unmodified. The UI displays the board areas using SVG
+viewport clipping. Additional backside GPIO pads in the ESPboards diagrams are
+positioned from the source image coordinates.
 
 ## ESP32-S3 ROM reference
 

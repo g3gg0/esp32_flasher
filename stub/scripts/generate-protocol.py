@@ -14,7 +14,7 @@ def generate():
     for key, value in spec["version"].items():
         lines.append(f"#define RPC_PROTOCOL_{key.upper()} {value}u")
     lines += [f'#define RPC_MAX_PACKET_LENGTH {spec["maxPacketLength"]}u', f'#define RPC_MAX_REGISTER_DELAY_US {spec["maxRegisterDelayUs"]}u', f'#define RPC_BUILD_VERSION "{spec["buildVersion"]}"']
-    for group in ("status", "operations", "identityFlags", "registerOperations", "capabilities", "sdmmcResponseTypes", "sdmmcErrors"):
+    for group in ("status", "operations", "identityFlags", "registerOperations", "capabilities", "sdmmcResponseTypes", "sdmmcErrors", "peripheralErrors"):
         for name, value in spec[group].items():
             lines.append(f'#define RPC_{group.upper()}_{name} {value}u')
     layouts = {"header": {"fields": spec["header"]}, **spec["packets"]}
@@ -52,4 +52,5 @@ if __name__ == "__main__":
                 raise SystemExit(f"Stale generated protocol: {path}")
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, newline="\n")
+            if not path.exists() or path.read_text() != content:
+                path.write_text(content, newline="\n")

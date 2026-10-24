@@ -1,0 +1,22 @@
+#pragma once
+/* DW-MSHC register layout shared by the P4 and S3 SDMMC hosts.
+ * SD_REG_BASE comes from the target's ESP-IDF SoC headers (or test boundary). */
+#define SD_REG_CTRL       (SD_REG_BASE + 0x00)
+#define SD_REG_CLKENA     (SD_REG_BASE + 0x10)
+#define SD_REG_BLKSIZ     (SD_REG_BASE + 0x1c)
+#define SD_REG_BYTCNT     (SD_REG_BASE + 0x20)
+#define SD_REG_CMDARG     (SD_REG_BASE + 0x28)
+#define SD_REG_CMD        (SD_REG_BASE + 0x2c)
+#define SD_REG_RESP0      (SD_REG_BASE + 0x30)
+#define SD_REG_RESP1      (SD_REG_BASE + 0x34)
+#define SD_REG_RESP2      (SD_REG_BASE + 0x38)
+#define SD_REG_RESP3      (SD_REG_BASE + 0x3c)
+#define SD_REG_RINTSTS    (SD_REG_BASE + 0x44)
+#define SD_REG_STATUS     (SD_REG_BASE + 0x48)
+#define SD_REG_FIFOTH     (SD_REG_BASE + 0x4c)
+#define SD_REG_TBBCNT     (SD_REG_BASE + 0x60)
+#define SD_REG_BMOD       (SD_REG_BASE + 0x80)
+#define SD_REG_PLDMND     (SD_REG_BASE + 0x84)
+#define SD_REG_DBADDR     (SD_REG_BASE + 0x88)
+#define SD_REG_IDSTS      (SD_REG_BASE + 0x8c)
+#define SD_REG_IDINTEN    (SD_REG_BASE + 0x90)

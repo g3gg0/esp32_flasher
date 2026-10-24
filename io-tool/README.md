@@ -7,10 +7,11 @@ vorhandene Transport-/Stub-Implementierung; die neuen Registerprofile sind davon
 getrennt.
 
 Optional lädt **Load accelerated stub** nach dem Verbinden den neuen RAM-only-RPC-
-Stub für C3/P4. Builds, Protokoll-JSON, generierte C-/Browser-Definitionen und die
-vorbereiteten weiteren Targets stehen unter [../stub/](../stub/README.md).
+Stub für alle zehn Chipprofile: ESP32, S2, S3, C2, C3, C5, C6, C61, H2 und P4.
+Builds, Protokoll-JSON und die gemeinsam generierten C-/Browser-Definitionen
+stehen unter [../stub/](../stub/README.md).
 Der Wechsel gibt I/O frei und startet eine neue Sitzung über ROM; GPIO/ADC bleiben
-verfügbar. P4-SDMMC verwendet bei geladenem und entsprechend fähigem Stub
+verfügbar. P4-/S3-SDMMC verwendet bei geladenem und entsprechend fähigem Stub
 automatisch RPC: ein kompletter 512-Byte-Sektor pro Anfrage, inklusive lokaler
 DMA-/Timeout-/CRC-Prüfung. Die übrigen Peripherie-RPCs bleiben reserviert.
 
@@ -19,7 +20,7 @@ Start-/Endsektor, `0–max` oder einen **MiB-Umfang ab Start** wählen. P4 biete
 400 kHz / 1 / 5 / 20 MHz Lesetakt; identifiziert wird immer mit 400 kHz.
 Die direkte Dateiausgabe arbeitet mit begrenzten 64-KiB-Blöcken, Fortschritt,
 ETA und Abbruch; große Abbilder liegen nicht vollständig im Browser-RAM.
-Ohne File System Access API bleibt die 64-MiB-Puffergrenze. Physische P4-/SD-
+Ohne File System Access API bleibt die 64-MiB-Puffergrenze. Physische P4-/S3-/SD-
 Validierung steht für den neuen RPC-DMA-Pfad noch aus.
 
 ## Starten
@@ -236,7 +237,7 @@ Demo-Ergebnisse bleiben auch nach dem Beenden der Demo als Simulation markiert.
 
 ## SD-Port: zuerst ESP32-P4
 
-Mit geladenem P4-SDMMC-RPC-Stub erfolgen Kommandos und Sektor-DMA lokal im Chip.
+Mit geladenem P4-/S3-SDMMC-RPC-Stub erfolgen Kommandos und Sektor-DMA lokal im Chip.
 Die folgenden Register-/DMA-Details beschreiben den weiterhin verfügbaren
 Legacy-Backend; der neue RPC-Pfad ist oben und unter [stub/](../stub/README.md)
 beschrieben. Pinzuordnung, Identifikation und Downloadoberfläche werden geteilt.
@@ -431,9 +432,8 @@ wird der gewünschte Pegel vor dem Aktivieren des Treibers vorgeladen.
 IO-MUX-/Matrix-Änderungen verwenden maskierte `WRITE_REG`-Befehle;
 Output/Output-Enable verwenden die atomaren W1TS-/W1TC-Register.
 
-I²C, SPI, RMT, PWM/LEDC, UART und I²S sind je nach Chip bereits auswählbar,
-aber ausdrücklich **noch ohne Steuerung**. Ihre Auswahl verändert keine
-Hardwarekonfiguration. Die bisherige GPIO-Konfiguration bleibt aktiv.
+I²C, SPI und PWM/LEDC verwenden den beschleunigten RAM-Stub. Legacy-I²C bleibt
+auf P4 verfügbar. RMT, UART und I²S bleiben Erweiterungen ohne aktive Steuerung.
 Der Registerkatalog bietet außerdem die übrigen im Profil aufgeführten Blöcke.
 ADC, SD und Usage-Scan nutzen denselben serialisierten Ablauf.
 
@@ -499,3 +499,33 @@ Diese Prüfungen ersetzen **keine Validierung am realen C3, C6, P4, S3 oder H2**
 - [Espressif S3-ROM: Analog-I²C-Master und Kommandowort](https://github.com/espressif/esp-rom-elfs/releases/tag/20241011)
 
 Siehe auch `THIRD_PARTY.md`. Bildnachweise sind direkt im Tool verlinkt.
+
+
+### Accelerated I2C, SPI and PWM/LEDC
+
+Load the accelerated RAM stub after connecting. All ten chip profiles share
+I2C master transactions, SPI full duplex and low-speed LEDC. The browser uses
+RPC automatically when the matching capability is present; legacy P4 I2C
+remains available before loading the accelerated stub. SPI and LEDC require
+it. Pins are leased, excluded from GPIO/ADC polling and restored on release,
+board changes and disconnect. Hardware timing/electrical operation still needs
+real-board testing; automated browser checks use a simulated serial peer.
+
+I2C supports 100/400 kHz, 7-bit addresses, scanning and combined write/read
+with repeated START. C2 has a 16-byte FIFO; others have 32. Address bytes count
+against the TX limit. SPI offers mode 0-3, MSB/LSB first, configurable clock up
+to 20 MHz, and 1-64 bytes in one CS0 transaction. It does not split a transfer
+or use the flash controller. LEDC exposes channel, timer, frequency, resolution
+and duty in permille, plus live duty updates. Incompatible shared timer
+settings are rejected.
+
+The I2C **Register-Scan** uses the device address above the table. Set the
+register address width (1-64 bits), BE/LE byte order, inclusive start/end range
+and read length. The address is encoded into ceil(bits/8) bytes with zero
+unused upper bits; each row performs a combined register-address write and
+read, then shows register, exact TX and RX bytes. For example, register 0x123
+with 16 bits sends `01 23` in BE or `23 01` in LE. Reads are 1-32 bytes (C2:
+1-16), scans at most 4096 rows. Cancel stops before the next transaction;
+a bus error is shown in its row and stops the scan. Register reads can have
+device-specific side effects. The same feature uses the legacy I2C backend
+when that backend is active.

@@ -4,13 +4,13 @@
   "name": "esp-io-rpc",
   "version": {
     "major": 1,
-    "minor": 1
+    "minor": 2
   },
   "byteOrder": "little",
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.2.0",
+  "buildVersion": "0.4.0",
   "header": [
     [
       "magic",
@@ -33,7 +33,8 @@
   "operations": {
     "CONFIGURE": 1,
     "TRANSFER": 2,
-    "RELEASE": 3
+    "RELEASE": 3,
+    "INFO": 4
   },
   "identityFlags": {
     "MAC_VALID": 1,
@@ -384,6 +385,74 @@
         "response3": 60
       },
       "size": 64
+    },
+    "peripheral_command": {
+      "fields": [
+        [
+          "operation",
+          "u16"
+        ],
+        [
+          "port",
+          "u16"
+        ],
+        [
+          "timeout_us",
+          "u32"
+        ],
+        [
+          "args",
+          "u32",
+          8
+        ]
+      ],
+      "trailing": "I2C TX bytes or one full-duplex SPI TX block, bounded by INFO limits.",
+      "offsets": {
+        "operation": 8,
+        "port": 10,
+        "timeout_us": 12,
+        "args": 16
+      },
+      "size": 48
+    },
+    "peripheral_response": {
+      "fields": [
+        [
+          "status",
+          "u32"
+        ],
+        [
+          "operation",
+          "u16"
+        ],
+        [
+          "port",
+          "u16"
+        ],
+        [
+          "error",
+          "u32"
+        ],
+        [
+          "actual_hz",
+          "u32"
+        ],
+        [
+          "values",
+          "u32",
+          8
+        ]
+      ],
+      "trailing": "Successful I2C/SPI RX bytes; no bytes on failure. Tag matches module response.",
+      "offsets": {
+        "status": 8,
+        "operation": 12,
+        "port": 14,
+        "error": 16,
+        "actual_hz": 20,
+        "values": 24
+      },
+      "size": 56
     }
   },
   "registerOperations": {
@@ -452,6 +521,16 @@
       "command": "I2SC",
       "response": "I2SR"
     }
+  },
+  "peripheralErrors": {
+    "NONE": 0,
+    "NACK": 1,
+    "TIMEOUT": 2,
+    "ARBITRATION": 3,
+    "SHORT_DATA": 4,
+    "NOT_CONFIGURED": 5,
+    "TIMER_CONFLICT": 6,
+    "BUS": 7
   }
 };
     if (typeof module === "object" && module.exports) module.exports = protocol;

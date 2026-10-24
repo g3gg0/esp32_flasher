@@ -2,6 +2,7 @@
 #include "protocol.h"
 #include "platform.h"
 #include "sdmmc.h"
+#include "peripheral.h"
 
 extern uint8_t _bss_start[], _bss_end[];
 static uint8_t rx_buffer[RPC_MAX_PACKET_LENGTH] __attribute__((aligned(4)));
@@ -9,9 +10,15 @@ static uint32_t rx_size;
 static int rx_started, rx_escaped, rx_malformed;
 
 /* Freestanding aggregate initialization can emit memset even with -fno-builtin. */
+int abs(int value) { return value < 0 ? -value : value; }
 void *memset(void *dest, int value, size_t size) {
     uint8_t *p = dest;
     for (size_t i = 0; i < size; ++i) p[i] = (uint8_t)value;
+    return dest;
+}
+void *memcpy(void *dest, const void *source, size_t size) {
+    uint8_t *d = dest; const uint8_t *s = source;
+    for (size_t i = 0; i < size; ++i) d[i] = s[i];
     return dest;
 }
 
@@ -57,7 +64,7 @@ static void dispatch(uint32_t size, int malformed) {
         set_header(&id.header, RPC_MAGIC_IDENTITY, sizeof(id));
         id.protocol_major = RPC_PROTOCOL_MAJOR; id.protocol_minor = RPC_PROTOCOL_MINOR;
         id.max_packet_length = RPC_MAX_PACKET_LENGTH;
-        id.capabilities = (1u << RPC_CAPABILITIES_REGISTERS) | rpc_sdmmc_capabilities();
+        id.capabilities = (1u << RPC_CAPABILITIES_REGISTERS) | rpc_sdmmc_capabilities() | rpc_peripheral_capabilities();
         platform_identity(&id); rpc_send(&id, sizeof(id)); return;
     }
     if (magic_is(header, RPC_MAGIC_REGISTER_COMMAND)) {
@@ -77,6 +84,7 @@ static void dispatch(uint32_t size, int malformed) {
         rpc_send(&response, sizeof(response)); return;
     }
     if (magic_is(header, "SDMC") && rpc_sdmmc_handle(header, size)) return;
+    if (rpc_peripheral_handle(header, size)) return;
 #define MODULE_CASE(name, command, reply) \
     if (magic_is(header, command)) { \
         if (size < sizeof(rpc_module_command_t)) { error(header, RPC_STATUS_BAD_LENGTH); return; } \

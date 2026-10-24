@@ -8,5 +8,9 @@
   "dataBudget": 8192,
   "stack": 2048,
   "registerStart": "0x60000000",
-  "registerEnd": "0x60100000"
+  "registerEnd": "0x60100000",
+  "transports": [
+    "uart"
+  ],
+  "sdmmc": false
 }

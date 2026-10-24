@@ -1,7 +1,8 @@
 // Start the repo HTTP server on 8088 and a headless Edge with CDP on 9235.
 // Exercises the actual UI with a simulated serial peer; never accesses hardware.
 import assert from 'node:assert/strict';
-const chip = process.argv.includes('--p4-sd') ? 'esp32p4' : 'esp32c3';
+const chip = process.argv.find(arg => arg.startsWith('--chip='))?.slice(7) || (process.argv.includes('--p4-sd') ? 'esp32p4' : 'esp32c3');
+const sd = ['esp32p4', 'esp32s3'].includes(chip);
 const pages = await (await fetch('http://127.0.0.1:9235/json/list')).json();
 const page = pages.find(item => item.type === 'page' && item.url.includes('/io-tool/'));
 assert.ok(page, 'Open /io-tool/ in the QA browser.');
@@ -34,6 +35,7 @@ async function wait(expression) {
 const $ = id => `document.getElementById('${id}')`;
 try {
     await call('Runtime.enable'); await call('Page.enable');
+    errors.length = 0; // Runtime.enable can replay exceptions from the previous page.
     await call('Network.enable'); await call('Network.setCacheDisabled', { cacheDisabled: true });
     await call('Page.navigate', { url: 'http://127.0.0.1:8088/io-tool/' });
     await wait(`typeof ESPIO !== 'undefined' && !!ESPIO.startAccelerated && ${$('connect')} && document.querySelectorAll('[data-pin]').length`);
@@ -63,7 +65,15 @@ try {
                         response.set([1, packet[1], size, 0]); new DataView(response.buffer).setUint32(4, value, true);
                         await this.processPacket(response);
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SYNC') {
-                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:1, max_packet_length:1024, capabilities:window.peerChip === 'esp32p4' ? 9 : 1, chip:window.peerChip, cpu:'riscv32', cpu_cores:1, build:'0.2.0', idf:'6.1' }));
+                        const target = ESPIO.acceleratedTargets[window.peerChip];
+                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:2, max_packet_length:1024, capabilities:target.sdmmc ? 47 : 39, chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
+                    } else if (['I2CC','SPIC','PWMC'].includes(new TextDecoder().decode(packet.slice(0,4)))) {
+                        const tag=new TextDecoder().decode(packet.slice(0,4)),q=ESPIO.rpcDecode(packet,'peripheral_command',tag),v=new Array(8).fill(0);
+                        let data=new Uint8Array();
+                        if(q.operation===4){if(tag==='I2CC'){v.splice(0,8,20,20,21,21,0x60000000,32,2,0);}else if(tag==='SPIC'){v.splice(0,8,22,23,24,25,0x60000000,2,64,0);}else{v.splice(0,8,26,8,4,19,0x3ffff,0,0,0);}}
+                        if(q.operation===2&&tag==='I2CC')data=Uint8Array.from({length:q.args[2]},(_,i)=>(q.data[0]||0)+i);
+                        if(q.operation===2&&tag==='SPIC')data=Uint8Array.from(q.data,b=>b^255);
+                        await this.processPacket(ESPIO.rpcEncode('peripheral_response',{operation:q.operation,port:q.port,actual_hz:q.args[0]||1000000,values:v},tag.slice(0,3)+'R',data));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SDMC') {
                         await this.processPacket(await this.sdReply(packet));
                     } else {
@@ -78,7 +88,7 @@ try {
                 const base = ESPIO.rpcDecode(packet, 'module_command', 'SDMC'), result = { operation:base.operation, port:base.port };
                 let data = new Uint8Array();
                 if (base.operation === 2) {
-                    const cmd = ESPIO.rpcDecode(packet, 'sdmmc_command'), p = ESPIO.sdProfiles.esp32p4, r = p.registers;
+                    const cmd = ESPIO.rpcDecode(packet, 'sdmmc_command'), p = ESPIO.sdProfiles[window.peerChip], r = p.registers;
                     Object.assign(result, { command:cmd.command, response_type:cmd.response_type, argument:cmd.argument });
                     let flags = p.flags.start | p.flags.hold | 1<<16 | cmd.command;
                     flags |= cmd.command === 0 ? p.flags.initialClocks : p.flags.waitData;
@@ -113,24 +123,39 @@ try {
     assert.equal(await evaluate(`${$('disconnect')}.hidden`), false, 'failed fetch preserves the legacy session');
     await evaluate(`window.failStubFetch=false;${$('load-accelerated')}.click()`);
     await wait(`${$('load-accelerated')}.textContent === 'Accelerated stub active' && ${$('status')}.textContent.includes('SYNC verified')`);
-    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.1'));
+    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.2'));
     assert.equal(await evaluate(`${$('load-accelerated')}.disabled`), true);
-    if (chip === 'esp32p4') {
-        await evaluate(`document.querySelector('.board-card:last-child').click()`);
-        await wait(`!${$('disconnect')}.disabled`);
-    }
-    await evaluate(`document.querySelector('[data-pin="${chip === 'esp32p4' ? 4 : 0}"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));${$('pin-function')}.value='output';${$('pin-function')}.dispatchEvent(new Event('change'));`);
+    await evaluate(`document.querySelector('.board-card:last-child').click()`);
+    await wait(`!${$('disconnect')}.disabled`);
+    await evaluate(`const pin = ESPIO.chips[window.peerChip].pins.find(p=>p.id===4&&!p.reserved&&p.output)||ESPIO.chips[window.peerChip].pins.find(p=>!p.reserved&&p.output);document.querySelector('[data-pin="'+pin.id+'"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));${$('pin-function')}.value='output';${$('pin-function')}.dispatchEvent(new Event('change'));`);
     await wait(`${$('pin-state')}.textContent === 'OUTPUT' && !${$('set-high')}.disabled`);
     await evaluate(`${$('set-high')}.click()`);
     await wait(`${$('drive-level')}.textContent === '1 / HIGH'`);
     await wait(`!${$('disconnect')}.disabled`);
-    if (chip === 'esp32p4') {
-        await evaluate(`document.querySelector('[data-peripheral="sd"]').click();for(const [role,pin] of Object.entries({d0:4,cmd:15,clk:16})){const s=document.getElementById('sd-'+role);s.value=String(pin);s.dispatchEvent(new Event('change'));}${$('sd-clock')}.value='5000000';${$('sd-clock')}.dispatchEvent(new Event('change'));`);
+    // Shared UI and GPIO leasing on every target, through the actual RPC codec/SLIP path.
+    await evaluate(`window.busPins=ESPIO.chips[window.peerChip].pins.filter(p=>!p.reserved&&p.output).slice(0,4).map(p=>p.id);`);
+    await evaluate(`document.querySelector('[data-peripheral="i2c"]').click();for(const [i,role] of ['sda','scl'].entries()){const s=document.getElementById('i2c-'+role);s.value=String(busPins[i]);s.dispatchEvent(new Event('change'));}document.getElementById('i2c-apply').click();`);
+    await wait(`${$('i2c-state')}.textContent.startsWith('AKTIV') && !${$('i2c-release')}.disabled`);
+    await evaluate(`${$('i2c-register-bits')}.value='16';${$('i2c-register-start')}.value='0x123';${$('i2c-register-end')}.value='0x125';${$('i2c-register-endian')}.value='LE';${$('i2c-register-read')}.value='2';${$('i2c-register-scan')}.click();`);
+    await wait(`${$('i2c-progress')}.textContent.includes('fertig')`);
+    assert.equal(await evaluate(`${$('i2c-register-body')}.children.length`),3);
+    assert.ok((await evaluate(`${$('i2c-register-body')}.textContent`)).includes('23 01'));
+    await evaluate(`${$('i2c-release')}.click()`);await wait(`${$('i2c-release')}.hidden`);
+    await evaluate(`document.querySelector('[data-peripheral="spi"]').click();for(const [i,role] of ['clk','mosi','miso','cs'].entries()){const s=document.getElementById('spi-'+role);s.value=String(busPins[i]);s.dispatchEvent(new Event('change'));}${$('spi-apply')}.click();`);
+    await wait(`!${$('spi-transfer')}.disabled`);await evaluate(`${$('spi-transfer')}.click()`);await wait(`${$('spi-result')}.textContent.startsWith('RX ')`);
+    assert.equal(await evaluate(`${$('spi-result')}.textContent`),'RX 60 FF FF FF');
+    await evaluate(`${$('spi-release')}.click()`);await wait(`${$('spi-release')}.hidden`);
+    await evaluate(`document.querySelector('[data-peripheral="pwm"]').click();${$('pwm-pin')}.value=String(busPins[0]);${$('pwm-pin')}.dispatchEvent(new Event('change'));${$('pwm-apply')}.click();`);
+    await wait(`!${$('pwm-update')}.disabled`);await evaluate(`${$('pwm-duty')}.value='750';${$('pwm-update')}.click()`);await wait(`${$('pwm-result')}.textContent.includes('750')`);
+    await evaluate(`${$('pwm-release')}.click()`);await wait(`${$('pwm-release')}.hidden`);
+    console.log(`PASS: ${chip} I2C register table, SPI full duplex, LEDC duty, pin release through simulated RPC.`);
+    if (sd) {
+        await evaluate(`document.querySelector('[data-peripheral="sd"]').click();for(const [role,pin] of Object.entries({d0:4,cmd:15,clk:16})){const s=document.getElementById('sd-'+role);s.value=String(pin);s.dispatchEvent(new Event('change'));}${chip === 'esp32p4' ? `${$('sd-clock')}.value='5000000';${$('sd-clock')}.dispatchEvent(new Event('change'));` : ''}`);
         assert.equal(await evaluate(`${$('sd-identify')}.disabled`), false);
         assert.ok((await evaluate(`${$('sd-backend')}.textContent`)).includes('Accelerated RPC'));
         await evaluate(`${$('sd-identify')}.click()`);
         await wait(`!${$('sd-card')}.hidden && !${$('sd-download')}.disabled`);
-        assert.ok((await evaluate(`${$('sd-card')}.textContent`)).includes('5000 kHz'));
+        assert.ok((await evaluate(`${$('sd-card')}.textContent`)).includes(chip === 'esp32p4' ? '5000 kHz' : '400 kHz'));
         await evaluate(`window.dumpChunks=[];window.dumpClosed=false;window.showSaveFilePicker=async()=>({createWritable:async()=>({write:async bytes=>dumpChunks.push(bytes.slice()),close:async()=>{window.dumpClosed=true;},truncate:async()=>{}})});${$('sd-download-start')}.value='20';${$('sd-download-mib')}.value='1';${$('sd-download-size')}.click();`);
         assert.equal(await evaluate(`${$('sd-download-end')}.value`), '2067');
         await evaluate(`${$('sd-download')}.click()`);
@@ -138,10 +163,10 @@ try {
         assert.equal(await evaluate(`window.dumpChunks.length`), 16);
         assert.equal(await evaluate(`window.serialPeer.sectorReads`), 2048);
         assert.equal(await evaluate(`window.dumpChunks.every((chunk,ci)=>chunk.length===65536 && chunk.every((byte,bi)=>byte===((20+ci*128+Math.floor(bi/512))*17+bi%512 & 255)))`), true);
-        console.log('PASS: P4 SD UI selects RPC, identifies card, switches to 5 MHz, sets a 1-MiB range, downloads exact sectors to 64-KiB file batches.');
+        console.log(`PASS: ${chip} SD UI uses shared RPC, identifies card, sets a 1-MiB range and downloads exact sectors to 64-KiB file batches.`);
     }
     await evaluate(`${$('disconnect')}.click()`);
     await wait(`${$('load-accelerated')}.hidden && ${$('session-badge')}.textContent === 'OFFLINE'`);
     assert.deepEqual(errors, []);
-    console.log('PASS: legacy connect, missing-build recovery, RAM upload/SYNC, identity display, GPIO via RPC, disconnect; simulated serial peer.');
+    console.log(`PASS: ${chip} legacy connect, missing-build recovery, RAM upload/SYNC, identity display, GPIO via RPC and disconnect; simulated serial peer.`);
 } finally { ws.close(); }

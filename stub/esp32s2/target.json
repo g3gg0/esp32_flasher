@@ -1,12 +1,17 @@
 {
   "cpu": "xtensa",
   "cores": 1,
-  "compiler": "xtensa-esp-elf-",
+  "compiler": "xtensa-esp32s2-elf-",
   "text": "0x40028000",
   "data": "0x3ffd0000",
   "textBudget": 16384,
   "dataBudget": 8192,
   "stack": 2048,
   "registerStart": "0x3f400000",
-  "registerEnd": "0x40000000"
+  "registerEnd": "0x3f500000",
+  "transports": [
+    "uart",
+    "usb-otg"
+  ],
+  "sdmmc": false
 }

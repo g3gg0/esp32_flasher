@@ -8,5 +8,12 @@
   "dataBudget": 8192,
   "stack": 2048,
   "registerStart": "0x50000000",
-  "registerEnd": "0x50200000"
+  "registerEnd": "0x50200000",
+  "transports": [
+    "uart",
+    "usb-serial-jtag",
+    "usb-otg"
+  ],
+  "sdmmc": true,
+  "dmaUncachedOffset": "0x40000000"
 }

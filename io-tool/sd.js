@@ -111,7 +111,7 @@
             this.timeoutMs = timeoutMs; this.saved = new Map(); this.pinStates = new Map();
             this.config = null; this.ready = false; this.card = null; this.rca = 0; this.width = 1;
             this.needsReset = false; this.padsTouched = false;
-            this.rpcSD = controller.chip.id === 'esp32p4' && !!this.transport.supports?.('SDMMC');
+            this.rpcSD = !!this.transport.supports?.('SDMMC');
             this.rpcReady = false;
             this.clockHz = this.profile?.clockHz;
         }

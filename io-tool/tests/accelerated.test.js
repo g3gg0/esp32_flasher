@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const ESPFlasher = require('../../flasher.js');
 const protocol = require('../../stub/protocol.js');
-const { AcceleratedTransport, RPCError, prepareAccelerated, startAccelerated, rpcEncode, rpcDecode } = require('../accelerated.js');
+const { AcceleratedTransport, RPCError, acceleratedTargets, prepareAccelerated, startAccelerated, rpcEncode, rpcDecode } = require('../accelerated.js');
 
 function identity(chip = 'esp32c3', extra = {}) {
     return rpcEncode('identity', { protocol_major: 1, protocol_minor: 0, max_packet_length: 1024, capabilities: 1, chip, cpu: 'riscv32', cpu_cores: 1, build: '0.1.0', idf: '6.1', ...extra });
@@ -79,8 +79,9 @@ test('a timeout closes RPC and prevents a late reply from being reused', async (
     assert.equal(sent.length, 1);
 });
 
-test('validates shipped C3/P4 payloads, hashes, RAM boundaries and entry before reset', async () => {
-    for (const chip of ['esp32c3', 'esp32p4']) {
+test('every chip profile has a generated target and a validated RAM-only build', async () => {
+    assert.deepEqual(Object.keys(acceleratedTargets).sort(), Object.keys(require('../configs/chips.js')).sort());
+    for (const chip of Object.keys(acceleratedTargets)) {
         const value = await prepareAccelerated(chip, fetchManifest(manifest(chip)));
         assert.equal(value.ramOnly, true);
     }
@@ -88,19 +89,22 @@ test('validates shipped C3/P4 payloads, hashes, RAM boundaries and entry before 
         const value = manifest('esp32c3'); mutate(value);
         await assert.rejects(prepareAccelerated('esp32c3', fetchManifest(value)));
     }
-    await assert.rejects(prepareAccelerated('esp32s3', () => { throw new Error('must not fetch'); }), /prepared/);
+    await assert.rejects(prepareAccelerated('esp32c99', () => { throw new Error('must not fetch'); }), /no accelerated/);
 });
 
-test('ROM handoff uploads both RAM segments, checks every ACK, starts entry and verifies SYNC', async () => {
-    const { device, sent } = fixture(packet => packet[0] === 0 ? Uint8Array.of(1, packet[1], 4, 0, 0, 0, 0, 0, 0, 0, 0, 0) : identity());
+test('each target shares the ROM handoff, segment checks, entry launch and identity handshake', async () => {
+    for (const chip of Object.keys(acceleratedTargets)) {
+    const { device, sent } = fixture(packet => packet[0] === 0 ? Uint8Array.of(1, packet[1], 4, 0, 0, 0, 0, 0, 0, 0, 0, 0) : identity(chip, { cpu: acceleratedTargets[chip].cpu }));
     let reset = false;
     device.hardReset = async boot => { assert.equal(boot, true); reset = true; };
-    device.sync = async () => { assert.ok(reset); device.current_chip = 'esp32c3'; device.stubLoaded = false; };
-    const transport = await startAccelerated(device, manifest('esp32c3'));
-    assert.equal(transport.identity.chip, 'esp32c3');
-    assert.deepEqual(sent.map(p => p[0] === 0 ? p[1] : Buffer.from(p.slice(0, 4)).toString()), [5, 7, 5, 7, 6, 'SYNC']);
+    device.sync = async () => { assert.ok(reset); device.current_chip = chip; device.stubLoaded = false; };
+    const transport = await startAccelerated(device, manifest(chip));
+    assert.equal(transport.identity.chip, chip);
+    const upload = manifest(chip).segments.flatMap(segment => [5, ...Array(Math.ceil(segment.length / 0x1800)).fill(7)]);
+    assert.deepEqual(sent.map(p => p[0] === 0 ? p[1] : Buffer.from(p.slice(0, 4)).toString()), [...upload, 6, 'SYNC']);
     const entries = sent.filter(p => p[1] === 5);
-    assert.deepEqual(entries.map(p => new DataView(p.buffer, p.byteOffset).getUint32(20, true)), manifest('esp32c3').segments.map(s => s.address));
+    assert.deepEqual(entries.map(p => new DataView(p.buffer, p.byteOffset).getUint32(20, true)), manifest(chip).segments.map(s => s.address));
+    }
 });
 
 test('ROM error stops upload before execution', async () => {

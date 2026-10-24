@@ -1,24 +1,13 @@
-/* Read-only, polling SDMMC transactions. Register/descriptor layout follows
- * ESP-IDF 6.1's P4 sdmmc_reg.h and sdmmc_ll.h; no RTOS/heap/flash dependencies. */
+/* Shared read-only DW-MSHC transactions for P4/S3. The port adapter supplies
+ * target registers, DMA addressing and barriers; no RTOS/heap/flash dependency. */
 #include "sdmmc.h"
 #include "platform.h"
 #if __has_include("sdkconfig.h")
 #include "sdkconfig.h"
 #endif
 
-#if defined(CONFIG_IDF_TARGET_ESP32P4) || defined(RPC_SDMMC_TEST)
-#ifdef RPC_SDMMC_TEST
-#include "sdmmc-mock.h"
-#else
-#include "soc/soc.h"
-#include "soc/sdmmc_reg.h"
-#include "soc/ext_mem_defs.h"
-#define SD_READ(address) REG_READ(address)
-#define SD_WRITE(address, value) REG_WRITE(address, value)
-#define SD_DMA_ADDRESS(ptr) ((uint32_t)(uintptr_t)(ptr))
-#define SD_UNCACHED(ptr) ((void *)((uintptr_t)(ptr) + SOC_NON_CACHEABLE_OFFSET))
-#define SD_BARRIER() __asm__ volatile("fence iorw, iorw" ::: "memory")
-#endif
+#if (defined(STUB_HAS_SDMMC) && STUB_HAS_SDMMC) || defined(RPC_SDMMC_TEST)
+#include "sdmmc_port.h"
 
 #define CMD_START (1u << 31)
 #define DMA_ENABLE ((1u << 5) | (1u << 25))
@@ -27,8 +16,8 @@
 #define DMA_ERRORS ((1u << 2) | (1u << 4) | (1u << 5))
 #define R1_ERRORS 0xfff9a008u
 
-/* Never access these objects through the cached 0x4ff... alias. They have a
- * separate NOLOAD section, excluded from startup's cached BSS zeroing. */
+/* A separate NOLOAD section excludes DMA storage from BSS zeroing. The port
+ * selects P4's uncached alias or S3's directly accessible internal SRAM. */
 static struct {
     rpc_sdmmc_response_t reply;
     uint8_t data[512];
@@ -49,10 +38,10 @@ static int wait_clear(uint32_t reg, uint32_t bits, deadline_t d) {
     return 0;
 }
 static int stop_dma(deadline_t d) {
-    SD_WRITE(SDHOST_CTRL_REG, SD_READ(SDHOST_CTRL_REG) & ~DMA_ENABLE);
-    SD_WRITE(SDHOST_BMOD_REG, 0);
-    SD_WRITE(SDHOST_CTRL_REG, SD_READ(SDHOST_CTRL_REG) | 6);
-    return wait_clear(SDHOST_CTRL_REG, 6, d);
+    SD_WRITE(SD_REG_CTRL, SD_READ(SD_REG_CTRL) & ~DMA_ENABLE);
+    SD_WRITE(SD_REG_BMOD, 0);
+    SD_WRITE(SD_REG_CTRL, SD_READ(SD_REG_CTRL) | 6);
+    return wait_clear(SD_REG_CTRL, 6, d);
 }
 static uint32_t fail(rpc_sdmmc_response_t *out, uint32_t status, uint32_t sd_error) {
     out->status = status; out->sd_error = sd_error;
@@ -82,32 +71,32 @@ static int valid_command(const rpc_sdmmc_command_t *cmd) {
 }
 static int prepare_dma(deadline_t d) {
     if (!stop_dma(d)) return 0;
-    SD_WRITE(SDHOST_BMOD_REG, 1);
-    if (!wait_clear(SDHOST_BMOD_REG, 1, d)) return 0;
+    SD_WRITE(SD_REG_BMOD, 1);
+    if (!wait_clear(SD_REG_BMOD, 1, d)) return 0;
     volatile uint32_t *desc = SD_UNCACHED(dma_descriptor);
     desc[1] = 512;
     desc[2] = SD_DMA_ADDRESS(dma_packet.data);
     desc[3] = 0;
     desc[0] = DMA_OWN | 0x1e; /* chained, first, last, disable interrupt */
     SD_BARRIER();
-    SD_WRITE(SDHOST_BLKSIZ_REG, 512);
-    SD_WRITE(SDHOST_BYTCNT_REG, 512);
-    SD_WRITE(SDHOST_FIFOTH_REG, 1); /* single DMA word per request */
-    SD_WRITE(SDHOST_IDSTS_REG, 0x3ff);
-    SD_WRITE(SDHOST_IDINTEN_REG, 0);
-    SD_WRITE(SDHOST_DBADDR_REG, SD_DMA_ADDRESS(dma_descriptor));
-    SD_WRITE(SDHOST_BMOD_REG, 0x82);
-    SD_WRITE(SDHOST_CTRL_REG, SD_READ(SDHOST_CTRL_REG) | DMA_ENABLE);
-    SD_WRITE(SDHOST_PLDMND_REG, 1);
+    SD_WRITE(SD_REG_BLKSIZ, 512);
+    SD_WRITE(SD_REG_BYTCNT, 512);
+    SD_WRITE(SD_REG_FIFOTH, 1); /* single DMA word per request */
+    SD_WRITE(SD_REG_IDSTS, 0x3ff);
+    SD_WRITE(SD_REG_IDINTEN, 0);
+    SD_WRITE(SD_REG_DBADDR, SD_DMA_ADDRESS(dma_descriptor));
+    SD_WRITE(SD_REG_BMOD, 0x82);
+    SD_WRITE(SD_REG_CTRL, SD_READ(SD_REG_CTRL) | DMA_ENABLE);
+    SD_WRITE(SD_REG_PLDMND, 1);
     return 1;
 }
 static void capture_dma(rpc_sdmmc_response_t *out) {
     SD_BARRIER();
     volatile uint32_t *desc = SD_UNCACHED(dma_descriptor);
     out->descriptor = desc[0];
-    out->transferred = SD_READ(SDHOST_TBBCNT_REG);
-    out->dma_status = SD_READ(SDHOST_IDSTS_REG);
-    out->data_events = SD_READ(SDHOST_RINTSTS_REG);
+    out->transferred = SD_READ(SD_REG_TBBCNT);
+    out->dma_status = SD_READ(SD_REG_IDSTS);
+    out->data_events = SD_READ(SD_REG_RINTSTS);
 }
 static uint32_t transaction(const rpc_sdmmc_command_t *cmd, rpc_sdmmc_response_t *out, deadline_t d) {
     uint32_t flags = CMD_START | (1u << 29) | (1u << 16) | cmd->command;
@@ -117,15 +106,15 @@ static uint32_t transaction(const rpc_sdmmc_command_t *cmd, rpc_sdmmc_response_t
     if (cmd->response_type != RPC_SDMMCRESPONSETYPES_NONE && cmd->response_type != RPC_SDMMCRESPONSETYPES_R3) flags |= 1u << 8;
     if (cmd->data_bytes) flags |= 1u << 9;
     app_pending = 0;
-    if (!wait_clear(SDHOST_CMD_REG, CMD_START, d)) return fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_COMMAND_TIMEOUT);
+    if (!wait_clear(SD_REG_CMD, CMD_START, d)) return fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_COMMAND_TIMEOUT);
     if (cmd->data_bytes && !prepare_dma(d)) return fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_DMA);
-    SD_WRITE(SDHOST_RINTSTS_REG, 0xffff);
-    if (SD_READ(SDHOST_RINTSTS_REG) & (4 | 2 | 64 | 256 | 4096 | 8 | DATA_ERRORS)) return fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_HOST);
-    SD_WRITE(SDHOST_CMDARG_REG, cmd->argument);
-    SD_WRITE(SDHOST_CMD_REG, flags);
-    if (!wait_clear(SDHOST_CMD_REG, CMD_START, d)) return fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_COMMAND_TIMEOUT);
+    SD_WRITE(SD_REG_RINTSTS, 0xffff);
+    if (SD_READ(SD_REG_RINTSTS) & (4 | 2 | 64 | 256 | 4096 | 8 | DATA_ERRORS)) return fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_HOST);
+    SD_WRITE(SD_REG_CMDARG, cmd->argument);
+    SD_WRITE(SD_REG_CMD, flags);
+    if (!wait_clear(SD_REG_CMD, CMD_START, d)) return fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_COMMAND_TIMEOUT);
     do {
-        out->events = SD_READ(SDHOST_RINTSTS_REG);
+        out->events = SD_READ(SD_REG_RINTSTS);
         if (out->events & (4 | 2 | 256 | 4096 | ((flags & (1u << 8)) ? 64 : 0))) break;
         if (expired(d)) return fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_COMMAND_TIMEOUT);
     } while (1);
@@ -133,14 +122,14 @@ static uint32_t transaction(const rpc_sdmmc_command_t *cmd, rpc_sdmmc_response_t
     if (out->events & (2 | 4096)) return fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_HOST);
     if ((flags & (1u << 8)) && (out->events & 64)) return fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_RESPONSE_CRC);
     if (!(out->events & 4)) return fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_HOST);
-    if (cmd->response_type != RPC_SDMMCRESPONSETYPES_NONE) out->response0 = SD_READ(SDHOST_RESP0_REG);
+    if (cmd->response_type != RPC_SDMMCRESPONSETYPES_NONE) out->response0 = SD_READ(SD_REG_RESP0);
     if (cmd->response_type == RPC_SDMMCRESPONSETYPES_R2) {
-        out->response1 = SD_READ(SDHOST_RESP1_REG); out->response2 = SD_READ(SDHOST_RESP2_REG); out->response3 = SD_READ(SDHOST_RESP3_REG);
+        out->response1 = SD_READ(SD_REG_RESP1); out->response2 = SD_READ(SD_REG_RESP2); out->response3 = SD_READ(SD_REG_RESP3);
     }
     if (((cmd->response_type == RPC_SDMMCRESPONSETYPES_R1 || cmd->response_type == RPC_SDMMCRESPONSETYPES_R1B) && (out->response0 & R1_ERRORS)) ||
         (cmd->response_type == RPC_SDMMCRESPONSETYPES_R6 && (out->response0 & 0xe000))) return fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_CARD_STATUS);
     if (cmd->command == 55) app_pending = !!(out->response0 & 32);
-    if (cmd->response_type == RPC_SDMMCRESPONSETYPES_R1B && !wait_clear(SDHOST_STATUS_REG, 1u << 9, d)) return fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_BUSY_TIMEOUT);
+    if (cmd->response_type == RPC_SDMMCRESPONSETYPES_R1B && !wait_clear(SD_REG_STATUS, 1u << 9, d)) return fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_BUSY_TIMEOUT);
     if (!cmd->data_bytes) return 0;
     do {
         capture_dma(out);
@@ -166,7 +155,7 @@ int rpc_sdmmc_handle(const rpc_header_t *request, uint32_t length) {
     if (base->operation == RPC_OPERATIONS_CONFIGURE || base->operation == RPC_OPERATIONS_RELEASE) {
         if (length != sizeof(*base)) { fail(out, RPC_STATUS_BAD_LENGTH, 0); goto reply; }
         if (base->operation == RPC_OPERATIONS_CONFIGURE) {
-            if (!(SD_READ(SDHOST_CLKENA_REG) & 2)) { fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_NOT_CONFIGURED); goto reply; }
+            if (!(SD_READ(SD_REG_CLKENA) & 2)) { fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_NOT_CONFIGURED); goto reply; }
             configured = 1;
         }
         if (configured && !stop_dma(d)) fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_DMA);
@@ -182,7 +171,7 @@ int rpc_sdmmc_handle(const rpc_header_t *request, uint32_t length) {
         if (cmd->data_bytes) {
             capture_dma(out);
             if (!stop_dma(deadline(10000))) { configured = 0; fail(out, RPC_STATUS_TIMEOUT, RPC_SDMMCERRORS_DMA); }
-            out->data_events |= SD_READ(SDHOST_RINTSTS_REG);
+            out->data_events |= SD_READ(SD_REG_RINTSTS);
             if (!out->status && data_length && ((out->data_events & DATA_ERRORS) || (out->dma_status & DMA_ERRORS) || (out->descriptor & 0xc0000000u) || out->transferred != 512)) fail(out, RPC_STATUS_IO_ERROR, RPC_SDMMCERRORS_DMA);
             if (out->status) data_length = 0;
         }

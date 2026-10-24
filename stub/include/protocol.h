@@ -3,10 +3,10 @@
 #include <stdint.h>
 #include <stddef.h>
 #define RPC_PROTOCOL_MAJOR 1u
-#define RPC_PROTOCOL_MINOR 1u
+#define RPC_PROTOCOL_MINOR 2u
 #define RPC_MAX_PACKET_LENGTH 1024u
 #define RPC_MAX_REGISTER_DELAY_US 100000u
-#define RPC_BUILD_VERSION "0.2.0"
+#define RPC_BUILD_VERSION "0.4.0"
 #define RPC_STATUS_OK 0u
 #define RPC_STATUS_UNSUPPORTED 1u
 #define RPC_STATUS_BAD_LENGTH 2u
@@ -16,6 +16,7 @@
 #define RPC_OPERATIONS_CONFIGURE 1u
 #define RPC_OPERATIONS_TRANSFER 2u
 #define RPC_OPERATIONS_RELEASE 3u
+#define RPC_OPERATIONS_INFO 4u
 #define RPC_IDENTITYFLAGS_MAC_VALID 1u
 #define RPC_IDENTITYFLAGS_FLASH_ID_VALID 2u
 #define RPC_REGISTEROPERATIONS_READ 0u
@@ -47,6 +48,14 @@
 #define RPC_SDMMCERRORS_DMA 9u
 #define RPC_SDMMCERRORS_HOST 10u
 #define RPC_SDMMCERRORS_NOT_CONFIGURED 11u
+#define RPC_PERIPHERALERRORS_NONE 0u
+#define RPC_PERIPHERALERRORS_NACK 1u
+#define RPC_PERIPHERALERRORS_TIMEOUT 2u
+#define RPC_PERIPHERALERRORS_ARBITRATION 3u
+#define RPC_PERIPHERALERRORS_SHORT_DATA 4u
+#define RPC_PERIPHERALERRORS_NOT_CONFIGURED 5u
+#define RPC_PERIPHERALERRORS_TIMER_CONFLICT 6u
+#define RPC_PERIPHERALERRORS_BUS 7u
 typedef struct __attribute__((packed)) {
     uint8_t magic[4];
     uint32_t length;
@@ -148,6 +157,24 @@ typedef struct __attribute__((packed)) {
 } rpc_sdmmc_response_t;
 _Static_assert(sizeof(rpc_sdmmc_response_t) == 64, "sdmmc_response wire size");
 #define RPC_MAGIC_SDMMC_RESPONSE "SDMR"
+typedef struct __attribute__((packed)) {
+    rpc_header_t header;
+    uint16_t operation;
+    uint16_t port;
+    uint32_t timeout_us;
+    uint32_t args[8];
+} rpc_peripheral_command_t;
+_Static_assert(sizeof(rpc_peripheral_command_t) == 48, "peripheral_command wire size");
+typedef struct __attribute__((packed)) {
+    rpc_header_t header;
+    uint32_t status;
+    uint16_t operation;
+    uint16_t port;
+    uint32_t error;
+    uint32_t actual_hz;
+    uint32_t values[8];
+} rpc_peripheral_response_t;
+_Static_assert(sizeof(rpc_peripheral_response_t) == 56, "peripheral_response wire size");
 #define RPC_MODULES(X) \
     X(I2C, "I2CC", "I2CR") \
     X(SPI, "SPIC", "SPIR") \
