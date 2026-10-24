@@ -17,6 +17,9 @@ def load_targets():
             raise ValueError(f'Unaligned RAM: {path}')
         if config['dataBudget'] < config['stack'] + 1024:
             raise ValueError(f'Insufficient RAM: {path}')
+        text,data=int(config['text'],0),int(config['data'],0)
+        if text < data+config['dataBudget'] and data < text+config['textBudget']:
+            raise ValueError(f'Overlapping code/data reservations: {path}')
         targets[path.parent.name] = config
     return targets
 

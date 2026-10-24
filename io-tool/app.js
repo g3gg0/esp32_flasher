@@ -7,6 +7,7 @@
     const labels = { observe: 'BEOBACHTEN', input: 'INPUT', output: 'OUTPUT', unknown: 'FEHLER', sd: 'SD', i2c: 'I²C', spi: 'SPI', pwm: 'PWM', rmt: 'RMT' };
     const functions = [
         { id: 'flash', name: 'FLASH', blocks: ['spi_mem', 'spi'] },
+        { id: 'fuses', name: 'FUSES', blocks: ['efuse'] },
         { id: 'i2c', name: 'I²C', blocks: ['i2c'] },
         { id: 'spi', name: 'SPI', blocks: ['spi'] },
         { id: 'sd', name: 'SD', blocks: ['sdmmc', 'spi'] },
@@ -46,6 +47,8 @@
     const rmtPanel = ESPIO.createRMTPanel({ controller: () => controller, chip: () => chip, board: () => board, pins: exposedPins, gpioOption, log, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); } });
 
     const flashPanel = ESPIO.createFlashPanel({ controller: () => controller, chip: () => chip, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); }, log });
+
+    const fusesPanel = ESPIO.createFusesPanel({ controller: () => controller, chip: () => chip, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); }, log });
 
     function gpioOption(id) {
         const pin = chip.pins.find(pin => pin.id === id);
@@ -116,7 +119,7 @@
         return chip.pins.find(pin => pin.id === id)?.reserved || '';
     }
     function exposedPins() { return [...new Set([...board.pins.map(pin => pin.gpio), ...(board.back?.pins || []).map(pin => pin.gpio), ...(board.extra || [])].filter(id => id !== null))]; }
-    function supported(fn) { if (fn.id === 'flash') return !chip.readOnlyGPIO; return chip.peripherals.some(block => fn.blocks.includes(block.id)); }
+    function supported(fn) { if (['flash','fuses'].includes(fn.id)) return !chip.readOnlyGPIO; return chip.peripherals.some(block => fn.blocks.includes(block.id)); }
 
     function renderDevices() {
         $('preview-chip').value = chip.id;
@@ -324,22 +327,37 @@
             const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = name; dd.textContent = value == null ? '—' : hex(value); $('pin-registers').append(dt, dd);
         }
     }
-    function renderPeripherals() {
+    function availablePeripheralFunctions() {
+        const all=[{ id:'gpio',name:'GPIO' },...(ESPIO.ldo4Profiles[chip.id]?[{id:'ldo4',name:'LDO4',blocks:['pmu']}]:[]),...functions];
+        const modules={ldo4:'REGISTERS',flash:'FLASH',fuses:'FUSES',i2c:'I2C',spi:'SPI',sd:'SDMMC',rmt:'RMT',pwm:'PWM',adc:'CAPTURE'};
+        return all.filter(fn=>fn.id==='gpio'||accelerated()&&!!modules[fn.id]&&transport.supports(modules[fn.id])&&(fn.id!=='adc'||!!adcProfiles[chip.id])&&(fn.id!=='sd'||!!sdProfiles[chip.id]));
+    }
+    let peripheralButtonsKey='';
+    function renderPeripheralButtons() {
+        const available=availablePeripheralFunctions(),selectionChanged=!available.some(fn=>fn.id===peripheral);
+        if(selectionChanged)peripheral='gpio';
+        const key=[chip.id,available.map(fn=>fn.id).join(','),peripheral,busy,operation].join(':');
+        if(key===peripheralButtonsKey)return false;
+        peripheralButtonsKey=key;
         $('peripherals').replaceChildren();
-        for (const fn of [{ id: 'gpio', name: 'GPIO' }, ...(ESPIO.ldo4Profiles[chip.id] ? [{ id: 'ldo4', name: 'LDO4', blocks: ['pmu'] }] : []), ...functions.filter(supported)]) {
+        for (const fn of available) {
             const button = document.createElement('button'); button.textContent = fn.name; button.dataset.peripheral = fn.id;
-            button.className = fn.id === peripheral ? 'active' : ''; button.disabled = fn.id !== 'gpio' && (!accelerated() || (fn.id === 'rmt' && !transport?.supports?.('RMT')) || (fn.id === 'flash' && !transport?.supports?.('FLASH')));
-            const small = document.createElement('small'); small.textContent = ['gpio', 'ldo4'].includes(fn.id) || (fn.id === 'adc' && adcProfiles[chip.id]) || (fn.id === 'sd' && sdProfiles[chip.id]) || (['i2c', 'spi', 'pwm', 'rmt', 'flash'].includes(fn.id)) ? 'AKTIV' : 'GEPLANT'; button.append(small);
+            button.className = fn.id === peripheral ? 'active' : ''; button.disabled = busy || operation;
+            const small = document.createElement('small'); small.textContent = 'AKTIV'; button.append(small);
             button.addEventListener('click', () => {
-                peripheral = ['sd', 'i2c', 'spi', 'pwm', 'rmt', 'ldo4', 'flash'].includes(fn.id) && peripheral === fn.id ? 'gpio' : fn.id;
+                peripheral = ['sd', 'i2c', 'spi', 'pwm', 'rmt', 'ldo4', 'flash', 'fuses'].includes(fn.id) && peripheral === fn.id ? 'gpio' : fn.id;
                 $('register-block').value = fn.id === 'gpio' ? 'gpio' : chip.peripherals.find(block => fn.blocks.includes(block.id))?.id || '*';
                 $('peripheral-description').textContent = fn.id === 'i2c' && ESPIO.i2cProfiles[chip.id] ? 'I²C-Port: SDA/SCL zuordnen, Adressen scannen und Bytes übertragen.' : fn.id === 'sd' ? 'SD-Port: Pins zuordnen und die Karte über den nativen Host identifizieren.' : fn.id === 'gpio' ? 'GPIO Input / Output: Registerzugriffe aktiv.' : fn.id === 'adc' && adcProfiles[chip.id] ? 'ADC verfügbar: Messquelle im Live-Pinout auf ADC umschalten. 12-Bit-Rohwerte, sequenziell, ohne Spannungskalibrierung.' : `${fn.name} ist als Erweiterung vorgesehen. Der Registerkatalog ist verfügbar; es werden keine Peripherieregister geschrieben.`;
-                if (['i2c', 'spi', 'pwm', 'rmt', 'flash'].includes(fn.id)) $('peripheral-description').textContent = fn.name + ': beschleunigter RPC im RAM-Stub.';
+                if (['i2c', 'spi', 'pwm', 'rmt', 'flash', 'fuses'].includes(fn.id)) $('peripheral-description').textContent = fn.name + ': beschleunigter RPC im RAM-Stub.';
                 if (fn.id === 'ldo4') $('peripheral-description').textContent = ESPIO.ldo4Profiles[chip.id].description;
                 renderPeripherals(); renderCatalog();
             });
             $('peripherals').append(button);
         }
+        return selectionChanged;
+    }
+    function renderPeripherals() {
+        renderPeripheralButtons();
         $('catalog-count').textContent = `${chip.peripherals.length} Registerblöcke`;
         const previous = $('register-block').value;
         $('register-block').replaceChildren(new Option('Alle Registerblöcke', '*'));
@@ -347,7 +365,7 @@
         $('register-block').value = chip.peripherals.some(block => block.id === previous) ? previous : 'gpio';
         renderSD();
         updateLDO4Controls();
-        i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral);
+        i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral); fusesPanel.render(peripheral);
     }
     async function loadCatalog() {
         const request = ++catalogRequest;
@@ -417,13 +435,14 @@
         updateScanControls();
         updateSDControls();
         updateLDO4Controls();
-        i2cPanel.update(); peripheralPanels.update(); rmtPanel.update(); flashPanel.update();
+        if(renderPeripheralButtons()){renderSD();i2cPanel.render(false);peripheralPanels.render(peripheral);rmtPanel.render(peripheral);flashPanel.render(peripheral);fusesPanel.render(peripheral);}
+        i2cPanel.update(); peripheralPanels.update(); rmtPanel.update(); flashPanel.update(); fusesPanel.update();
     }
     async function initializeBoard() {
         const token = ++boardRequest;
         sampleTimes = []; lastPoll = null;
         if (controller) { await controller.release(); await controller.close(); controller = null; }
-        sdHost = null; clearSDResults(); renderSD(); i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral);
+        sdHost = null; clearSDResults(); renderSD(); i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); fusesPanel.reset(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral); fusesPanel.render(peripheral);
         if (!transport || session === 'offline') return;
         const current = new GPIOController(transport, chip, {
             readOnly: !accelerated(),
@@ -439,6 +458,7 @@
             },
             onError: error => {
                 if (controller !== current) return;
+                error = transport?.failure || error;
                 status(`Messung gestoppt: ${error.message || error}. Verbindung prüfen und neu verbinden.`, 'error');
                 log('Polling-Fehler:', error.message || error); updateControls();
             }
@@ -446,7 +466,7 @@
         controller = current;
         await current.initialize(exposedPins().filter(id => !chip.pins.find(pin => pin.id === id)?.reserved));
         if (token !== boardRequest || !transport || session === 'offline') { await current.close(); return; }
-        renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral);
+        renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral); fusesPanel.render(peripheral);
         current.start(Number($('interval').value));
     }
     async function chooseBoard(config) {
@@ -504,7 +524,7 @@
             await initializeBoard();
             status(readOnlyChip ? `${chip.name} erkannt · ROM-Registerzugriff · ${board.name} · ${controller.pins.size} GPIOs beobachten. Polling läuft.` :
                 `${chip.name} erkannt · RAM-Stub aktiv · ${board.name} · ${controller.pins.size} GPIOs als Input. Polling läuft.`);
-            log(readOnlyChip ? 'ESP8266: GPIO_IN und RTC_GPIO_IN_DATA werden nur gelesen.' : 'Stub aktiv. Kein Flash-Schreib- oder Löschbefehl wird verwendet.');
+            log(readOnlyChip ? 'ESP8266: GPIO_IN und RTC_GPIO_IN_DATA werden nur gelesen.' : 'Stub aktiv. Beim Verbinden wird Flash weder beschrieben noch gelöscht.');
             autoAccelerate = !readOnlyChip && !$('classic-stub').checked;
         } catch (error) {
             const cancelled = error?.name === 'NotFoundError';
@@ -533,7 +553,7 @@
             status('Releasing I/O and loading accelerated stub into RAM…');
             await controller.release(); await controller.close(); controller = null;
             transport.close(); transport = null;
-            sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); clearScan();
+            sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); fusesPanel.reset(); clearScan();
             transport = await ESPIO.startAccelerated(flasher, manifest);
             $('interval').value = '1';
             await initializeBoard();
@@ -613,7 +633,7 @@
             status(error.message || String(error), 'error'); log('LDO4:', error.message || error);
         } finally {
             operation = false;
-            renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral);
+            renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral); fusesPanel.render(peripheral);
             updateControls();
         }
     }
@@ -811,23 +831,26 @@
         $('scan-start').disabled = blocked; $('scan-start').hidden = active;
         $('scan-cancel').hidden = !active;
         $('scan-target').disabled = active || busy || operation;
-        $('scan-method').disabled = active || busy || operation;
         $('scan-settle').disabled = active || busy || operation;
+        $('scan-load-profile').disabled = active || busy || operation;
         $('scan-export').disabled = !scanResults.length || active;
-        $('scan-info').textContent = !targets.length ? 'Einen verfügbaren GPIO wählen oder alle GPIOs des Boards scannen.' : `${targets.length} GPIOs · ${analogCount} mit ADC, ${targets.length - analogCount} nur digital · LOW → HIGH → LOW ohne Poll-Pause. Grün: Pull-Test, Blau: OUT-Test, Rot: Sollwert. Pins ohne passende Treiber/Pulls werden nur beobachtet. Vorherige Konfiguration wird wiederhergestellt.`;
+        $('scan-info').textContent = !targets.length ? 'Einen verfügbaren GPIO wählen oder alle GPIOs des Boards scannen.' : `${targets.length} GPIOs · ${analogCount} mit ADC, ${targets.length - analogCount} nur digital · Idle (High-Z), dann LOW → HIGH → LOW je Pull-/Treiberstufe. Dunkelgrün: Pulls, zunehmend hellgrün: D0 bis zur stärksten Stufe, Rot: Sollwert. Pins ohne passende Treiber/Pulls werden nur beobachtet. Vorherige Konfiguration wird wiederhergestellt.`;
+        if(targets.length && $('scan-load-profile').checked) $('scan-info').textContent += ' Lastprofil: Idle (High-Z) → Pulls → alle Treiberstufen bis zur stärksten, je LOW und HIGH.';
     }
     let lastPinScope = null;
     function renderPinScope() {
+        if (scanAbort) return;
         const result = scanResults.find(result => result.id === selectedPin);
         if (lastPinScope === result) return;
         lastPinScope = result;
         $('pin-scope').hidden = !result;
         $('pin-scope').querySelector('strong').textContent = result?.method === 'observe' ? 'Usage-Scope · Eingangsmessung' : 'Usage-Scope · LOW → HIGH → LOW';
         $('pin-scope-plot').innerHTML = result ? ESPIO.scopeLegend(result) + ESPIO.scopeSVG(result) : '';
+        $('pin-load-profile').innerHTML = result ? ESPIO.loadProfileHTML(result) : '';
         $('pin-scope-stats').textContent = result ? ESPIO.scopeStats(result) : '';
     }
     function renderScanResults() {
-        if (!scanResults.length) return;
+        if (scanAbort || !scanResults.length) return;
         const table = document.createElement('table'); table.className = 'register-table scan-table';
         const header = table.createTHead().insertRow();
         for (const label of ['Pin / Messung', 'Basis', 'LOW / Pull-down', 'HIGH / Pull-up', 'Δ / Skala', 'Beobachtung']) {
@@ -836,17 +859,21 @@
         for (const result of scanResults) {
             const row = table.insertRow();
             const digital = result.measurement === 'digital', value = sample => sample ? digital ? String(sample.io) : String(sample.raw) : '—';
-            const name = run => run.method === 'pull' ? 'Pull' : run.method === 'drive' ? 'OUT' : 'IN';
+            const name = run => run.method === 'pull' ? 'Pull' : run.method === 'drive' ? `OUT D${run.driveStrength}` : 'IN';
             const phase = key => result.runs.map(run => `${name(run)}: ${value(run[key]?.[0])} → ${value(run[key]?.at(-1))}`).join('\n');
             const delta = digital ? '—' : result.runs.map(run => `${name(run)}: ${run.assessment.span == null ? '—' : (run.assessment.span * 100).toFixed(1) + ' %'}`).join('\n');
             for (const text of [`GPIO${result.id} · ${result.method === 'compare' ? 'Pull + Output' : result.method === 'drive' ? 'Output' : result.method === 'pull' ? 'Pull' : 'Input'} · ${digital ? 'GPIO 0/1' : 'ADC'}`, value(result.baseline),
                 phase('low'), phase('high'), delta, result.assessment.label]) row.insertCell().textContent = text;
             const detail = table.insertRow().insertCell(); detail.colSpan = 6; detail.className = 'scan-detail';
             const note = document.createElement('p'); note.textContent = `${result.assessment.interpretation} ${result.assessment.note}`;
+            if (result.timingQuality?.some(stage => !stage.passed)) note.textContent += ' Messung lückenhaft: Die 5-ms-Grenze wurde auch nach drei Wiederholungen überschritten.';
             if (result.skippedMethods?.length) note.textContent += ` Nicht verfügbar: ${result.skippedMethods.map(mode => mode === 'pull' ? 'interne Pulls' : 'Output-Treiber').join(', ')}.`;
             const chart = document.createElement('div'); chart.className = 'scope-plot'; chart.innerHTML = ESPIO.scopeLegend(result) + ESPIO.scopeSVG(result);
             const times = document.createElement('small'); times.textContent = `${ESPIO.scopeStats(result)}${digital ? ' · Nur digital; keine Analogbewertung' : ` · ADC-Hardwaretrim: ${result.calibration?.source || '—'}`} · Zeitachse pro Durchlauf, keine zeitliche Streckung.`;
-            detail.append(note, chart, times);
+            const showLoad = result.loadProfile || result.loadProfileSkipped;
+            const plots = document.createElement('div'); plots.className = showLoad ? 'scan-plots' : 'scan-plots no-load-profile'; plots.append(chart);
+            if(showLoad){const loadPlot=document.createElement('div');loadPlot.innerHTML=ESPIO.loadProfileHTML(result);plots.append(loadPlot);}
+            detail.append(note, plots, times);
         }
         const source = document.createElement('p');
         source.className = scanMetadata?.simulation ? 'simulation-label' : '';
@@ -856,16 +883,25 @@
     }
     async function startScan() {
         if (!controller || busy || operation || scanAbort) return;
-        const method = $('scan-method').value;
+        const method = 'sweep';
         const ids = scanTargets(); if (!ids.length) return;
         const current = controller;
-        scanMetadata = { chip: chip.id, board: board.id, simulation: session === 'demo', capturedAt: new Date().toISOString() };
+        scanMetadata = { chip: chip.id, board: board.id, simulation: session === 'demo', capturedAt: new Date().toISOString(), loadProfile: $('scan-load-profile').checked };
         scanAbort = new AbortController(); scanResults = []; operation = true; updateControls();
-        $('scan-results').replaceChildren(); renderPinScope(); $('scan-progress').textContent = 'Polling anhalten, Scan vorbereiten …';
+        $('scan-results').replaceChildren(); $('pin-scope').hidden = true; lastPinScope = null;
+        $('scan-progress').textContent = 'Polling anhalten, Scan vorbereiten …';
+        let lastStage = '';
         try {
-            await current.scanUsage(ids, { method, settleMs: Number($('scan-settle').value), signal: scanAbort.signal,
-                onPhase: (id, phase) => { $('scan-state').textContent = `GPIO${id} · ${phase.toUpperCase()}`; $('scan-progress').textContent = `GPIO${id}: ${phase.toUpperCase()} messen …`; },
-                onResult: result => { scanResults.push(result); renderScanResults(); }
+            await current.scanUsage(ids, { method, settleMs: Number($('scan-settle').value), loadProfile: scanMetadata.loadProfile, signal: scanAbort.signal,
+                onPhase: (id, phase, { attempt = 1, maxAttempts = 4 } = {}) => {
+                    const stage = phase.replace(/ (low|high|return-low|idle|observe)$/, '').replace(/^pull$/, 'Pulls').replace(/^idle$/, 'High-Z').replace(/^drive /, 'Treiber ');
+                    const message = `GPIO${id} · ${stage} · Versuch ${attempt}/${maxAttempts}`;
+                    if (message === lastStage) return;
+                    lastStage = message;
+                    $('scan-state').textContent = `GPIO${id} · ${stage}`;
+                    $('scan-progress').textContent = `${message} messen …`;
+                },
+                onResult: result => { scanResults.push(result); }
             });
             $('scan-state').textContent = 'FERTIG';
             $('scan-progress').textContent = `${scanResults.length} Pin(s) getestet. Vorherige Pin-Konfiguration wiederhergestellt.`;
@@ -880,6 +916,7 @@
             }
         } finally {
             scanAbort = null; operation = false; sampleTimes = []; updateControls();
+            renderScanResults();
         }
     }
     async function changeReadMode(mode) {
@@ -957,7 +994,7 @@
     }
     function frame(t) {
         renderedFrame = requestAnimationFrame(frame);
-        if (document.hidden || t - lastFrame < 30) return;
+        if (scanAbort || document.hidden || t - lastFrame < 30) return;
         lastFrame = t;
         const map = canvasContext($('map-traces'));
         const sx = map.width / 1000, sy = map.height / mapHeight;
@@ -1031,9 +1068,9 @@
     $('read-mode').addEventListener('change', () => changeReadMode($('read-mode').value));
     $('scan-start').addEventListener('click', startScan);
     $('scan-cancel').addEventListener('click', () => { scanAbort?.abort(); $('scan-progress').textContent = 'Abbruch angefordert; laufenden Zugriff beenden und Pin wiederherstellen …'; });
-    for (const id of ['scan-target', 'scan-method']) $(id).addEventListener('change', updateScanControls);
+    for (const id of ['scan-target', 'scan-load-profile']) $(id).addEventListener('change', updateScanControls);
     $('scan-export').addEventListener('click', () => {
-        const data = { format: 'esp-io-usage-scan-v2', ...scanMetadata, rawMax: 4095, calibrated: false, results: scanResults };
+        const data = { format: 'esp-io-usage-scan-v3', ...scanMetadata, rawMax: 4095, calibrated: false, results: scanResults };
         const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
         const link = document.createElement('a'); link.href = url; link.download = `usage-scan-${chip.id}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
     });

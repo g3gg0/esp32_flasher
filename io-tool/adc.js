@@ -1,6 +1,7 @@
 (function (root) {
     'use strict';
     const profiles = typeof module === 'object' && module.exports ? require('./configs/adc.js') : root.ESPIO.adcProfiles;
+    const loadAPI = typeof module === 'object' && module.exports ? require('./load-profile.js') : root.ESPIO;
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const abortError = () => new DOMException('Scan abgebrochen.', 'AbortError');
     const checkAbort = signal => { if (signal?.aborted) throw abortError(); };
@@ -267,10 +268,13 @@
 
     // Called inside the controller queue with polling paused. Work on one pin
     // at a time and restore physical register values rather than UI defaults.
-    async function scanPin(controller, id, { method, settleMs, signal, onPhase = () => {} }) {
+    async function scanPin(controller, id, { method, settleMs, loadProfile: wantLoadProfile = false, maxDrive = null, signal, onPhase = () => {} }) {
         const pin = controller.descriptor(id), adc = controller.adc;
         const hasADC = !!adc?.channel(id);
-        const requestedMethods = method === 'compare' ? ['pull', 'drive'] : [method];
+        // Analog where the pad has an ADC channel, otherwise the digital input level.
+        const loadProfile = wantLoadProfile;
+        const sweep = loadProfile || method === 'sweep';
+        const requestedMethods = method === 'compare' || method === 'sweep' ? ['pull', 'drive'] : [method];
         const methods = requestedMethods.filter(mode => mode === 'pull' ? pin.pulls : pin.output);
         const skippedMethods = requestedMethods.filter(mode => !methods.includes(mode));
         if (!methods.length) methods.push('observe');
@@ -281,6 +285,7 @@
         const hpBank = gpio.banks[Math.floor(id / 32)];
         // FUN_DRV[11:10] is shared by every pinned GPIO profile's IO MUX.
         const strength = adc?.profile.driveStrength || { mask: 3 << 10, shift: 10 };
+        const strongest = strength.mask >>> strength.shift, topDrive = maxDrive === null ? strongest : Math.min(maxDrive, strongest);
         const snapshots = [];
         for (const [address, mask] of [[pin.mux, gpio.muxMask | strength.mask], [gpio.matrix + id * 4, gpio.matrixMask], [gpio.pinConfig + id * 4, gpio.pinConfigMask], ...pin.digitalRoute.map(op => [op.address, op.mask])]) {
             snapshots.push({ address, mask: mask >>> 0, value: await controller.transport.read(address) });
@@ -294,7 +299,9 @@
         const originalState = controller.pins.get(id);
         const result = { id, method: actualMethod, requestedMethod: method, skippedMethods, measurement: hasADC ? 'adc' : 'digital',
             baseline: null, low: [], high: [], returnLow: [], runs: [], startedAt: controller.clock(),
+            timingQuality: [],
             calibration: hasADC ? structuredClone(adc.calibration) : null, timing: 'Host intervals around serial commands; no device clock timestamps.' };
+        if(loadProfile)result.loadProfile={format:'esp-io-load-profile-v2',measurement:result.measurement,maxDrive:topDrive,settleMs,rawMax:hasADC?adc.profile.max:null,driveMask:strength.mask,driveShift:strength.shift,stages:[]};
         let primaryError, restoreErrors = [];
         const readSample = async () => {
             checkAbort(signal);
@@ -305,18 +312,19 @@
             return { ...(analog || { raw: null, value: null, t: (ioStartedAt + ioDoneAt) / 2, startedAt: ioStartedAt, doneAt: ioDoneAt, receivedAt: ioDoneAt }), io, ioStartedAt, ioDoneAt };
         };
         const collect = async (run, phase) => {
-            onPhase(id, `${run.method} ${phase.name}`); checkAbort(signal);
-            const samples = [];
+            onPhase(id, `${run.method}${run.method==='drive'?` D${run.driveStrength}`:''} ${phase.name}`, { attempt: run.attempt, maxAttempts: 4 }); checkAbort(signal);
+            const samples = [], cutoff = settleMs * 2 / 3;
             // No poll delay, no channel changes, no animation work in the
-            // sampling loop. Two samples minimum, bounded memory/work in demo.
+            // sampling loop. Keep sampling until the window has elapsed and at
+            // least one sample started in its settled last third.
             do {
                 checkAbort(signal);
                 const read = await readSample();
-                const sample = { ...read, elapsedMs: read.t - phase.ackAt, phase: phase.name };
+                const sample = { ...read, elapsedMs: read.t - phase.ackAt, startedMs: read.startedAt - phase.ackAt, phase: phase.name };
                 samples.push(sample); run.samples.push(sample);
                 // In-memory simulation would otherwise starve browser events.
-                if (samples.length % 16 === 0) await sleep(0);
-            } while (samples.length < 2 || (samples.length < 256 && controller.clock() - phase.ackAt < settleMs));
+                if (controller.transport.simulation && samples.length % 16 === 0) await sleep(0);
+            } while (samples.length < 2 || controller.clock() - phase.ackAt < settleMs || samples.at(-1).startedMs < cutoff);
             return samples;
         };
         try {
@@ -325,38 +333,57 @@
             await controller.configurePin(id, 'input', 'none');
             result.baseline = await readSample();
             // Warm up the selected ADC channel before switching the test signal.
-            for (const mode of methods) {
+            // Keep the time traces and load profile on the same strength ladder.
+            const ladder = sweep ? ['idle', ...(pin.pulls ? ['pull'] : []), ...(pin.output ? ['drive'] : [])] : [];
+            const modes = [...ladder, ...methods.filter(mode => !ladder.includes(mode))];
+            const tests=modes.flatMap(mode=>mode==='drive'?Array.from({length:sweep?topDrive+1:1},(_,driveStrength)=>({mode,driveStrength})):[{mode,driveStrength:null}]);
+            for (const {mode,driveStrength} of tests) {
                 checkAbort(signal);
-                await controller.configurePin(id, 'input', 'none');
-                if (mode === 'drive') {
-                    if (padRoute) await adc.set(testMux, 0, strength.mask);
-                    else await controller.transport.write(testMux, 0, strength.mask);
-                    await controller.configurePin(id, 'output', 'none', 0);
+                const primary = methods.includes(mode) && (mode !== 'drive' || driveStrength === 0);
+                let run, bestGap = Infinity;
+                const attemptGaps = [];
+                for (let attempt = 1; attempt <= 4; attempt++) {
+                    await controller.configurePin(id, 'input', 'none');
+                    if (mode === 'drive') {
+                        if (padRoute) await adc.set(testMux, driveStrength << strength.shift, strength.mask);
+                        else await controller.transport.write(testMux, driveStrength << strength.shift, strength.mask);
+                        await controller.configurePin(id, 'output', 'none', 0);
+                    }
+                    const candidate = { method: mode, driveStrength, attempt, measurement: result.measurement, settleMs, startedAt: controller.clock(), samples: [], phases: [], initialLevel: mode === 'drive' ? 0 : null };
+                    // Acquisition starts before the edge; plots show actual samples
+                    // and command uncertainty, not an invented instantaneous slope.
+                    const before = await readSample();
+                    candidate.samples.push({ ...before, phase: 'before' });
+                    for (const [name, level] of mode === 'observe' || mode === 'idle' ? [[mode, null]] : [['low', 0], ['high', 1], ['return-low', 0]]) {
+                        checkAbort(signal);
+                        const phase = { name, level, sentAt: controller.clock() };
+                        if (mode === 'pull') await controller.transport.write(testMux, level ? testGPIO.pullUp : testGPIO.pullDown, testGPIO.pullUp | testGPIO.pullDown);
+                        else if (mode === 'drive') await controller.transport.write(level ? bank.set : bank.clear, bit);
+                        phase.ackAt = controller.clock(); candidate.phases.push(phase);
+                        const samples = await collect(candidate, phase);
+                        phase.finishedAt = controller.clock();
+                        if (name === 'low') candidate.low = samples;
+                        else if (name === 'high') candidate.high = samples;
+                        else if (name === 'return-low') candidate.returnLow = samples;
+                        else if (name === 'idle') candidate.idle = samples;
+                    }
+                    await controller.transport.write(bank.enableClear, bit);
+                    candidate.finishedAt = controller.clock();
+                    const gap = candidate.samples.reduce((largest, sample, index, samples) => Math.max(largest,
+                        index ? sample.t - samples[index - 1].t : 0,
+                        sample.doneAt - sample.startedAt, sample.ioDoneAt - sample.ioStartedAt), 0);
+                    attemptGaps.push(gap);
+                    if (gap < bestGap) { run = candidate; bestGap = gap; }
+                    if (gap <= 5) break;
                 }
-                const run = { method: mode, measurement: result.measurement, startedAt: controller.clock(), samples: [], phases: [], initialLevel: mode === 'drive' ? 0 : null };
-                result.runs.push(run);
-                // Acquisition starts before the edge; plots show actual samples
-                // and command uncertainty, not an invented instantaneous slope.
-                const before = await readSample();
-                run.samples.push({ ...before, phase: 'before' });
-                for (const [name, level] of mode === 'observe' ? [['observe', null]] : [['low', 0], ['high', 1], ['return-low', 0]]) {
-                    checkAbort(signal);
-                    const phase = { name, level, sentAt: controller.clock() };
-                    if (mode === 'pull') await controller.transport.write(testMux, level ? testGPIO.pullUp : testGPIO.pullDown, testGPIO.pullUp | testGPIO.pullDown);
-                    else if (mode === 'drive') await controller.transport.write(level ? bank.set : bank.clear, bit);
-                    phase.ackAt = controller.clock(); run.phases.push(phase);
-                    const samples = await collect(run, phase);
-                    phase.finishedAt = controller.clock();
-                    if (name === 'low') run.low = samples;
-                    else if (name === 'high') run.high = samples;
-                    else if (name === 'return-low') run.returnLow = samples;
-                }
-                await controller.transport.write(bank.enableClear, bit);
-                run.finishedAt = controller.clock();
-                run.assessment = classifyUsage(run, adc?.profile.max);
+                run.timingQuality = { gapLimitMs: 5, maxGapMs: bestGap, passed: bestGap <= 5, attempts: attemptGaps.length, selectedAttempt: run.attempt, attemptGapsMs: attemptGaps };
+                result.timingQuality.push({ method: mode, driveStrength, ...run.timingQuality });
+                if(sweep && mode !== 'idle' || primary)result.runs.push(run);
+                if (mode !== 'idle') run.assessment = classifyUsage(run, adc?.profile.max);
+                if(loadProfile&&ladder.includes(mode))result.loadProfile.stages.push(loadAPI.summarizeLoadRun(run,adc?.profile.max));
                 // Preserve summary fields for consumers of the original export.
-                result.low = run.low || []; result.high = run.high || []; result.returnLow = run.returnLow || [];
-                if (mode === 'drive') {
+                if(primary){result.low = run.low || []; result.high = run.high || []; result.returnLow = run.returnLow || [];}
+                if (primary && mode === 'drive') {
                     result.lowDriveMs = run.phases[1].ackAt - run.phases[0].ackAt + run.finishedAt - run.phases[2].ackAt;
                     result.highDriveMs = run.phases[2].ackAt - run.phases[1].ackAt;
                 }
@@ -415,7 +442,10 @@
                 const high = (registers.get(bank.output) || 0) & mask;
                 let value;
                 if (id % 3 === 2) value = .33; // external stiff signal
-                else if (enabled) value = id % 3 === 1 ? (high ? .63 : .12) : (high ? .98 : .015);
+                else if (enabled) {
+                    const strength=(mux>>>10)&3;
+                    value = id % 3 === 1 ? (high ? Math.min(.98,.63+.1*strength) : .12/(strength+1)) : (high ? .98 : .015);
+                }
                 else if (mux & fields.pullUp) value = id % 3 === 1 ? .55 : .94;
                 else if (mux & fields.pullDown) value = id % 3 === 1 ? .30 : .04;
                 else value = .45 + .3 * Math.sin(clock() / (190 + id * 17));

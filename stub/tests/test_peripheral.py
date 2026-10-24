@@ -17,7 +17,7 @@ class PeripheralTest(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         cls.exe = Path(cls.temp.name)/'peripheral-test'
-        subprocess.run(['cc', '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-DRPC_PERIPHERAL_TEST=1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-I', str(ROOT/'include'), '-I', str(ROOT/'src'), *[str(ROOT/'src'/s) for s in ('stub.c', 'flash.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'rmt.c', 'peripheral.c')], str(ROOT/'tests/host-platform.c'), str(ROOT/'tests/peripheral-mock.c'), '-o', str(cls.exe)], check=True)
+        subprocess.run(['cc', '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-DRPC_PERIPHERAL_TEST=1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-I', str(ROOT/'include'), '-I', str(ROOT/'src'), *[str(ROOT/'src'/s) for s in ('stub.c', 'fuses.c', 'flash.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'rmt.c', 'peripheral.c')], str(ROOT/'tests/host-platform.c'), str(ROOT/'tests/peripheral-mock.c'), '-o', str(cls.exe)], check=True)
 
     @classmethod
     def tearDownClass(cls):

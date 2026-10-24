@@ -3,10 +3,10 @@
 #include <stdint.h>
 #include <stddef.h>
 #define RPC_PROTOCOL_MAJOR 1u
-#define RPC_PROTOCOL_MINOR 5u
+#define RPC_PROTOCOL_MINOR 8u
 #define RPC_MAX_PACKET_LENGTH 1024u
 #define RPC_MAX_REGISTER_DELAY_US 100000u
-#define RPC_BUILD_VERSION "0.7.0"
+#define RPC_BUILD_VERSION "0.8.0"
 #define RPC_STATUS_OK 0u
 #define RPC_STATUS_UNSUPPORTED 1u
 #define RPC_STATUS_BAD_LENGTH 2u
@@ -31,6 +31,7 @@
 #define RPC_CAPABILITIES_I2S 7u
 #define RPC_CAPABILITIES_CAPTURE 8u
 #define RPC_CAPABILITIES_FLASH 9u
+#define RPC_CAPABILITIES_FUSES 10u
 #define RPC_SDMMCRESPONSETYPES_NONE 0u
 #define RPC_SDMMCRESPONSETYPES_R1 1u
 #define RPC_SDMMCRESPONSETYPES_R1B 2u
@@ -85,6 +86,7 @@
 #define RPC_FLASHOPERATIONS_ERASE 18u
 #define RPC_FLASHOPERATIONS_CHECK 19u
 #define RPC_FLASHOPERATIONS_VERIFY 20u
+#define RPC_FLASHOPERATIONS_PROBE_STEP 21u
 #define RPC_FLASHERRORS_NONE 0u
 #define RPC_FLASHERRORS_NO_DEVICE 1u
 #define RPC_FLASHERRORS_RANGE 2u
@@ -93,6 +95,19 @@
 #define RPC_FLASHERRORS_NEEDS_ERASE 5u
 #define RPC_FLASHERRORS_VERIFY 6u
 #define RPC_FLASHERRORS_UNSUPPORTED_MODE 7u
+#define RPC_FLASHERRORS_PROBE_ORDER 8u
+#define RPC_FLASHERRORS_ROM_CONTEXT 9u
+#define RPC_FUSEOPERATIONS_INFO 4u
+#define RPC_FUSEOPERATIONS_READ 16u
+#define RPC_FUSETYPES_UNSIGNED 1u
+#define RPC_FUSETYPES_HEX 2u
+#define RPC_FUSETYPES_BOOLEAN 3u
+#define RPC_FUSETYPES_BIT_COUNT 4u
+#define RPC_FUSETYPES_ODD_PARITY 5u
+#define RPC_FUSETYPES_MAC 6u
+#define RPC_FUSETYPES_BYTES 7u
+#define RPC_FUSETYPES_TEXT 8u
+#define RPC_FUSETYPES_OPTIONAL_ID 9u
 typedef struct __attribute__((packed)) {
     uint8_t magic[4];
     uint32_t length;
@@ -271,6 +286,14 @@ typedef struct __attribute__((packed)) {
 } rpc_adc_setup_t;
 _Static_assert(sizeof(rpc_adc_setup_t) == 224, "adc_setup wire size");
 #define RPC_MAGIC_ADC_SETUP "IOCC"
+typedef struct __attribute__((packed)) {
+    uint16_t record_length;
+    uint8_t name_length;
+    uint8_t data_type;
+    uint16_t bit_count;
+    uint16_t data_length;
+} rpc_fuse_record_t;
+_Static_assert(sizeof(rpc_fuse_record_t) == 8, "fuse_record wire size");
 #define RPC_MODULES(X) \
     X(I2C, "I2CC", "I2CR") \
     X(SPI, "SPIC", "SPIR") \
@@ -279,4 +302,5 @@ _Static_assert(sizeof(rpc_adc_setup_t) == 224, "adc_setup wire size");
     X(PWM, "PWMC", "PWMR") \
     X(UART, "UARC", "UARR") \
     X(I2S, "I2SC", "I2SR") \
-    X(FLASH, "FLAC", "FLAR")
+    X(FLASH, "FLAC", "FLAR") \
+    X(FUSES, "FUSC", "FUSR")

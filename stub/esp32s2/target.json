@@ -5,7 +5,7 @@
   "text": "0x40028000",
   "data": "0x3ffd0000",
   "textBudget": 24576,
-  "dataBudget": 13312,
+  "dataBudget": 16384,
   "stack": 2048,
   "registerStart": "0x3f400000",
   "registerEnd": "0x3f500000",

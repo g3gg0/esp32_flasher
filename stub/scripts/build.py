@@ -39,6 +39,7 @@ def build(target):
     out = ROOT / "build" / target
     out.mkdir(parents=True, exist_ok=True)
     run([sys.executable, ROOT / "scripts/generate-protocol.py"])
+    run([sys.executable, ROOT / "scripts/generate-fuses.py", "--idf", idf])
     (out / "sdkconfig.h").write_text(f'#pragma once\n#define CONFIG_IDF_TARGET_{target.upper()} 1\n#define CONFIG_IDF_TARGET "{target}"\n#define CONFIG_ESP_ROM_HAS_LD_STUB 1\n#define CONFIG_ESP32P4_SELECTS_REV_LESS_V3 1\n#define CONFIG_FREERTOS_UNICORE 1\n#define CONFIG_LOG_DEFAULT_LEVEL 0\n')
     components = idf / "components"
     includes = [out, ROOT / "include", components / "esp_common/include", components / "esp_rom/include", components / f"esp_rom/{target}/include", components / f"soc/{target}/include", components / f"soc/{target}/register", components / f"soc/{target}/register/hw_ver1", components / "soc/include", components / "esp_hw_support/include", components / "esp_hal/include"]
@@ -71,7 +72,7 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
         # IDF's xtensa-esp32[s2/s3]-elf wrappers select the correct CPU plugin
         # and matching libgcc multilib automatically.
         flags += ["-mlongcalls", "-mtext-section-literals"]
-    flags += ['-DNDEBUG', '-DSTUB_HAS_PERIPHERALS=1', '-DSTUB_HAS_FLASH=1', f'-DSTUB_HAS_RMT={int(target not in ("esp32c2", "esp32c61"))}']
+    flags += ['-DNDEBUG', '-DSTUB_HAS_PERIPHERALS=1', '-DSTUB_HAS_FLASH=1', '-DSTUB_HAS_FUSES=1', f'-DSTUB_HAS_RMT={int(target not in ("esp32c2", "esp32c61"))}']
     for inc in includes:
         if inc.is_dir():
             flags += ["-isystem" if inc.is_relative_to(components) else "-I", str(inc)]
@@ -83,7 +84,7 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
     if legacy_flash.is_file():
         flags += [f'-T{legacy_flash}']
     elf = out / "stub.elf"
-    sources = [ROOT / f'src/{name}' for name in ('start.S', 'stub.c', 'platform.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'rmt.c', 'rmt_port.c', 'flash.c', 'flash_port.c', 'peripheral.c', 'peripheral_port.c')]
+    sources = [ROOT / f'src/{name}' for name in ('start.S', 'stub.c', 'platform.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'rmt.c', 'rmt_port.c', 'flash.c', 'flash_port.c', 'fuses.c', 'peripheral.c', 'peripheral_port.c')]
     if target == 'esp32':
         sources += [components / 'soc/esp32/dport_access.c']
         # IDF replaces the original ESP32 ROM flash routines (including an

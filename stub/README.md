@@ -3,6 +3,8 @@
 Small, synchronous RPC endpoint for ESP I/O Lab. All ten chip profiles are
 enabled in the browser: ESP32, S2, S3, C2, C3, C5, C6, C61, H2 and P4.
 P4 and S3 share the accelerated read-only SDMMC sector driver.
+All ten targets also expose explicit SPI-NOR flash operations through FLAC/FLAR.
+Flash initialization is lazy: loading the RAM stub never probes or modifies flash.
 
 | Targets | ROM serial paths | Accelerated capabilities |
 | --- | --- | --- |
@@ -34,7 +36,8 @@ make check              # generated C/JS agree with protocol.json
 This is a freestanding Make build using ESP-IDF 6.1's compiler, SoC/ROM headers,
 and ROM linker interfaces. It does not build an ordinary IDF application or
 start FreeRTOS. There is no heap, bootloader, partition table, flash cache/MMU,
-flash probe, flash write/erase, PSRAM setup, or requirement for external memory.
+PSRAM setup, or requirement for external memory. Flash probing, reading,
+writing and erasing are explicit FLAC operations, never startup steps.
 Espressif also documents the larger full-IDF alternative in
 [its RAM build configuration](https://github.com/espressif/esp-idf/blob/master/Kconfig).
 
@@ -384,3 +387,111 @@ I2C address and register scans continue after structured device IO_ERROR/NACK
 and TIMEOUT responses. Register errors remain visible in their table rows.
 Cancellation, broken serial transport and invalid protocol/configuration still
 stop scanning.
+
+### Flash operations (build 0.7.0, protocol 1.5)
+
+`flash.c` shares bounds, protocol validation, CRC32 and verification across all
+ten ESP32 targets. `flash_port.c` attaches the boot flash using ROM support,
+with eFuse pin mapping on ESP32/S2/S3 and the IDF ROM flash fixes on ESP32.
+The stub, buffers, stack and ESP32 ROM patches stay entirely in RAM. Flash
+does not need to be present for other modules or startup to work.
+
+FLASH capability bit 9 selects FLAC/FLAR using the existing typed peripheral
+envelopes. Port is zero. INFO must succeed before other operations. Args are
+[byte address, byte count]; unused args are zero. No operation runs at startup.
+
+| Operation | Request and response |
+| --- | --- |
+| INFO (4) | No data; values: raw JEDEC ID, detected bytes, sector bytes (4096), page bytes (256), maximum read bytes (768), status register, accessible bytes, flags (bit 0: raw access) |
+| READ (16) | 4-byte aligned address/count, up to 768 bytes; returns raw bytes |
+| WRITE (17) | 4-byte aligned address/count, up to 256 bytes of data; refuses any 0-to-1 transition before writing |
+| ERASE (18) | One aligned 4096-byte sector per command |
+| CHECK (19) | 4-byte aligned range, up to 65536 bytes; values: count, IEEE CRC32, first non-FF address or FFFFFFFF |
+| VERIFY (20) | Up to 768 expected bytes, aligned like READ; exact readback comparison; mismatch returns its absolute address in values[1] and actual byte in values[2] |
+
+Successful READ/WRITE/ERASE/CHECK/VERIFY report completed bytes in values[0].
+Device errors are named using `flashErrors`; serial/correlation failures close
+the session. No chip erase command is needed: the browser erases sectorwise,
+with progress and cancellation between sectors. Program uploads also finish
+each sector before honoring cancellation, preserving the neighboring bytes in
+partial sectors via read/modify/erase/write. Completed writes/erases persist if
+a later operation fails or the link is lost.
+
+This initial shared driver supports ordinary SPI-NOR with 24-bit addresses.
+Detected chips larger than 16 MiB explicitly expose only the first 16 MiB.
+S3 Octal/OPI flash is rejected before attaching; it needs a separate driver.
+Reads/writes are raw physical data; transparent encryption is not provided.
+Bounds use accessible capacity, never a guessed size. The driver adds about
+840 bytes DRAM. RMT targets reserve 13 KiB DRAM / 24 KiB IRAM; C2/C61 retain
+8 KiB DRAM / 16 KiB IRAM. Native memory simulation and browser serial-peer
+tests do not validate electrical behavior or ROM quirks on physical boards.
+
+Build 0.7.1 / protocol 1.6 adds PROBE_STEP (21), args [step 0-5], to isolate
+ROM context, clock/attach, read-mode setup, JEDEC read, geometry setup and
+status read into individual synchronous commands. Steps must be consecutive;
+step 0 restarts detection and disables access until step 5 succeeds. Early
+responses return the step in values[0]; context step 0 also returns raw ROM
+data/function pointers and flash clock/reset registers on P4 in values[1-4].
+The final response has the INFO geometry layout. INFO (4) remains available.
+The P4 adapter explicitly enables its flash clock from XTAL before ROM attach
+and rejects invalid ROM context pointers. Build 0.7.2 additionally selects the
+ROM globals from the ROM ECO header: ECO0-4 uses 0x4ff3ffe8, ECO5+ uses
+0x4ffbffe8. P4 flash detection was confirmed by the user with 0.7.2.
+The UI retains the failing phase as the session's root error;
+ROM panic/reset lines stay visible after SYNC instead of being hidden.
+
+For a direct, read-only board test at 115200 with exclusive serial access:
+`python stub/scripts/live-flash-check.py --port COMxx --chip esp32p4`.
+It uploads only to RAM, probes stepwise, reads 256 bytes and compares CRC32.
+Flash write/erase commands are explicitly excluded from that script.
+
+### Chip-defined Fuses records (0.8.0, protocol 1.8)
+
+All ten ESP32 targets advertise FUSES capability bit 10, command FUSC and
+response FUSR. Only INFO (4) and READ (16) exist; the implementation reads
+public eFuse shadow registers and never programs or refreshes the controller.
+Key-purpose and protection metadata are included; secret key contents are not.
+
+The device owns field selection, names, types and values. There are no browser
+register profiles for this block. `scripts/generate-fuses.py` derives native
+descriptors from ESP-IDF 6.1 `esp_efuse_table.csv` and block shadow ranges.
+Builds regenerate `include/fuse-profiles.h`; `make fuses` regenerates it alone.
+The emitted SCHEMA.SOURCE record links the exact SDK revision used.
+
+INFO uses the peripheral envelope and returns values [record count, wire
+version 1, maximum page bytes 512, record count, 0, 0, 0, schema fingerprint].
+READ args are [record cursor, page byte limit 192-512]. Each reply returns
+values [start cursor, records in page, next cursor, total count, 0, 0, 0,
+schema fingerprint] and whole TLV records as its trailing payload. The host
+continues until next cursor equals total count; no arbitrary register address
+or fuse-block request is accepted.
+
+Each embedded record has this little-endian structure, followed by its name
+and value. The enclosing FUSR packet retains the normal eight-byte header.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| record_length | u16 | 8-byte record header + name + data |
+| name_length | u8 | UTF-8 name byte count, without NUL |
+| data_type | u8 | `fuseTypes` from protocol.json |
+| bit_count | u16 | Numeric bit width, zero for text |
+| data_length | u16 | Payload byte count |
+| name | bytes | Device-defined namespace/name, e.g. FUSE.MAC |
+| data | bytes | Value; integers little endian, MAC bytes in display order |
+
+Types cover unsigned, hex, Boolean, bit-count counters, odd-parity counters,
+MAC, bytes, UTF-8 text and optional IDs. Unknown types remain visible as raw
+bytes. Zero optional IDs are marked unset/unreadable, not invented as IDs.
+Records include factory MAC, optional 128-bit unique ID where the chip defines
+one, wafer/package revision, secure boot, flash encryption, anti-rollback,
+JTAG/download settings and protection/key-purpose metadata. ROM chip/ECO,
+ROM layout, CPU/reset information and stub/IDF/protocol versions are also
+sent as ordinary named records. Missing ROM header fields are explicit text.
+
+The UI groups, filters and exports records generically. Fuses are available
+only with the accelerated stub. P4 Fuses/ROM display was confirmed by the
+user; the other profiles are covered by native and simulated-browser tests.
+Code/data remain RAM-only. DRAM budgets are 16 KiB, or 10 KiB on C2/C61;
+C61 places data at 0x40805000 to keep its enlarged code reservation separate.
+The loader accepts smaller valid budgets within current target bounds and
+reports the mismatching field if UI and manifest layouts differ.

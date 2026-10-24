@@ -79,3 +79,8 @@ test('read errors without a replacement stream stop reception visibly', async ()
     assert.equal(flasher.reader, null);
     assert.ok(logs.some(([level, message]) => level === 'error' && /reception stopped/.test(message)));
 });
+test('device panic and reset evidence remains visible after ROM sync', () => {
+    const messages=[],f=new ESPFlasher({logWarning:line=>messages.push(line)});f.synced=true;
+    f.parseResetMessages(new TextEncoder().encode('Guru Meditation Error: Load access fault\nMEPC : 0x4fc00184\nMCAUSE : 0x5\n'));
+    assert.equal(messages.length,3);assert.ok(messages.some(line=>line.includes('MEPC')));
+});

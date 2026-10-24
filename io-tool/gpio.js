@@ -244,10 +244,10 @@
                 }
             });
         }
-        async scanUsage(ids, { method = 'pull', settleMs = 20, signal, onResult = () => {}, onPhase = () => {} } = {}) {
+        async scanUsage(ids, { method = 'pull', settleMs = 20, loadProfile = false, maxDrive = null, signal, onResult = () => {}, onPhase = () => {} } = {}) {
             if (this.readOnly) throw new Error('Load the accelerated stub for usage scans.');
             if (this.scanning || this.fault || !this.active) throw new Error('Usage-Scan nicht verfügbar.');
-            if (!['pull', 'drive', 'compare'].includes(method) || !Number.isFinite(settleMs) || settleMs < 5 || settleMs > 200) throw new Error('Ungültige Scanparameter.');
+            if (!['pull', 'drive', 'compare', 'sweep'].includes(method) || !Number.isFinite(settleMs) || settleMs < 1 || settleMs > 200 || typeof loadProfile !== 'boolean' || (maxDrive !== null && (!Number.isInteger(maxDrive) || maxDrive < 0))) throw new Error('Ungültige Scanparameter.');
             const targets = [...new Set(ids)];
             if (!targets.length || targets.some(id => !this.pins.has(id) || this.descriptor(id).reserved || this.pinOwners.has(id))) throw new Error('Nur verwaltete, verfügbare GPIO-Pins ohne Peripheriezuordnung können gescannt werden.');
             this.scanning = true; const resume = this.running;
@@ -260,7 +260,7 @@
                         for (const id of targets) {
                             if (signal?.aborted) throw new DOMException('Scan abgebrochen.', 'AbortError');
                             if (this.adc?.channel(id)) await this.adc.open();
-                            const result = await adcAPI.scanPin(this, id, { method, settleMs, signal, onPhase });
+                            const result = await adcAPI.scanPin(this, id, { method, settleMs, loadProfile, maxDrive, signal, onPhase });
                             results.push(result); onResult(result);
                         }
                         return results;
@@ -324,7 +324,7 @@
 
     // Explicit offline preview; the UI always labels it as a simulation.
     class DemoTransport {
-        constructor(chip, clock = now) { this.chip = chip; this.clock = clock; this.registers = new Map(); this.closed = false; this.pinDescriptors = new Map(chip.pins.map(pin => [pin.id, pin])); this.adcModel = adcAPI.createADCModel(chip, this.registers, clock); this.sdModel = sdAPI?.createSDModel(chip, this.registers); this.i2cModel = i2cAPI?.createI2CModel(chip, this.registers); }
+        constructor(chip, clock = now) { this.chip = chip; this.clock = clock; this.simulation = true; this.registers = new Map(); this.closed = false; this.pinDescriptors = new Map(chip.pins.map(pin => [pin.id, pin])); this.adcModel = adcAPI.createADCModel(chip, this.registers, clock); this.sdModel = sdAPI?.createSDModel(chip, this.registers); this.i2cModel = i2cAPI?.createI2CModel(chip, this.registers); }
         async read(address) {
             if (this.closed) throw new Error('Demo beendet.');
             if (this.chip.gpio.inputOverrides && Object.values(this.chip.gpio.inputOverrides).some(source => source.address === address))

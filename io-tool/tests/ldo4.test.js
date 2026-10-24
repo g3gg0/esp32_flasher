@@ -97,7 +97,7 @@ test('supply support and register fields come from profiles, not hard-coded chip
 test('board domain notes cover every affected pin without reserving it', () => {
     const board = require('../configs/boards.js').boards.find(board => board.id === 'p4-eth');
     for (const id of p.pins) {
-        assert.match(board.notes[id], /LDO4-Domäne.*separate Stromversorgung/);
+        assert.match(board.notes[id], /LDO4(?:-Domäne| power domain).*separate (?:Stromversorgung|supply)/);
         assert.equal(chips.esp32p4.pins.find(pin => pin.id === id).reserved, '');
     }
 });

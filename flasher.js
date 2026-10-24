@@ -1207,6 +1207,11 @@ class ESPFlasher {
             const line = this.consoleBuffer.slice(0, newlineIdx).trim();
             this.consoleBuffer = this.consoleBuffer.slice(newlineIdx + 1);
             if (line.length) {
+                // A RAM-stub crash can happen after SYNC. Keep fault/reset
+                // evidence visible instead of reducing it to an RPC timeout.
+                if (this.synced && /Guru Meditation|panic'ed|access fault|Illegal instruction|MCAUSE|MEPC|MTVAL|Saved PC|ESP-ROM:|rst:0x/i.test(line)) {
+                    this.logWarning(`[Device fault/reset] ${line}`);
+                }
                 // Only print device messages if not yet synced
                 if (!this.synced) {
                     this.logDebug(`[Device] ${line}`);
@@ -1239,6 +1244,8 @@ class ESPFlasher {
             }
             newlineIdx = this.consoleBuffer.indexOf('\n');
         }
+        // Binary RPC traffic may contain no newline for long periods.
+        if (this.consoleBuffer.length > 2048) this.consoleBuffer = this.consoleBuffer.slice(-2048);
     }
 
     /**

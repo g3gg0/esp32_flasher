@@ -98,6 +98,17 @@ test('every chip profile has a generated target and a validated RAM-only build',
     await assert.rejects(prepareAccelerated('esp32c99', () => { throw new Error('must not fetch'); }), /no accelerated/);
 });
 
+test('older smaller RAM reservations stay loadable inside current target limits', async () => {
+    const value=manifest('esp32p4');
+    value.ram.textBudget=Math.ceil(value.segments[0].length/256)*256;
+    value.ram.dataBudget=Math.ceil(value.ram.dataUsed/256)*256;
+    await prepareAccelerated('esp32p4',fetchManifest(value));
+    const outside=structuredClone(value);outside.ram.dataBudget=outside.ram.dataUsed-1;
+    await assert.rejects(prepareAccelerated('esp32p4',fetchManifest(outside)),/RAM reservation/);
+    const oversized=structuredClone(value);oversized.ram.dataBudget=acceleratedTargets.esp32p4.dataBudget+256;
+    await assert.rejects(prepareAccelerated('esp32p4',fetchManifest(oversized)),/RAM reservation/);
+});
+
 test('each target shares the ROM handoff, segment checks, entry launch and identity handshake', async () => {
     for (const chip of Object.keys(acceleratedTargets)) {
     const { device, sent } = fixture(packet => packet[0] === 0 ? Uint8Array.of(1, packet[1], 4, 0, 0, 0, 0, 0, 0, 0, 0, 0) : identity(chip, { cpu: acceleratedTargets[chip].cpu }));

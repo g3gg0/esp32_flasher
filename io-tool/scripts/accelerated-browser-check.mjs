@@ -99,7 +99,7 @@ try {
                         await this.processPacket(response);
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SYNC') {
                         const target = ESPIO.acceleratedTargets[window.peerChip];
-                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:5, max_packet_length:1024, capabilities:512 | (target.sdmmc ? 303 : 295) | (["esp32c2","esp32c61"].includes(window.peerChip)?0:16), chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
+                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:8, max_packet_length:1024, capabilities:1536 | (target.sdmmc ? 303 : 295) | (["esp32c2","esp32c61"].includes(window.peerChip)?0:16), chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'IOCC') {
                         await this.processPacket(await this.captureReply(packet));
                     } else if (['I2CC','SPIC','PWMC','RMTC'].includes(new TextDecoder().decode(packet.slice(0,4)))) {
@@ -111,10 +111,18 @@ try {
                         if(tag==='I2CC'&&q.operation===2&&q.data[0]===99){status=5;error=9;data=new Uint8Array();}
                         if(tag==='RMTC'){if(q.operation===16){this.rmtSymbols=q.args[1];this.rmtBytes=0;}if(q.operation===17){if(q.args[0]!==this.rmtBytes)throw new Error('RMT upload offset');this.rmtBytes+=q.data.length;}if(q.operation===18){v[0]=this.rmtSymbols*q.args[0];v[1]=Math.ceil(v[0]/24);v[2]=v[0]*1.25+q.args[1];}}
                         await this.processPacket(ESPIO.rpcEncode('peripheral_response',{status,error,operation:q.operation,port:q.port,actual_hz:q.args[0]||1000000,values:v},tag.slice(0,3)+'R',data));
+                    } else if (new TextDecoder().decode(packet.slice(0,4)) === 'FUSC') {
+                        const q=ESPIO.rpcDecode(packet,'peripheral_command','FUSC'),record=(name,type,bits,data)=>{const text=new TextEncoder().encode(name),r=new Uint8Array(8+text.length+data.length),v=new DataView(r.buffer);v.setUint16(0,r.length,true);r[2]=text.length;r[3]=type;v.setUint16(4,bits,true);v.setUint16(6,data.length,true);r.set(text,8);r.set(data,8+text.length);return r;};
+                        const records=[record('CHIP.MODEL',8,0,new TextEncoder().encode(window.peerChip)),record('ROM.ECO_VERSION',1,8,Uint8Array.of(5)),record('FUSE.MAC',6,48,Uint8Array.of(17,34,51,68,85,102)),record('FUSE.OPTIONAL_UNIQUE_ID',9,128,Uint8Array.from({length:16},(_,i)=>i)),record('FUSE.DEVICE_ONLY_'+window.peerChip,3,1,Uint8Array.of(1))],v=new Array(8).fill(0);v[3]=records.length;v[7]=1234;let data=new Uint8Array();
+                        if(q.operation===4){v[0]=records.length;v[1]=1;v[2]=512;}
+                        else{let cursor=q.args[0],length=0;const chunks=[];while(cursor<records.length&&length+records[cursor].length<=q.args[1]){chunks.push(records[cursor]);length+=records[cursor++].length;}data=new Uint8Array(length);let offset=0;for(const chunk of chunks){data.set(chunk,offset);offset+=chunk.length;}v[0]=q.args[0];v[1]=chunks.length;v[2]=cursor;}
+                        await this.processPacket(ESPIO.rpcEncode('peripheral_response',{operation:q.operation,port:0,values:v},'FUSR',data));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'FLAC') {
                         const q=ESPIO.rpcDecode(packet,'peripheral_command','FLAC'),[a,n]=q.args,v=new Array(8).fill(0);
+                        if(q.operation===21&&window.failFlashStep===q.args[0])continue;
                         this.flashMemory ||= new Uint8Array(131072).fill(255);let data=new Uint8Array();v[0]=n;
-                        if(q.operation===4)v.splice(0,8,0x1140ef,131072,4096,256,768,0,131072,1);
+                        if(q.operation===21)v[0]=q.args[0];
+                        if(q.operation===4||(q.operation===21&&q.args[0]===5))v.splice(0,8,0x1140ef,131072,4096,256,768,0,131072,1);
                         if(q.operation===16)data=this.flashMemory.slice(a,a+n);
                         if(q.operation===17)this.flashMemory.set(q.data,a);
                         if(q.operation===18)this.flashMemory.fill(255,a,a+n);
@@ -196,7 +204,11 @@ try {
     assert.equal(await evaluate(`${$('disconnect')}.hidden`), true);
     await evaluate(`window.failStubFetch=false;${$('load-accelerated')}.click()`);
     await wait(`${$('load-accelerated')}.textContent === 'Accelerated stub active' && ${$('status')}.textContent.includes('SYNC verified')`);
-    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.5'));
+    await wait(`document.querySelector('[data-peripheral="fuses"]') && !document.querySelector('[data-peripheral="fuses"]').disabled`);
+    assert.equal(await evaluate(`!!document.querySelector('[data-peripheral="uart"], [data-peripheral="i2s"]')`),false);
+    await evaluate(`document.querySelector('[data-peripheral="fuses"]').click()`);
+    assert.equal(await evaluate(`${$('fuses-panel')}.hidden || ${$('fuses-read')}.disabled`),false,'FUSES must open directly after accelerated handoff without GPIO or board clicks');
+    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.8'));
     assert.equal(await evaluate(`${$('load-accelerated')}.disabled`), true);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);
     await wait(`!${$('disconnect')}.disabled`);
@@ -220,6 +232,23 @@ try {
     await evaluate(`window.confirm=()=>true;${$('flash-erase')}.click();`);await wait(`${$('flash-result')}.textContent.startsWith('Gelöscht')`);
     await evaluate(`${$('flash-check')}.click()`);await wait(`${$('flash-result')}.textContent.startsWith('Leer')`);
     console.log(`PASS: ${chip} FLASH probe, CRC/blank check, partial-sector program with preserved edges, verify, streaming download and erase; simulated memory.`);
+    await evaluate(`document.querySelector('[data-peripheral="fuses"]').click();${$('fuses-read')}.click();`);
+    await wait(`${$('fuses-state')}.textContent === '5 FELDER'`);
+    assert.ok((await evaluate(`${$('fuses-records')}.textContent`)).includes('11:22:33:44:55:66'));
+    assert.ok((await evaluate(`${$('fuses-records')}.textContent`)).includes('000102030405060708090A0B0C0D0E0F'));
+    await evaluate(`${$('fuses-filter')}.value='DEVICE_ONLY';${$('fuses-filter')}.dispatchEvent(new Event('input'));`);
+    assert.equal(await evaluate(`${$('fuses-records')}.querySelectorAll('tbody tr').length`),1);
+    await evaluate(`window.nativeObjectURL=URL.createObjectURL;URL.createObjectURL=blob=>{window.fuseExport=blob;return nativeObjectURL(blob);};window.nativeAnchorClick=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){};${$('fuses-export')}.click();URL.createObjectURL=nativeObjectURL;HTMLAnchorElement.prototype.click=nativeAnchorClick;`);
+    assert.equal(await evaluate(`fuseExport.text().then(s=>JSON.parse(s).records.length)`),5);
+    console.log(`PASS: ${chip} FUSES renders device-defined TLVs, exact MAC/128-bit ID, an unknown chip-specific field, filtering and JSON export.`);
+    await evaluate(`document.querySelector('[data-peripheral="gpio"]').click();window.loadPin=ESPIO.chips[window.peerChip].pins.find(p=>!p.reserved&&p.output&&ESPIO.adcProfiles[window.peerChip]?.channels[p.id]&&p.id%3===1)||ESPIO.chips[window.peerChip].pins.find(p=>p.id===4&&!p.reserved&&p.output)||ESPIO.chips[window.peerChip].pins.find(p=>!p.reserved&&p.output);document.querySelector('[data-pin="'+loadPin.id+'"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));${$('scan-target')}.value='selected';${$('scan-settle')}.value='50';${$('scan-load-profile')}.checked=true;${$('scan-start')}.click();`);
+    await wait(`${$('scan-state')}.textContent === 'FERTIG' && !${$('scan-start')}.disabled`);
+    assert.equal(await evaluate(`${$('scan-results')}.querySelectorAll('.load-xy [data-level="1"]').length`),5);
+    assert.equal(await evaluate(`${$('scan-results')}.querySelectorAll('.load-xy [data-level="0"]').length`),5);
+    assert.equal(await evaluate(`${$('scan-results')}.innerHTML.includes('NaN')`),false);
+    await evaluate(`window.nativeObjectURL=URL.createObjectURL;URL.createObjectURL=blob=>{window.loadExport=blob;return nativeObjectURL(blob);};window.nativeAnchorClick=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){};${$('scan-export')}.click();URL.createObjectURL=nativeObjectURL;HTMLAnchorElement.prototype.click=nativeAnchorClick;`);
+    assert.deepEqual(await evaluate(`loadExport.text().then(s=>JSON.parse(s).results[0].loadProfile.stages.map(r=>r.label))`),['Pulls','D0','D1','D2','D3']);
+    console.log(`PASS: ${chip} Usage load sweep plots separate HIGH/LOW curves over Pull/D0-D3, with exact JSON export and restored GPIO.`);
     if(await evaluate(`!!ESPIO.adcProfiles[window.peerChip]`)){
         await evaluate(`const id=Object.keys(ESPIO.adcProfiles[window.peerChip].channels).map(Number).find(id=>document.querySelector('[data-pin="'+id+'"]')&&!ESPIO.chips[window.peerChip].pins.find(p=>p.id===id).reserved);document.querySelector('[data-pin="'+id+'"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));${$('read-mode')}.value='adc';${$('read-mode')}.dispatchEvent(new Event('change'));`);
         await wait(`!${$('adc-info')}.hidden && (serialPeer.adcSweeps||0)>3 && !${$('read-mode')}.disabled`);
@@ -251,6 +280,12 @@ try {
     await wait(`${$('load-accelerated')}.hidden && ${$('session-badge')}.textContent === 'OFFLINE'`);
     await evaluate(`${$('classic-stub')}.checked=false;${$('connect')}.click()`);
     await wait(`${$('load-accelerated')}.textContent === 'Accelerated stub active' && ${$('status')}.textContent.includes('SYNC verified')`);
+    if(chip==='esp32p4'){
+        await evaluate(`window.failFlashStep=2;document.querySelector('[data-peripheral="flash"]').click();${$('flash-probe')}.click();`);
+        await wait(`${$('flash-result')}.textContent.includes('Schritt 2') && ${$('status')}.textContent.includes('Schritt 2')`);
+        assert.ok((await evaluate(`${$('status')}.textContent`)).includes('ROM Lesemodus'));
+        console.log('PASS: P4 injected flash timeout retains the exact probe phase in the panel and stopped-measurement banner.');
+    }
     await evaluate(`${$('connect')}.click()`);
     await wait(`${$('session-badge')}.textContent === 'OFFLINE'`);
     assert.deepEqual(errors, []);

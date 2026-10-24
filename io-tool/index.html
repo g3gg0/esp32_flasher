@@ -5,37 +5,41 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
     <title>ESP I/O Lab</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="analog.css">
-    <link rel="stylesheet" href="sd.css">
-    <link rel="stylesheet" href="peripherals.css">
-    <script src="../chips.js" defer></script>
-    <script src="../flasher.js" defer></script>
-    <script src="configs/chips.js" defer></script>
-    <script src="configs/boards.js" defer></script>
-    <script src="image-mask.js" defer></script>
-    <script src="configs/adc.js" defer></script>
-    <script src="adc.js" defer></script>
-    <script src="scope.js" defer></script>
-    <script src="configs/sd.js" defer></script>
-    <script src="sd.js" defer></script>
-    <script src="configs/i2c.js" defer></script>
-    <script src="i2c.js" defer></script>
-    <script src="i2c-registers.js" defer></script>
-    <script src="peripheral-ui.js" defer></script>
-    <script src="i2c-ui.js" defer></script>
-    <script src="configs/ldo4.js" defer></script>
-    <script src="ldo4.js" defer></script>
-    <script src="gpio.js" defer></script>
-    <script src="../stub/protocol.js" defer></script>
-    <script src="../stub/targets.js" defer></script>
-    <script src="accelerated.js" defer></script>
-    <script src="peripheral.js" defer></script>
-    <script src="rmt.js" defer></script>
-    <script src="rmt-ui.js" defer></script>
-    <script src="flash.js" defer></script>
-    <script src="flash-ui.js" defer></script>
-    <script src="app.js" defer></script>
+    <link rel="stylesheet" href="style.css?v=0.8.0-ui4">
+    <link rel="stylesheet" href="analog.css?v=0.8.0-ui4">
+    <link rel="stylesheet" href="load-profile.css?v=0.8.0-ui4">
+    <link rel="stylesheet" href="sd.css?v=0.8.0-ui4">
+    <link rel="stylesheet" href="peripherals.css?v=0.8.0-ui4">
+    <script src="../chips.js?v=0.8.0-ui4" defer></script>
+    <script src="../flasher.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/chips.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/boards.js?v=0.8.0-ui4" defer></script>
+    <script src="image-mask.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/adc.js?v=0.8.0-ui4" defer></script>
+    <script src="load-profile.js?v=0.8.0-ui4" defer></script>
+    <script src="adc.js?v=0.8.0-ui4" defer></script>
+    <script src="scope.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/sd.js?v=0.8.0-ui4" defer></script>
+    <script src="sd.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/i2c.js?v=0.8.0-ui4" defer></script>
+    <script src="i2c.js?v=0.8.0-ui4" defer></script>
+    <script src="i2c-registers.js?v=0.8.0-ui4" defer></script>
+    <script src="peripheral-ui.js?v=0.8.0-ui4" defer></script>
+    <script src="i2c-ui.js?v=0.8.0-ui4" defer></script>
+    <script src="configs/ldo4.js?v=0.8.0-ui4" defer></script>
+    <script src="ldo4.js?v=0.8.0-ui4" defer></script>
+    <script src="gpio.js?v=0.8.0-ui4" defer></script>
+    <script src="../stub/protocol.js?v=0.8.0-ui4" defer></script>
+    <script src="../stub/targets.js?v=0.8.0-ui4" defer></script>
+    <script src="accelerated.js?v=0.8.0-ui4" defer></script>
+    <script src="peripheral.js?v=0.8.0-ui4" defer></script>
+    <script src="rmt.js?v=0.8.0-ui4" defer></script>
+    <script src="rmt-ui.js?v=0.8.0-ui4" defer></script>
+    <script src="flash.js?v=0.8.0-ui4" defer></script>
+    <script src="flash-ui.js?v=0.8.0-ui4" defer></script>
+    <script src="fuses.js?v=0.8.0-ui4" defer></script>
+    <script src="fuses-ui.js?v=0.8.0-ui4" defer></script>
+    <script src="app.js?v=0.8.0-ui4" defer></script>
 </head>
 <body>
     <header class="topbar">
@@ -82,7 +86,7 @@
                 <div class="readout"><div><small id="read-label">GELESEN</small><strong id="read-level">—</strong></div><div><small>GESCHRIEBEN</small><strong id="drive-level">—</strong></div></div>
                 <canvas id="detail-trace" aria-label="Verlauf: grün gelesener Pegel, rot geschriebener Pegel"></canvas>
                 <div class="axis"><span>−1 s</span><span>jetzt</span></div>
-                <div id="pin-scope" class="pin-scope" hidden><strong>Usage-Scope · LOW → HIGH → LOW</strong><div id="pin-scope-plot" class="scope-plot"></div><small id="pin-scope-stats"></small></div>
+                <div id="pin-scope" class="pin-scope" hidden><strong>Usage-Scope · LOW → HIGH → LOW</strong><div id="pin-scope-plot" class="scope-plot"></div><small id="pin-scope-stats"></small><div id="pin-load-profile"></div></div>
                 <p id="pin-note" class="pin-note"></p>
                 <label class="field">Funktion<select id="pin-function"><option value="input">GPIO · Input</option><option value="output">GPIO · Output</option></select></label>
                 <div id="planned-function" class="planned" hidden></div>
@@ -96,8 +100,8 @@
             <div class="section-heading"><div><h2>Usage-Scan</h2><span class="muted">Reaktion auf eine Testansteuerung messen</span></div><span id="scan-state" class="chip-badge">BEREIT</span></div>
             <div class="scan-options">
                 <label>Ziel <select id="scan-target"><option value="selected">Ausgewählter Pin</option><option value="all">Alle verfügbaren GPIOs</option></select></label>
-                <label>Methode <select id="scan-method"><option value="compare" selected>Pull / OUT überlagern · LOW → HIGH → LOW</option><option value="pull">Pull-down / Pull-up / Pull-down</option><option value="drive">Output LOW / HIGH / LOW</option></select></label>
-                <label>Messfenster pro Phase <select id="scan-settle"><option value="5">5 ms</option><option value="20">20 ms</option><option value="50" selected>50 ms</option><option value="100">100 ms</option><option value="200">200 ms</option></select></label>
+                <label>Messfenster pro Phase <select id="scan-settle"><option value="50" selected>50 ms</option><option value="100">100 ms</option><option value="200">200 ms</option></select></label>
+                <label class="load-profile-toggle"><input id="scan-load-profile" type="checkbox" checked>Lastprofil</label>
                 <button id="scan-start" disabled>Scan starten</button><button id="scan-cancel" hidden>Abbrechen</button><button id="scan-export" class="subtle" disabled>Messdaten JSON ↓</button>
             </div>
             <p id="scan-info" class="scan-info">LOW → HIGH → LOW mit ADC und digitalem Istwert. Pull- und Output-Durchlauf pro Pin überlagern.</p>
@@ -172,7 +176,7 @@
             <details id="catalog-details"><summary>Registerkatalog öffnen</summary><label class="catalog-search">Registerblock <select id="register-block" aria-label="Registerblock"></select></label><label class="catalog-search">Register suchen <input id="register-filter" placeholder="z. B. GPIO_IN, RMT, SPI_CMD …" type="search"></label><div id="register-list"></div></details>
         </section>
         <details class="panel logs"><summary>Verbindungsprotokoll <span id="log-count">0</span></summary><pre id="log" aria-label="Verbindungsprotokoll"></pre></details>
-        <footer><span>ESP I/O Lab <b>02</b> · Kein Flash-Schreiben · Kein Firmware-Build</span><span id="measurement-note">Grün zeigt den digitalen Pinpegel, keine Spannung. Kurze Pulse zwischen Abtastungen können fehlen.</span></footer>
+        <footer><span>ESP I/O Lab <b>02</b> · RAM-Stub · Flash-Zugriff im FLASH-Block</span><span id="measurement-note">Grün zeigt den digitalen Pinpegel, keine Spannung. Kurze Pulse zwischen Abtastungen können fehlen.</span></footer>
     </main>
 </body>
 </html>

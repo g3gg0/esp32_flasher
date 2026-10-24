@@ -2,7 +2,7 @@
 
 Lokales HTML-/JavaScript-Werkzeug für GPIO-, ADC-, SD- und Usage-Scan-Zugriffe über den vorhandenen
 ESP-Flasher und seinen RAM-Stub. Der klassische Stub dient nur der GPIO-Beobachtung;
-es gibt keine Flash-Schreib-/Löschoperationen. `../chips.js` und `../flasher.js` bleiben die
+Der FLASH-Block bietet explizite Lese-, Schreib-, Lösch- und Prüffunktionen mit dem beschleunigten Stub. `../chips.js` und `../flasher.js` bleiben die
 vorhandene Transport-/Stub-Implementierung; die neuen Registerprofile sind davon
 getrennt.
 
@@ -171,29 +171,24 @@ Testmethoden werden ausgelassen: reine Input-Pins können nicht als Output
 getrieben werden; Pins ohne interne Pulls erhalten keinen Pull-Test. Falls
 keine gewählte Testmethode verfügbar ist, wird nur das Eingangssignal beobachtet.
 
-- **Pull / OUT überlagern** ist die Voreinstellung. Führt dieselbe Folge zuerst
-  mit Pull-down / Pull-up / Pull-down, danach mit Output LOW / HIGH / LOW aus.
-  Beide Durchläufe erscheinen im selben Scope-Plot; ihre Zeitachsen beginnen
-  jeweils beim Durchlaufstart. Es gibt keine nachträgliche zeitliche Streckung.
-- **Pull-down / Pull-up / Pull-down** verwendet nur die internen Pull-Widerstände.
-- **Output LOW / HIGH** ist die aktive Variante. Sie nutzt die kleinste
-  GPIO-Treiberstärke und startet direkt über **Scan starten**, ohne Freischalt-Checkbox.
-  Das ist weiterhin ein Push-Pull-Ausgang und **keine Strombegrenzung**.
-  Er kann einen fremden Ausgang gegentreiben. Die Testpunkte müssen für diese
-  Ansteuerung geeignet sein. Ein zusätzlich in Reihe geschalteter Widerstand
-  verändert die Messanordnung: Der ESP-seitige ADC misst dann nicht direkt den
-  Pegel hinter dem Widerstand; eine Klassifikation der Zielseite ist damit
-  nicht unverändert gültig.
+Die Oberfläche bietet keine Methodenwahl: Jeder Scan misst zunächst High-Z
+und danach Pull-down / Pull-up / Pull-down sowie Output LOW / HIGH / LOW
+mit jeder verfügbaren Treiberstärke D0 bis Dmax. Alle Pull-/Output-Durchläufe
+erscheinen im selben Scope-Plot, auch wenn das separate Lastprofil ausgeschaltet
+ist. Ihre Zeitachsen beginnen jeweils beim Durchlaufstart; es gibt keine
+nachträgliche zeitliche Streckung. Die Output-Stufen sind Push-Pull-Ausgänge,
+keine Strombegrenzung.
 
-Das wählbare Messfenster beträgt 5–200 ms pro Phase; die Mindestzahl an
+Das wählbare Messfenster beträgt 50, 100 oder 200 ms pro Phase (Vorgabe 50 ms); die Mindestzahl an
 Messungen und der Registerverkehr können die Dauer verlängern. Pro Pin gibt es
 einen Scope-Plot in der Ergebnistabelle und beim ausgewählten Pin zusätzlich
-im Inspector: ADC mit Pulls grün, ADC mit OUT blau, digitaler Istwert gepunktet,
+im Inspector: Pulls dunkelgrün, D0 bis Dmax in zunehmend helleren Grüntönen
+(bei vier Stufen D3 hellgrün), digitaler Istwert gepunktet,
 Sollwert rot (Pull gestrichelt). Linien verbinden einzelne Messpunkte;
 Hover-Texte enthalten Rohwert und Zeitfenster. Kurze horizontale Balken zeigen
 START-Senden bis DONE-Empfang, schattierte Bereiche die Befehlslatenz der
 Ansteuerung. Die tatsächlichen Abtastabstände werden angegeben.
-Ohne ADC zeigen die grünen/blauen Kurven ausschließlich digitale Istwerte
+Ohne ADC zeigen die grünen Kurven ausschließlich digitale Istwerte
 (Stufenkurve, Skala 0/1). Es gibt keine erfundenen ADC-Rohwerte. Jede Grafik
 hat eine eigene Legende; die Ergebnistabelle nennt Pull- und OUT-Werte getrennt.
 
@@ -570,3 +565,107 @@ fixes from 0.4.1. Automated tests cover native calibration/capture and the UI vi
 a simulated serial peer; real electrical behavior and update rates still need
 physical hardware validation. The shared connected browser is never reloaded
 by the isolated headless test workflow.
+
+### FLASH block (0.7.0)
+
+Peripherie & Register includes FLASH on all ESP32 profiles, enabled only with
+the accelerated stub. It uses shared FLAC/FLAR commands for JEDEC ID, size and
+status, byte-range download, file programming, sector/range/full erase, exact
+file verification, and CRC32/blank checking. CRC32 is shown per block of up to
+64 KiB with its address and length. No flash access happens during connection.
+
+Downloads stream to a file when supported; the fallback buffers at most the
+accessible 16 MiB. Addresses/lengths are bytes (decimal or 0x hex). Reads and
+checks require 4-byte alignment, explicit erase ranges require 4096-byte
+alignment. A selected file can start/end at arbitrary byte boundaries.
+Programming defaults to erasing affected sectors, preserving bytes outside
+the file, and verifying every affected sector. Disabling erase permits only
+1-to-0 bit transitions. Standalone verification compares the selected file
+exactly. Cancellation stops between sectors, after preserving edge bytes.
+Failed/interrupted operations do not roll back completed writes or erases.
+
+The shared first implementation handles SPI-NOR through 24-bit addresses;
+larger detected chips expose the first 16 MiB explicitly. S3 Octal flash is
+reported as unsupported. Data is raw physical flash, without transparent
+encryption. ESP8266 remains GPIO observation only. The RAM stub still works
+without flash; detection reports an absent device without enabling writes.
+
+Build 0.7.1 detects flash in six separately acknowledged steps. Each attempted
+step appears in the FLASH panel and connection log, so a timeout identifies
+the last ROM call. The stopped-measurement banner retains this original error.
+Device panic/reset lines are logged even after synchronization. P4 explicitly
+configures its flash clock from XTAL before ROM attach and checks ROM context
+pointers. Build 0.7.2 selects the correct ROM globals for ECO0-4 versus ECO5+;
+the user confirmed working P4 flash detection afterward.
+
+### FUSES and peripheral navigation (0.8.0)
+
+FUSES is a read-only block for all ten ESP32 profiles with the accelerated
+stub. The chip transmits named, typed TLV records; the browser only parses
+and displays them, including previously unknown field names. No chip-specific
+register table is shipped to the browser for FUSES.
+
+It lists factory MAC as the hardware identifier, optional unique ID when
+defined by the chip, wafer/package revision fields, secure boot, encryption,
+anti-rollback, JTAG/download settings, read/write protection and key-purpose
+metadata. It also shows ROM chip ID/ECO/layout and CPU/reset/stub versions.
+Unset or unreadable optional IDs are identified as such. Key values are not
+read. Records can be searched and exported as JSON. The P4 view was confirmed
+on hardware by the user; other chip views have automated coverage.
+
+Peripheral buttons appear only for implemented functions supported by the
+active backend. Classic mode shows GPIO; accelerated mode immediately shows
+the advertised modules, ADC where a working profile exists, and supported
+board controls. UART/I2S and other unavailable blocks are hidden. Buttons
+update directly after stub handoff, without clicking GPIO first.
+
+The loader accepts older smaller RAM reservations within the current target
+limits. Manifest regions and target limits are still validated. Versioned UI
+assets avoid mixing cached target/protocol files with new RAM manifests.
+
+### Usage-Scan: Lastprofil
+
+„Lastprofil“ ergänzt den Zeitverlauf um einen X/Y-Plot. X zeigt die Stufen
+von schwach nach stark: Idle (Eingang ohne Pull/Treiber, High-Z), interne
+Pulls und alle GPIO-Treiberstufen D0 bis zur stärksten, die das FUN_DRV-Feld
+des Chips zulässt. Jede Stufe treibt LOW, HIGH und wieder LOW; Idle ist ein
+einzelner Referenzwert gegen beide Pegel. Y zeigt den ADC-Rohwert, wenn der
+Pin einen ADC-Kanal hat, sonst den digitalen HIGH-Anteil 0–1. Die Plot-
+Beschriftung nennt die jeweilige Messart. HIGH und LOW haben getrennte
+Kurven. Ausgewertet wird das eingeschwungene Fensterende: Messungen, die im
+letzten Drittel des Messfensters begonnen haben. Min/Max-Balken zeigen deren
+Streuung; ein offener LOW-Punkt markiert eine abweichende Rückkehr zu LOW.
+
+Der Scan durchläuft immer alle Stufen und treibt dabei bewusst auch gegen
+externe Lasten. Input-only-Pins
+erhalten nur die Stufen, die sie unterstützen. Die vorhandene Pin-Sicherung und Wiederherstellung
+umfasst auch die Treiberstärke, bei C6-ADC-Pins die LP- und HP-Padfelder.
+Abbruch oder ADC-Fehler gibt den Testausgang zuerst frei und stellt danach
+die vorherige Konfiguration wieder her.
+
+Überschreitet der Abstand zwischen Messpunkten oder ein ADC-/GPIO-Lesefenster
+5 ms, wird der komplette LOW → HIGH → LOW-Verlauf dieser Stufe neu gemessen
+(bei High-Z das Beobachtungsfenster). Nach dem ersten Versuch sind höchstens
+drei Wiederholungen erlaubt; beim ersten sauberen Verlauf endet die Wiederholung.
+Bleiben alle Versuche lückenhaft, wird der Versuch mit dem kleinsten maximalen
+Zeitabstand verwendet und ausdrücklich als lückenhaft markiert. `timingQuality`
+im Export enthält Grenze, Versuchsanzahl, ausgewählten Versuch und die größten
+Abstände aller Versuche. Die Kurve verbindet keine Messpunkte über Lücken
+von mehr als 5 ms.
+
+Während des Scans bleiben alle Plot-Renderings pausiert. Nur Pin, Stufe und
+Versuch werden als grober Fortschritt angezeigt; Ergebnisse werden gesammelt
+und erst nach Abschluss oder Abbruch gemeinsam dargestellt.
+
+Der Zeitverlauf zeigt Pulls und jede Output-Stufe als eigene Messkurve samt
+Sollwert in Rot. High-Z bleibt ein Referenzpunkt im Lastprofil ohne Sollpegel.
+Alle Pull-/Output-Stufen speichern die vollständigen Zeitreihen und zusätzlich
+kompakte Messfenster-Zusammenfassungen. Der JSON-Export `esp-io-usage-scan-v3`
+enthält das Lastprofil im Format `esp-io-load-profile-v2` mit Messart,
+höchster Treiberstufe, Messfenster und allen Stufenwerten. Die X-Abstände sind relative Stufen,
+keine kalibrierte mA-Skala; die Anzeige ermittelt weder Strom noch Widerstand.
+„Folgt ab“ verlangt passende ADC-Endpegel und digitalen Istwert; für LOW muss
+auch die LOW-Rückkehr passen. Nicht monotone Reaktionen werden gekennzeichnet.
+Externe Treiber, Pulls, kapazitive Lasten und andere Dynamik bleiben mögliche
+Ursachen. Die neue Messung benötigt den beschleunigten Stub, aber keine neuen
+Firmwarebefehle: Konfiguration und Erfassung nutzen die vorhandenen RPCs.

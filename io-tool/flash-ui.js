@@ -9,6 +9,8 @@
             const blocked=ctx.blocked()||!ctx.controller()?.transport.supports?.('FLASH')||ctx.controller()?.fault;
             $('flash-probe').disabled=blocked;
             for(const action of ['download','check','erase','erase-all'])$('flash-'+action).disabled=blocked||!live();
+            if(live()&&host.info.capacity<host.info.size){$('flash-erase-all').disabled=true;$('flash-erase-all').title='Gesamtlöschung erst mit Unterstützung der vollständigen Chipgröße verfügbar.';}
+            else $('flash-erase-all').title='';
             for(const action of ['write','verify'])$('flash-'+action).disabled=blocked||!live()||!$('flash-file').files.length;
             for(const field of ['address','length','file','auto-erase','auto-verify'])$('flash-'+field).disabled=blocked;
             $('flash-cancel').hidden=!cancel;$('flash-cancel').disabled=!cancel||cancel.signal.aborted;
@@ -30,7 +32,7 @@
             try{
                 if(task==='probe'){
                     $('flash-state').textContent='NICHT ERKANNT';$('flash-info').textContent='Flash wird erkannt …';
-                    host=new root.ESPIO.FlashHost(ctx.controller());const info=await host.probe();$('flash-state').textContent=`${(info.size/1048576).toLocaleString('de-DE')} MiB`;
+                    host=new root.ESPIO.FlashHost(ctx.controller());const info=await host.probe({onStage:(step,name)=>{$('flash-result').textContent=`Flash-Erkennung ${step}: ${name}`;ctx.log('FLASH:',`Erkennung ${step}: ${name}`);}});$('flash-state').textContent=`${(info.size/1048576).toLocaleString('de-DE')} MiB`;
                     $('flash-info').textContent=`JEDEC ${hex(info.id)} · Status ${hex(info.status)} · ${info.size.toLocaleString('de-DE')} Bytes · ${info.sector} Byte/Sektor · ${info.page} Byte/Seite${info.capacity<info.size?' · aktueller Treiber: erste 16 MiB':''}`;
                     $('flash-result').textContent='Flash erkannt. Lesen, Schreiben, Löschen und Prüfen verfügbar.';
                 }else if(task==='download'){

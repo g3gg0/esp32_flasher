@@ -84,7 +84,7 @@
             } catch (error) {
                 // Without request IDs a late response after timeout cannot be matched
                 // safely. Require reconnect, rather than consuming it as fresh data.
-                if (!(error instanceof RPCError)) this.closed = true;
+                if (!(error instanceof RPCError)) { this.closed = true; this.failure = error; }
                 throw error;
             }
         }
@@ -156,11 +156,11 @@
         captureADCRelease() { return this.captureRequest('capture_command', { operation: protocol.captureOperations.ADC_RELEASE }); }
         async peripheral(module, operation, port, args = [], data = new Uint8Array(), timeoutUs = 100000) {
             const pair = protocol.modules[module];
-            if (!['I2C', 'SPI', 'PWM', 'RMT', 'FLASH'].includes(module) || !this.supports(module)) throw new RPCError(protocol.status.UNSUPPORTED, module);
+            if (!['I2C', 'SPI', 'PWM', 'RMT', 'FLASH', 'FUSES'].includes(module) || !this.supports(module)) throw new RPCError(protocol.status.UNSUPPORTED, module);
             let result, failure;
             try { result = await this.request('peripheral_command', { operation, port, timeout_us: timeoutUs, args }, 'peripheral_response', pair.command, pair.response, data, ['RMT', 'FLASH'].includes(module) ? Math.ceil(timeoutUs / 1000) + 2000 : 2000); }
             catch (error) { if (!error.response) throw error; result = error.response; failure = error; }
-            const receivesData = module === 'FLASH' ? operation === protocol.flashOperations.READ : operation === protocol.operations.TRANSFER;
+            const receivesData = module === 'FUSES' ? operation === protocol.fuseOperations.READ : module === 'FLASH' ? operation === protocol.flashOperations.READ : operation === protocol.operations.TRANSFER;
             if (result.operation !== operation || result.port !== port || ((failure || !receivesData) && result.data.length)) { this.closed = true; throw new Error(`${module} RPC correlation mismatch. Reconnect.`); }
             if (failure) {
                 const errors = module === 'FLASH' ? protocol.flashErrors : protocol.peripheralErrors;
@@ -196,10 +196,11 @@
         if (!response.ok) throw new Error(`Build stub/${chip} first (HTTP ${response.status}).`);
         const manifest = await response.json();
         if (manifest.format !== 'esp-io-ram-stub-v1' || manifest.chip !== chip || manifest.protocolMajor !== protocol.version.major || manifest.ramOnly !== true || manifest.requiresRom !== true || !Array.isArray(manifest.segments) || manifest.segments.length !== 2) throw new Error('Invalid RAM stub manifest.');
-        if (!manifest.ram || ['textStart', 'textBudget', 'dataStart', 'dataBudget', 'stackBytes'].some(key => manifest.ram[key] !== bounds[key]) || !Number.isInteger(manifest.ram.dataUsed) || manifest.ram.dataUsed < bounds.stackBytes || manifest.ram.dataUsed > bounds.dataBudget) throw new Error('Invalid RAM reservation.');
+        const ramIssue = !manifest.ram ? 'missing manifest RAM layout' : ['textStart','dataStart','stackBytes'].find(key=>manifest.ram[key]!==bounds[key]) || ['textBudget','dataBudget'].find(key=>!Number.isInteger(manifest.ram[key])||manifest.ram[key]<1||manifest.ram[key]>bounds[key]) || (!Number.isInteger(manifest.ram.dataUsed)||manifest.ram.dataUsed<bounds.stackBytes||manifest.ram.dataUsed>manifest.ram.dataBudget?'dataUsed':'');
+        if (ramIssue) throw new Error(`Invalid RAM reservation: ${ramIssue}${manifest.ram&&ramIssue in bounds ? ` (stub ${manifest.ram[ramIssue]}, UI limit ${bounds[ramIssue]})` : ''}. Use the matching current UI and stub build.`);
         let entryFound = false;
         for (const [index, segment] of manifest.segments.entries()) {
-            const start = index ? bounds.dataStart : bounds.textStart, budget = index ? bounds.dataBudget : bounds.textBudget;
+            const start = index ? bounds.dataStart : bounds.textStart, budget = index ? manifest.ram.dataBudget : manifest.ram.textBudget;
             if (segment.address !== start || !Number.isInteger(segment.length) || segment.length < 1 || segment.length > budget || typeof segment.data !== 'string' || !/^[a-f0-9]{64}$/.test(segment.sha256)) throw new Error('Stub segment outside reserved RAM.');
             const bytes = Uint8Array.from(atob(segment.data), c => c.charCodeAt(0));
             if (bytes.length !== segment.length) throw new Error('Truncated RAM stub segment.');

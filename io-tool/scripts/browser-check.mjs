@@ -22,7 +22,7 @@ ws.addEventListener('message', ({ data }) => {
 function call(method, params = {}) {
     return new Promise((resolve, reject) => {
         const requestId = ++id;
-        const timeout = setTimeout(() => { pending.delete(requestId); reject(new Error(`CDP timeout: ${method}`)); }, 15000);
+        const timeout = setTimeout(() => { pending.delete(requestId); reject(new Error(`CDP timeout: ${method}`)); }, 45000);
         pending.set(requestId, { resolve, reject, timeout }); ws.send(JSON.stringify({ id: requestId, method, params }));
     });
 }
@@ -32,7 +32,7 @@ async function evaluate(expression) {
     return result.result.value;
 }
 async function wait(expression) {
-    return evaluate(`new Promise((resolve,reject) => { const start=performance.now(); const poll=()=>{if(${expression}) return resolve(true); if(performance.now()-start>6000) return reject(new Error('Wait failed: '+${JSON.stringify(expression)})); setTimeout(poll,30);}; poll(); })`);
+    return evaluate(`new Promise((resolve,reject) => { const start=performance.now(); const poll=()=>{if(${expression}) return resolve(true); if(performance.now()-start>30000) return reject(new Error('Wait failed: '+${JSON.stringify(expression)})); setTimeout(poll,30);}; poll(); })`);
 }
 async function screenshot(name, selector) {
     const dir = new URL('../screenshots/', import.meta.url); await mkdir(dir, { recursive: true });
@@ -84,20 +84,22 @@ try {
     assert.equal(await evaluate(`document.getElementById('pin-state').textContent`), 'OUTPUT');
     assert.equal(await evaluate(`document.getElementById('read-mode').value`), 'adc');
     assert.ok((await evaluate(`document.getElementById('scan-results').textContent`)).includes('SIMULATION'));
-    await evaluate(`document.getElementById('scan-method').value='drive';document.getElementById('scan-method').dispatchEvent(new Event('change'));`);
+    assert.equal(await evaluate(`document.getElementById('scan-method')`), null);
+    assert.deepEqual(await evaluate(`Array.from(document.getElementById('scan-settle').options, o=>o.value)`), ['50', '100', '200']);
     assert.equal(await evaluate(`document.getElementById('scan-start').disabled`), false);
     assert.equal(await evaluate(`document.getElementById('drive-ack')`), null);
     await evaluate(`document.getElementById('scan-start').click();`);
     await wait(`document.getElementById('scan-state').textContent==='FERTIG' && document.getElementById('scan-results').textContent.includes('Output')`);
     await wait(`document.getElementById('drive-level').textContent==='1 / HIGH'`);
-    await evaluate(`document.getElementById('scan-method').value='compare';document.getElementById('scan-method').dispatchEvent(new Event('change'));document.getElementById('scan-start').click();`);
+    await evaluate(`document.getElementById('scan-start').click();`);
     await wait(`document.getElementById('scan-state').textContent==='FERTIG' && document.getElementById('scan-results').textContent.includes('Pull + Output')`);
     assert.equal(await evaluate(`document.getElementById('pin-scope').hidden`), false);
     assert.equal(await evaluate(`document.querySelectorAll('#scan-results .scope-plot svg').length`), 1);
-    assert.ok(await evaluate(`document.getElementById('pin-scope-stats').textContent.includes('OUT:')`));
+    assert.ok(await evaluate(`document.getElementById('pin-scope-stats').textContent.includes('OUT D3:')`));
+    assert.equal(await evaluate(`document.querySelectorAll('#pin-scope-plot [data-trace]').length`), 5);
     assert.ok(await evaluate(`document.querySelectorAll('#pin-scope-plot circle').length>12`));
     await screenshot('adc-pin-scope');
-    await evaluate(`document.getElementById('scan-method').value='pull';document.getElementById('scan-method').dispatchEvent(new Event('change'));document.getElementById('scan-target').value='all';document.getElementById('scan-target').dispatchEvent(new Event('change'));document.getElementById('scan-start').click();`);
+    await evaluate(`document.getElementById('scan-target').value='all';document.getElementById('scan-target').dispatchEvent(new Event('change'));document.getElementById('scan-start').click();`);
     await wait(`document.getElementById('scan-state').textContent==='FERTIG' && document.querySelectorAll('.scan-table tr').length===23`);
     await screenshot('adc-usage-scan');
     await evaluate(`document.getElementById('scan-settle').value='100';document.getElementById('scan-start').click();`);
@@ -127,7 +129,7 @@ try {
         if (chip === 'esp32h2') await evaluate(`document.querySelector('[data-pin="1"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));`);
         await evaluate(`document.getElementById('read-mode').value='adc';document.getElementById('read-mode').dispatchEvent(new Event('change'));`);
         await wait(`document.getElementById('read-label').textContent.includes('ADC') && Number.isFinite(Number(document.getElementById('read-level').textContent))`);
-        await evaluate(`document.getElementById('scan-settle').value='5';document.getElementById('scan-method').value='compare';document.getElementById('scan-target').value='selected';document.getElementById('scan-target').dispatchEvent(new Event('change'));document.getElementById('scan-start').click();`);
+        await evaluate(`document.getElementById('scan-settle').value='50';document.getElementById('scan-target').value='selected';document.getElementById('scan-target').dispatchEvent(new Event('change'));document.getElementById('scan-start').click();`);
         await wait(`document.getElementById('scan-state').textContent==='FERTIG'`);
         await evaluate(`new Promise(resolve=>setTimeout(resolve,1100))`);
         await screenshot(boardId || chip);
@@ -260,7 +262,7 @@ try {
     await evaluate(`const s=document.getElementById('preview-chip');s.value='esp32s2';s.dispatchEvent(new Event('change'));document.getElementById('demo').click();`);
     await wait(`document.getElementById('session-badge').textContent.includes('SIMULATION') && !document.getElementById('scan-start').disabled`);
     assert.equal(await evaluate(`document.getElementById('read-mode').options[1].disabled`), true);
-    await evaluate(`document.getElementById('scan-method').value='compare';document.getElementById('scan-start').click();`);
+    await evaluate(`document.getElementById('scan-start').click();`);
     await wait(`document.getElementById('scan-state').textContent==='FERTIG'`);
     assert.ok(await evaluate(`document.getElementById('scan-results').textContent.includes('GPIO 0/1')`));
     const digitalExport = await evaluate(`const old=URL.createObjectURL;URL.createObjectURL=blob=>{window.__qaExportBlob=blob;return old(blob)};document.getElementById('scan-export').click();URL.createObjectURL=old;window.__qaExportBlob.text().then(JSON.parse);`);

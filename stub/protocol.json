@@ -2,13 +2,13 @@
   "name": "esp-io-rpc",
   "version": {
     "major": 1,
-    "minor": 5
+    "minor": 8
   },
   "byteOrder": "little",
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.7.0",
+  "buildVersion": "0.8.0",
   "header": [
     [
       "magic",
@@ -542,6 +542,31 @@
         ]
       ],
       "trailing": true
+    },
+    "fuse_record": {
+      "fields": [
+        [
+          "record_length",
+          "u16"
+        ],
+        [
+          "name_length",
+          "u8"
+        ],
+        [
+          "data_type",
+          "u8"
+        ],
+        [
+          "bit_count",
+          "u16"
+        ],
+        [
+          "data_length",
+          "u16"
+        ]
+      ],
+      "embedded": true
     }
   },
   "registerOperations": {
@@ -581,7 +606,8 @@
     "UART": 6,
     "I2S": 7,
     "CAPTURE": 8,
-    "FLASH": 9
+    "FLASH": 9,
+    "FUSES": 10
   },
   "modules": {
     "I2C": {
@@ -615,6 +641,10 @@
     "FLASH": {
       "command": "FLAC",
       "response": "FLAR"
+    },
+    "FUSES": {
+      "command": "FUSC",
+      "response": "FUSR"
     }
   },
   "peripheralErrors": {
@@ -676,7 +706,8 @@
     "WRITE": 17,
     "ERASE": 18,
     "CHECK": 19,
-    "VERIFY": 20
+    "VERIFY": 20,
+    "PROBE_STEP": 21
   },
   "flashErrors": {
     "NONE": 0,
@@ -686,6 +717,23 @@
     "ROM": 4,
     "NEEDS_ERASE": 5,
     "VERIFY": 6,
-    "UNSUPPORTED_MODE": 7
+    "UNSUPPORTED_MODE": 7,
+    "PROBE_ORDER": 8,
+    "ROM_CONTEXT": 9
+  },
+  "fuseOperations": {
+    "INFO": 4,
+    "READ": 16
+  },
+  "fuseTypes": {
+    "UNSIGNED": 1,
+    "HEX": 2,
+    "BOOLEAN": 3,
+    "BIT_COUNT": 4,
+    "ODD_PARITY": 5,
+    "MAC": 6,
+    "BYTES": 7,
+    "TEXT": 8,
+    "OPTIONAL_ID": 9
   }
 }

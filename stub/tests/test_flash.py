@@ -13,7 +13,7 @@ class FlashTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();cls.exe=Path(cls.temp.name)/'flash-test'
-        subprocess.run(['cc','-std=c11','-Os','-Wall','-Wextra','-Werror','-fno-builtin','-DRPC_FLASH_TEST=1','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-I',str(ROOT/'include'),'-I',str(ROOT/'src'),*[str(ROOT/'src'/n) for n in ('stub.c','flash.c','rmt.c','peripheral.c','sdmmc.c','capture.c','adc_calibration.c')],str(ROOT/'tests/host-platform.c'),str(ROOT/'tests/flash-mock.c'),'-o',str(cls.exe)],check=True)
+        subprocess.run(['cc','-std=c11','-Os','-Wall','-Wextra','-Werror','-fno-builtin','-DRPC_FLASH_TEST=1','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-I',str(ROOT/'include'),'-I',str(ROOT/'src'),*[str(ROOT/'src'/n) for n in ('stub.c', 'fuses.c','flash.c','rmt.c','peripheral.c','sdmmc.c','capture.c','adc_calibration.c')],str(ROOT/'tests/host-platform.c'),str(ROOT/'tests/flash-mock.c'),'-o',str(cls.exe)],check=True)
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
     def exchange(self,*requests,**env):
@@ -40,3 +40,8 @@ class FlashTest(unittest.TestCase):
         replies=self.exchange(request('FLA',4),request('FLA',17,args=[16,4],data=b'\x00'*4),request('FLA',17,args=[16,4],data=b'\xff'*4),request('FLA',20,args=[16,4],data=b'\0\0\x01\0'))
         self.assertEqual(struct.unpack_from('<I',replies[2],16)[0],5);self.assertEqual(self.value(replies[2],1),16)
         self.assertEqual(struct.unpack_from('<I',replies[3],16)[0],6);self.assertEqual(self.value(replies[3],1),18)
+    def test_phased_probe_enforces_order_and_only_enables_access_after_completion(self):
+        replies=self.exchange(request('FLA',21,args=[0]),request('FLA',21,args=[2]),request('FLA',16,args=[0,4]),*[request('FLA',21,args=[i]) for i in range(1,6)],request('FLA',16,args=[0,4]))
+        self.assertEqual(self.status(replies[0]),0)
+        self.assertNotEqual(self.status(replies[1]),0);self.assertNotEqual(self.status(replies[2]),0)
+        self.assertTrue(all(self.status(r)==0 for r in replies[3:]));self.assertEqual(replies[-1][56:],b'\xff'*4)

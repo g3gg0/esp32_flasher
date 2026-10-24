@@ -294,8 +294,8 @@ test('scope exports real time bounds and separate digital readback for both pull
     assert.ok(result.runs.every(run => run.samples.filter(s => s.io != null).length >= 6));
     const svg = scopeSVG(result);
     assert.match(svg, /LOW HIGH LOW/); assert.match(svg, /ADC-Fenster/);
-    assert.match(svg, /#68e8a5/); assert.match(svg, /#67c9ff/); assert.match(svg, /#ff7786/);
-    assert.match(scopeStats(result), /Pull:.*OUT:/);
+    assert.match(svg, /#246b42/); assert.match(svg, /hsl\(/); assert.match(svg, /#ff7786/);
+    assert.match(scopeStats(result), /Pull:.*OUT D0:/);
     await controller.release(); await controller.close();
 });
 

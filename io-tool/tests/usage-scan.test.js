@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const chips = require('../configs/chips.js');
 const { adcProfiles, classifyUsage } = require('../adc.js');
 const { GPIOController, DemoTransport } = require('../gpio.js');
-const { scopeSVG, scopeLegend } = require('../scope.js');
+const { scopeSVG, scopeLegend, scopeStats } = require('../scope.js');
 
 test('digital scan works for every writable GPIO chip profile without opening or reading an ADC', async () => {
     for (const chip of Object.values(chips).filter(chip => !chip.readOnlyGPIO)) {
@@ -89,4 +89,96 @@ test('comparison interprets the reported weak-HIGH / driven-LOW pattern and its 
     // A changing source or an output that cannot pull LOW is not a pull-up finding.
     assert.notEqual(compare(run('pull', 3650, 4095, 0), run('drive', 57, 4095)).label, 'Pull-up plausibel');
     assert.notEqual(compare(run('pull', 3650, 4095), run('drive', 3600, 4095)).label, 'Pull-up plausibel');
+});
+
+async function timedScan({ id = 32, delays = [], signal, onPhase = () => {}, failRead = false, stepMs = .25 } = {}) {
+    const chip = chips.esp32p4;
+    let time = 0, pendingDelay = null;
+    const clock = () => time, transport = new DemoTransport(chip, clock);
+    transport.simulation = false;
+    const controller = new GPIOController(transport, chip, { clock });
+    await controller.initialize([id]); await controller.configure(id, 'output', 'up', 1);
+    const before = new Map(transport.registers), read = transport.read.bind(transport), write = transport.write.bind(transport);
+    transport.read = async address => {
+        time += stepMs;
+        if (address === controller.bank(id).input && pendingDelay !== null) {
+            if (failRead) throw new Error('test read failure');
+            time += pendingDelay; pendingDelay = null;
+        }
+        return read(address);
+    };
+    transport.write = async (...args) => { time += stepMs; return write(...args); };
+    if (controller.adc?.channel(id)) controller.adc.read = async () => {
+        const startedAt = time; time += .5;
+        return { raw: 2048, value: 2048 / 4095, t: startedAt + .25, startedAt, doneAt: time, receivedAt: time };
+    };
+    const scan = () => controller.scanUsage([id], {
+        method: 'drive', settleMs: 50, signal,
+        onPhase: (pin, phase, progress) => {
+            if (phase === 'drive D0 low') pendingDelay = delays[progress.attempt - 1] || 0;
+            onPhase(pin, phase, progress);
+        }
+    });
+    return { controller, transport, before, scan };
+}
+
+test('ADC and digital stages retry a full LOW/HIGH/LOW run and stop at the first clean attempt', async () => {
+    for (const id of [16, 32]) {
+        const { controller, transport, before, scan } = await timedScan({ id, delays: [12, 0] });
+        const [result] = await scan(), run = result.runs[0];
+        assert.equal(result.measurement, id === 16 ? 'adc' : 'digital');
+        assert.equal(run.timingQuality.attempts, 2);
+        assert.equal(run.timingQuality.selectedAttempt, 2);
+        assert.equal(run.timingQuality.passed, true);
+        assert.ok(run.timingQuality.attemptGapsMs[0] > 5);
+        assert.ok(run.timingQuality.maxGapMs <= 5);
+        assert.deepEqual(run.phases.map(phase => phase.level), [0, 1, 0]);
+        assert.equal(result.timingQuality.length, 1);
+        for (const [address, value] of before) assert.equal(transport.registers.get(address), value);
+        await controller.close();
+    }
+});
+
+test('persistent gaps get exactly three retries and keep the best attempt with an explicit warning', async () => {
+    const { controller, scan } = await timedScan({ delays: [20, 12, 16, 14] });
+    const [result] = await scan(), run = result.runs[0], quality = run.timingQuality;
+    assert.equal(quality.attempts, 4); assert.equal(quality.selectedAttempt, 2);
+    assert.equal(quality.passed, false); assert.equal(quality.maxGapMs, 12.25);
+    assert.match(scopeStats(result), /LÜCKENHAFT.*12\.25 ms/);
+    assert.ok((scopeSVG(result).match(/data-trace="OUT D0" d="([^"]+)"/)[1].match(/M/g) || []).length > 1);
+    await controller.close();
+});
+
+test('the gap threshold is inclusive at 5 ms, not rounded to whole milliseconds', async () => {
+    for (const [delay, attempts] of [[4.75, 1], [4.76, 2]]) {
+        const { controller, scan } = await timedScan({ delays: [delay, 0] });
+        const [result] = await scan();
+        assert.equal(result.runs[0].timingQuality.attempts, attempts);
+        await controller.close();
+    }
+});
+
+test('fast reads still cover the full 50 ms window instead of stopping at 256 samples', async () => {
+    const { controller, scan } = await timedScan({ stepMs: .05 });
+    const [result] = await scan(), run = result.runs[0];
+    assert.equal(run.timingQuality.attempts, 1);
+    for (const phase of run.phases) {
+        assert.ok(phase.finishedAt - phase.ackAt >= 50);
+        assert.ok(run.samples.filter(sample => sample.phase === phase.name).length > 256);
+    }
+    await controller.close();
+});
+
+test('cancellation during a retry still restores the pin; transport errors are not retried', async () => {
+    const abort = new AbortController();
+    for (const failRead of [false, true]) {
+        const { controller, transport, before, scan } = await timedScan({
+            delays: [12], failRead, signal: failRead ? undefined : abort.signal,
+            onPhase: (pin, phase, progress) => { if (!failRead && progress.attempt === 2) abort.abort(); }
+        });
+        await assert.rejects(scan(), failRead ? /test read failure/ : { name: 'AbortError' });
+        for (const [address, value] of before) assert.equal(transport.registers.get(address), value);
+        assert.equal(controller.fault, failRead);
+        await controller.close();
+    }
 });

@@ -41,3 +41,13 @@ test('download streams bounded exact bytes; invalid responses close the transpor
     transport.peripheral=async()=>({values:[4],data:new Uint8Array(3)});
     await assert.rejects(host.read(0,4),/unvoll/);assert.equal(transport.closed,true);
 });
+test('new stubs probe stepwise and preserve the exact failing ROM stage',async()=>{
+    const {host,transport}=fixture(),native=transport.peripheral.bind(transport),stages=[];
+    transport.identity={protocol_minor:6};
+    transport.peripheral=async(kind,operation,port,args,data)=>operation===op.PROBE_STEP
+        ? args[0]===5?native(kind,op.INFO,port,[],data):{values:[args[0],0,0,0,0,0,0,0],data:new Uint8Array()}
+        :native(kind,operation,port,args,data);
+    await host.probe({onStage:(step,name)=>stages.push([step,name])});assert.equal(host.info.capacity,16384);assert.equal(stages.at(-1)[0],5);
+    transport.peripheral=async(kind,operation,port,args)=>{if(args[0]===2)throw new Error('RPC timeout');return{values:[args[0],0,0,0,0,0,0,0],data:new Uint8Array()};};
+    await assert.rejects(host.probe(),/Schritt 2 \(ROM Lesemodus\): RPC timeout/);assert.equal(host.info,null);
+});

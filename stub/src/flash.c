@@ -6,6 +6,8 @@
 static struct { rpc_peripheral_response_t reply; uint32_t data[192]; } packet;
 static uint32_t capacity;
 static unsigned ready;
+static unsigned next_step;
+static uint32_t probe_id,probe_size,probe_status;
 static void fail(unsigned status,unsigned error){packet.reply.status=status;packet.reply.error=error;}
 static int result(unsigned r){if(r)fail(r==2?RPC_STATUS_TIMEOUT:RPC_STATUS_IO_ERROR,RPC_FLASHERRORS_ROM);return !r;}
 uint32_t rpc_flash_capabilities(void){return 1u<<RPC_CAPABILITIES_FLASH;}
@@ -18,11 +20,30 @@ int rpc_flash_handle(const rpc_header_t *request,uint32_t length){
     packet.reply.operation=q->operation;packet.reply.port=q->port;
     unsigned n=length-sizeof(*q);uint32_t address=q->args[0],count=q->args[1];
     if(q->port){fail(RPC_STATUS_BAD_ARGUMENT,0);goto done;}
+    if(q->operation==RPC_FLASHOPERATIONS_PROBE_STEP){
+        unsigned step=q->args[0];
+        if(n||step>5||(step&&step!=next_step)){fail(RPC_STATUS_BAD_ARGUMENT,RPC_FLASHERRORS_PROBE_ORDER);goto done;}
+        if(!step){ready=capacity=0;probe_id=probe_size=probe_status=0;next_step=0;}
+        uint32_t context[4]={0};unsigned r=hw_flash_probe_step(step,&probe_id,&probe_size,&probe_status,context);
+        packet.reply.values[0]=step;
+        for(unsigned i=0;i<4;i++)packet.reply.values[i+1]=context[i];
+        if(r==3){fail(RPC_STATUS_UNSUPPORTED,RPC_FLASHERRORS_UNSUPPORTED_MODE);goto done;}
+        if(r==4){fail(RPC_STATUS_IO_ERROR,RPC_FLASHERRORS_ROM_CONTEXT);goto done;}
+        if(!result(r))goto done;
+        next_step=step+1;
+        if(step<5)goto done;
+        if(!probe_id||probe_id==0xffffff||probe_size<4096){fail(RPC_STATUS_IO_ERROR,RPC_FLASHERRORS_NO_DEVICE);goto done;}
+        capacity=probe_size>0x1000000?0x1000000:probe_size;ready=1;
+        uint32_t v[8]={probe_id,probe_size,4096,256,768,probe_status,capacity,1};
+        for(unsigned i=0;i<8;i++)packet.reply.values[i]=v[i];
+        goto done;
+    }
     if(q->operation==RPC_FLASHOPERATIONS_INFO){
         if(n){fail(RPC_STATUS_BAD_LENGTH,0);goto done;}
         uint32_t id=0,size=0,status=0;ready=0;capacity=0;
         unsigned r=hw_flash_probe(&id,&size,&status);
         if(r==3){fail(RPC_STATUS_UNSUPPORTED,RPC_FLASHERRORS_UNSUPPORTED_MODE);goto done;}
+        if(r==4){fail(RPC_STATUS_IO_ERROR,RPC_FLASHERRORS_ROM_CONTEXT);goto done;}
         if(!result(r))goto done;
         if(!id||id==0xffffff||size<4096){fail(RPC_STATUS_IO_ERROR,RPC_FLASHERRORS_NO_DEVICE);goto done;}
         capacity=size>0x1000000?0x1000000:size;ready=1;

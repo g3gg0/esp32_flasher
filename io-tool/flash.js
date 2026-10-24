@@ -16,7 +16,19 @@
             if(r.data.length!==expected||(operation!==op.INFO&&r.values[0]!==length)){this.transport.close();throw new Error('Flash: unvollständige Antwort; neu verbinden.');}
             return r;
         }
-        probe(){return this.run(async()=>{this.info=null;const r=await this.call(op.INFO),v=r.values;
+        probe({onStage=()=>{}}={}){return this.run(async()=>{
+            this.info=null;let r;
+            if(this.transport.identity?.protocol_minor>=6){
+                const stages=['ROM-Kontext prüfen','Flash-Takt / ROM attach','ROM Lesemodus','JEDEC-ID lesen','ROM Flash-Parameter','Statusregister lesen'];
+                for(let step=0;step<stages.length;step++){
+                    onStage(step,stages[step]);
+                    try{r=await this.transport.peripheral('FLASH',op.PROBE_STEP,0,[step],new Uint8Array(),2000000);}
+                    catch(e){e.message=`Flash-Erkennung Schritt ${step} (${stages[step]}): ${e.message}`;if(e.response?.error===protocol.flashErrors.ROM_CONTEXT)e.message+=' · Kontext '+e.response.values.slice(1,5).map(n=>'0x'+n.toString(16)).join(', ');throw e;}
+                    if(r.data.length||(step<5&&r.values[0]!==step)){this.transport.close();throw new Error('Flash: ungültige Schritt-Antwort.');}
+                    if(step===0)onStage(step,'ROM-Kontext: '+r.values.slice(1,5).map(n=>'0x'+n.toString(16)).join(', '));
+                }
+            }else r=await this.call(op.INFO);
+            const v=r.values;
             if(!v[0]||v[2]!==4096||v[3]!==256||v[4]<4||v[4]>768||v[6]>v[1]||v[6]<4096){this.transport.close();throw new Error('Flash: ungültige Geometrie.');}
             return this.info={id:v[0],size:v[1],sector:v[2],page:v[3],chunk:v[4]&~3,status:v[5],capacity:v[6]};
         });}
