@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ESP32 Tools</title>
+    <style>
+        :root { color-scheme: dark; font: 16px/1.5 system-ui, sans-serif; background: #10151c; color: #e7edf5; }
+        body { max-width: 900px; margin: 0 auto; padding: 3rem 1.25rem; }
+        h1 { margin-bottom: .4rem; }
+        .intro { color: #a9b7c8; margin-top: 0; }
+        .tools { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; margin-top: 2rem; }
+        .tools a { display: block; padding: 1.25rem; border: 1px solid #344253; border-radius: 12px; color: inherit; text-decoration: none; background: #18212b; }
+        .tools a:hover, .tools a:focus-visible { border-color: #53d6a0; outline: none; }
+        .tools strong { display: block; color: #70e3b2; font-size: 1.15rem; }
+        .tools span { color: #b7c3d1; }
+    </style>
+</head>
+<body>
+    <h1>ESP32 Tools</h1>
+    <p class="intro">Browser based tools for ESP32 firmware and hardware work.</p>
+    <nav class="tools" aria-label="ESP32 tools">
+        <a href="esp32-viewer.html"><strong>Firmware Viewer</strong><span>Inspect and edit firmware images.</span></a>
+        <a href="flasher.html"><strong>Web Flasher</strong><span>Flash and test ESP32 devices.</span></a>
+        <a href="io-tool/"><strong>ESP I/O Lab</strong><span>Explore GPIO, ADC, I²C, SD and pin activity.</span></a>
+    </nav>
+</body>
+</html>

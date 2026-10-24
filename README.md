@@ -16,6 +16,7 @@ Use at your own risk and keep backups.
 ## Live demos
 - **[ESP32 Firmware Viewer](https://g3gg0.github.io/esp32_flasher/esp32-viewer.html)** – inspect and edit images (file or live device)
 - **[ESP32 Web Flasher](https://g3gg0.github.io/esp32_flasher/flasher.html)** – flashing/test harness designed for embedding and link-stability checks
+- **[ESP I/O Lab](https://g3gg0.github.io/esp32_flasher/io-tool/)** – GPIO, ADC, I²C, SD and usage-scan workbench
 
 ## Requirements
 - Chrome or Edge (Web Serial or WebUSB API is required for device access)
@@ -30,6 +31,7 @@ The flasher supports two connection methods:
 Web Serial cannot switch baud mid-session without reopening the port (which can reset the device). ESP32 ROM reset messages appear at 115200 baud. Choose 115200 to see ROM output or a higher baud (e.g., 921600) for speed—native USB/JTAG on ESP32-S series is unaffected.
 
 ## Repository layout
+- `io-tool/index.html` – ESP I/O Lab: RAM-stub GPIO/ADC access, native P4 SD-card identification, board pinouts, live traces and usage scans; see [io-tool/README.md](io-tool/README.md)
 - `esp32-viewer.html` – firmware inspector/editor (file and live device modes)
 - `flasher.html` – embeddable flasher and test suite UI
 - `webusb-example.html` – example demonstrating Web Serial and WebUSB usage
