@@ -1029,12 +1029,41 @@ class ESPFlasher {
     }
 
     async startRxLoop() {
+        while (this.reader) {
+            const reader = this.reader;
+            const stream = this.port && this.port.readable;
+            const error = await this._readUntilDone(reader);
+            if (this.reader === reader) {
+                this.reader = null;
+            } else if (this.reader) {
+                /* reopenPort()/openPort() installed a new reader with its own loop */
+                break;
+            }
+            if (!error || this._disconnecting || !this.port) {
+                break;
+            }
+            /* Web Serial reports framing/parity/break/overrun as non-fatal: the stream
+               errors, but port.readable supplies a fresh one. Resume on it so a single
+               garbled byte does not silently stop all reception. */
+            const next = this.port.readable;
+            if (!next || next === stream) {
+                this.logError(`Serial read failed, reception stopped: ${error && (error.name || error.message) || error}`);
+                break;
+            }
+            this.logWarning(`Serial read error (${error.name || error.message || error}), partial frame dropped, reading resumed`);
+            this.slipLayer.buffer = [];
+            this.slipLayer.escaping = false;
+            this.reader = next.getReader();
+        }
+    }
+
+    async _readUntilDone(reader) {
         try {
             while (true) {
                 if (typeof performance !== 'undefined' && performance.mark && performance.measure) {
                     performance.mark('esp32_flasher_receive_start');
                 }
-                const { value, done } = await this.reader.read();
+                const { value, done } = await reader.read();
                 if (typeof performance !== 'undefined' && performance.mark && performance.measure) {
                     performance.mark('esp32_flasher_receive_end');
                     try {
@@ -1044,23 +1073,27 @@ class ESPFlasher {
                 }
                 if (done) {
                     this.logDebug('Reader has been canceled');
-                    break;
+                    return null;
                 }
                 if (value) {
                     this.logSerialData(value, false);
                     this.parseResetMessages(value);
                     const packets = this.slipLayer.decode(value);
                     for (let packet of packets) {
-                        await this.processPacket(packet);
+                        try {
+                            await this.processPacket(packet);
+                        } catch (handlerError) {
+                            this.logError(`Response handler failed: ${handlerError && handlerError.message || handlerError}`);
+                        }
                     }
                 }
             }
         } catch (err) {
-            // Handle cancellation
+            return err || new Error('Serial read failed');
         } finally {
-            if (this.reader) {
-                this.reader.releaseLock();
-                this.reader = null;
+            try {
+                reader.releaseLock();
+            } catch (e) {
             }
         }
     }
