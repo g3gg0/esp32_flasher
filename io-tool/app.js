@@ -64,17 +64,50 @@
         if (parent) parent.append(node);
         return node;
     }
+    const maskedPhotoCache = new Map();
+    function maskedPhoto(config) {
+        const { crop } = config;
+        const key = `${config.image}:${crop.x},${crop.y},${crop.width},${crop.height}`;
+        if (!maskedPhotoCache.has(key)) maskedPhotoCache.set(key, new Promise((resolve, reject) => {
+            const source = new Image();
+            source.onload = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = crop.width; canvas.height = crop.height;
+                    const context = canvas.getContext('2d', { willReadFrequently: true });
+                    context.drawImage(source, -crop.x, -crop.y);
+                    const pixels = context.getImageData(0, 0, crop.width, crop.height);
+                    ESPIO.maskBackgroundPixels(pixels);
+                    context.putImageData(pixels, 0, 0);
+                    resolve(canvas.toDataURL('image/png'));
+                } catch (error) { reject(error); }
+            };
+            source.onerror = () => reject(new Error(`Board image unavailable: ${config.image}`));
+            source.src = config.image;
+        }));
+        return maskedPhotoCache.get(key);
+    }
     function photo(target, config, x, y, width, height) {
         const crop = config.crop;
         const nested = svg('svg', { x, y, width, height, viewBox: `${crop.x} ${crop.y} ${crop.width} ${crop.height}`, preserveAspectRatio: 'none', overflow: 'hidden' }, target);
         // Explicit source dimensions prevent implicit SVG image scaling.
-        svg('image', { href: config.image, x: 0, y: 0, width: config.imageSize.width, height: config.imageSize.height }, nested);
+        const picture = svg('image', { href: config.image, x: 0, y: 0, width: config.imageSize.width, height: config.imageSize.height,
+            visibility: config.maskBackground ? 'hidden' : 'visible' }, nested);
+        if (config.maskBackground) maskedPhoto(config).then(url => {
+            if (!picture.isConnected) return;
+            picture.setAttribute('href', url);
+            picture.setAttribute('x', crop.x);
+            picture.setAttribute('y', crop.y);
+            picture.setAttribute('width', crop.width);
+            picture.setAttribute('height', crop.height);
+            picture.setAttribute('visibility', 'visible');
+        }).catch(() => picture.setAttribute('visibility', 'visible')); // Keep the source image if canvas reading is unavailable.
     }
     function availableBoards() { return [...boardConfigs.boards.filter(item => item.chip === chip.id), boardConfigs.raw(chip)]; }
     function pinReason(id) {
         return chip.pins.find(pin => pin.id === id)?.reserved || '';
     }
-    function exposedPins() { return [...new Set([...board.pins.map(pin => pin.gpio), ...(board.extra || [])].filter(id => id !== null))]; }
+    function exposedPins() { return [...new Set([...board.pins.map(pin => pin.gpio), ...(board.back?.pins || []).map(pin => pin.gpio), ...(board.extra || [])].filter(id => id !== null))]; }
     function supported(fn) { return chip.peripherals.some(block => fn.blocks.includes(block.id)); }
 
     function renderDevices() {
@@ -104,6 +137,13 @@
         }
         $('board-description').textContent = board.description;
         $('board-source').href = board.source;
+        const diagram = $('board-diagram');
+        diagram.hidden = !board.diagram;
+        if (board.diagram) {
+            $('board-diagram-image').src = board.diagram;
+            $('board-diagram-image').alt = `${board.name} Pinout-Diagramm mit vollständiger Pin-Tabelle`;
+            $('board-diagram-credit').textContent = `${board.name} · ${board.attribution}`;
+        }
         $('board-source').textContent = `${board.attribution} ↗`;
         $('pin-count').textContent = `${exposedPins().length} GPIOs`;
     }
@@ -111,13 +151,19 @@
     function renderMap() {
         const drawing = $('board-svg'); drawing.replaceChildren();
         $('quick-controls').replaceChildren(); layout = [];
-        let bx, by, bw, bh;
+        const placements = [];
+        let bx, by, bw, bh, bottom;
         if (board.image) {
             bw = board.id === 'p4-eth' ? 190 : 300;
-            bh = bw * board.crop.height / board.crop.width;
-            bx = (1000 - bw) / 2; by = 45;
-            mapHeight = by + bh + (board.extra ? 65 + Math.ceil(board.extra.length / 2) * 34 : 55);
-            photo(drawing, board, bx, by, bw, bh);
+            bx = (1000 - bw) / 2;
+            bottom = 45;
+            for (const [index, view] of [board, ...(board.back ? [board.back] : [])].entries()) {
+                if (index) bottom += 65;
+                bh = bw * view.crop.height / view.crop.width;
+                placements.push({ view, by: bottom, bh, label: board.back ? index ? 'RÜCKSEITE' : 'VORDERSEITE' : '' });
+                bottom += bh;
+            }
+            mapHeight = bottom + (board.extra ? 65 + Math.ceil(board.extra.length / 2) * 34 : 55);
         } else {
             bw = 260; bx = 370; by = 45;
             const rows = Math.ceil(board.pins.length / 2);
@@ -129,13 +175,32 @@
         }
         drawing.setAttribute('viewBox', `0 0 1000 ${mapHeight}`);
         $('pinmap').style.aspectRatio = `1000 / ${mapHeight}`;
-        for (const pad of board.pins) {
-            const x = board.image ? bx + (pad.x - board.crop.x) / board.crop.width * bw : bx + pad.x / 100 * bw;
-            const y = board.image ? by + (pad.y - board.crop.y) / board.crop.height * bh : by + 28 + pad.y / 12 * 34;
-            addPin(drawing, pad, x, y, y);
+        for (const placement of placements) {
+            const { view, label } = placement;
+            if (label) svg('text', { x: 500, y: placement.by - 14, fill: '#8e9ba8', 'text-anchor': 'middle', 'font-size': 13 }, drawing, label);
+            photo(drawing, view, bx, placement.by, bw, placement.bh);
+        }
+        for (const placement of placements.length ? placements : [{ view: board, by, bh }]) {
+            const { view } = placement;
+            const points = view.pins.map(pad => ({
+                pad,
+                x: view.image ? bx + (pad.x - view.crop.x) / view.crop.width * bw : bx + pad.x / 100 * bw,
+                y: view.image ? placement.by + (pad.y - view.crop.y) / view.crop.height * placement.bh : by + 28 + pad.y / 12 * 34
+            }));
+            for (const point of points) point.traceY = connectorTraceY(point.pad, point.x, point.y, points, bx, bw);
+            for (const side of ['left', 'right']) {
+                let previous = -Infinity;
+                for (const point of points.filter(point => point.pad.gpio !== null && point.pad.side === side).sort((a, b) => a.traceY - b.traceY)) {
+                    point.traceY = Math.max(point.traceY, previous + 18);
+                    previous = point.traceY;
+                }
+            }
+            for (const { pad, x, y, traceY } of points) {
+                addPin(drawing, pad, x, y, traceY);
+            }
         }
         if (board.extra) {
-            const startY = by + bh + 34;
+            const startY = (board.image ? bottom : by + bh) + 34;
             svg('text', { x: 500, y: startY - 8, fill: '#8e9ba8', 'text-anchor': 'middle', 'font-size': 11 }, drawing, 'ZUSATZPADS · SCHEMATISCH');
             board.extra.forEach((id, index) => {
                 const side = index % 2 === 0 ? 'left' : 'right';
@@ -145,12 +210,30 @@
         }
         updateMapState();
     }
+    function connectorTraceY(pad, x, y, points, bx, bw) {
+        if (!pad.gpio && pad.gpio !== 0) return y;
+        const left = pad.side === 'left';
+        const depth = left ? x - bx : bx + bw - x;
+        const offset = Math.min(24, Math.max(0, depth - 32) * .15);
+        if (offset < 1) return y;
+        const edge = left ? 309 : 691;
+        const end = left ? x - 14 : x + 14;
+        const clearance = direction => {
+            const traceY = y + direction * offset;
+            return Math.min(...points.filter(other => other.pad !== pad && other.pad.gpio !== null && other.pad.side === pad.side &&
+                (left ? other.x < x : other.x > x) && (left ? other.x > edge : other.x < edge))
+                .map(other => Math.abs(traceY + (y - traceY) * (other.x - edge) / (end - edge) - other.y)), 100);
+        };
+        const preferred = left ? 1 : -1;
+        const direction = clearance(-preferred) > clearance(preferred) ? -preferred : preferred;
+        return y + direction * offset;
+    }
     function addPin(drawing, pad, x, y, traceY) {
         const left = pad.side === 'left', edge = left ? 309 : 691;
         if (pad.gpio === null) {
             const g = svg('g', { class: 'power-pad' }, drawing);
             svg('circle', { cx: x, cy: y, r: 6 }, g);
-            svg('text', { x: left ? x - 18 : x + 18, y: y + 3, 'text-anchor': left ? 'end' : 'start' }, g, pad.label);
+            svg('text', { x: left ? edge - 5 : edge + 5, y: traceY + 4, 'text-anchor': left ? 'end' : 'start' }, g, pad.label);
             return;
         }
         const id = pad.gpio;
@@ -293,7 +376,7 @@
         $('load-accelerated').hidden = session !== 'hardware';
         $('load-accelerated').disabled = busy || operation || accelerated() || !ESPIO.acceleratedTargets[chip.id] || !!controller?.fault;
         $('load-accelerated').textContent = accelerated() ? 'Accelerated stub active' : 'Load accelerated stub';
-        $('load-accelerated').title = 'Release I/O, return to ROM, upload to RAM and request SYNC. Starts with ESP32-C3/P4.';
+        $('load-accelerated').title = 'Release I/O, return to ROM, upload the matching chip stub to RAM and verify SYNC.';
         const identity = accelerated() ? transport.identity : null;
         $('accelerated-info').hidden = !identity;
         if (identity) $('accelerated-info').textContent = `${identity.chip} · ${identity.cpu} / ${identity.cpu_cores} cores · MAC ${identity.flags & ESPIO.rpcProtocol.identityFlags.MAC_VALID ? Array.from(identity.mac, byte => byte.toString(16).padStart(2, '0')).join(':') : 'unknown'} · stub ${identity.build} / IDF ${identity.idf} · protocol ${identity.protocol_major}.${identity.protocol_minor} · flash unprobed · GPIO/ADC${transport.supports('SDMMC') ? ' · accelerated SDMMC sector reads' : ''}.`;
@@ -351,6 +434,7 @@
     async function chooseBoard(config) {
         if (busy || operation) return;
         busy = true; board = config; planned = null;
+        $('board-diagram').open = false;
         clearScan();
         const ids = exposedPins(); selectedPin = ids.find(id => !pinReason(id)) ?? ids[0];
         renderDevices(); renderMap(); renderFunctions(); updateControls();
