@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="de">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>ESP I/O Lab</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="analog.css">
+    <link rel="stylesheet" href="sd.css">
+    <script src="../chips.js" defer></script>
+    <script src="../flasher.js" defer></script>
+    <script src="configs/chips.js" defer></script>
+    <script src="configs/boards.js" defer></script>
+    <script src="configs/adc.js" defer></script>
+    <script src="adc.js" defer></script>
+    <script src="scope.js" defer></script>
+    <script src="configs/sd.js" defer></script>
+    <script src="sd.js" defer></script>
+    <script src="configs/i2c.js" defer></script>
+    <script src="i2c.js" defer></script>
+    <script src="i2c-ui.js" defer></script>
+    <script src="gpio.js" defer></script>
+    <script src="app.js" defer></script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="./"><span class="brand-mark">⏚</span><span>ESP <b>I/O Lab</b><small>REGISTER WORKBENCH</small></span></a>
+        <span class="session-badge" id="session-badge">OFFLINE</span>
+        <div class="connection-actions">
+            <label class="baud-label">Baud<select id="baud"><option>115200</option><option>460800</option><option selected>921600</option></select></label>
+            <button id="connect" class="primary">Mit ESP verbinden <span>↗</span></button>
+            <button id="disconnect" hidden>Trennen &amp; Reset</button>
+        </div>
+    </header>
+    <main>
+        <section class="intro">
+            <div><p class="eyebrow">ESP32 HARDWARE EXPLORER <span>/</span> GPIO</p><h1>Dein Board. Jeder Pegel.</h1><p>Verbinden, Board wählen und Pins direkt über den RAM-Stub bedienen.</p></div>
+            <div class="legend"><span><i class="dot green"></i> Istwert / gelesen</span><span><i class="dot red"></i> Sollwert / geschrieben</span><small>1 Sekunde Verlauf · zeitbasiertes Polling</small></div>
+        </section>
+        <div id="status" role="status" aria-live="polite">Bereit. Port auswählen → Chip erkennen → RAM-Stub automatisch starten.</div>
+        <section class="device-section panel">
+            <div class="section-heading"><div><span class="step">01</span><h2>Device auswählen</h2><span id="chip-badge" class="chip-badge">Vorschau</span></div><label class="preview-label">Vorschau-Chip <select id="preview-chip" aria-label="Vorschau-Chip"></select></label></div>
+            <div class="board-cards" id="board-cards"></div>
+            <div class="device-footer"><p id="board-description"></p><button id="demo" class="subtle">Ohne Hardware ausprobieren →</button></div>
+        </section>
+        <div class="workspace">
+            <section class="panel board-panel">
+                <div class="section-heading"><div><span class="step">02</span><h2>Live-Pinout</h2><span id="pin-count" class="muted"></span></div><button id="pause" class="subtle" disabled>Ⅱ Pause</button></div>
+                <div class="trace-toolbar"><span id="sampling">Noch keine Messwerte</span><label>Messquelle <select id="read-mode"><option value="digital">GPIO · digital</option><option value="adc">ADC · 12 Bit</option></select></label><label>Poll-Abstand <select id="interval"><option value="10">10 ms</option><option value="20" selected>20 ms</option><option value="50">50 ms</option><option value="100">100 ms</option></select></label></div>
+                <p id="adc-info" class="mode-info" hidden>ADC-Rohwerte 0–4095 · nicht spannungskalibriert · Kanäle werden nacheinander gelesen. Pins ohne ADC bleiben ohne Messkurve.</p>
+                <div class="map-scroll"><div id="pinmap"><canvas id="map-traces" aria-hidden="true"></canvas><svg id="board-svg" role="group" aria-label="Board mit anklickbaren GPIO-Pins"></svg><div id="quick-controls"></div></div></div>
+                <div class="board-caption"><span>Pin anklicken, um ihn zu konfigurieren. <i class="dot reserved"></i> Reserviert</span><a id="board-source" target="_blank" rel="noreferrer">Bild- und Pinoutquelle ↗</a></div>
+            </section>
+            <aside class="inspector panel">
+                <div class="section-heading"><div><span class="step">03</span><h2>Pin konfigurieren</h2></div><span id="pin-state" class="state">—</span></div>
+                <div class="selected-pin"><span id="pin-name">GPIO 0</span><small id="pin-subtitle">Digitaler Ein- / Ausgang</small></div>
+                <div class="readout"><div><small id="read-label">GELESEN</small><strong id="read-level">—</strong></div><div><small>GESCHRIEBEN</small><strong id="drive-level">—</strong></div></div>
+                <canvas id="detail-trace" aria-label="Verlauf: grün gelesener Pegel, rot geschriebener Pegel"></canvas>
+                <div class="axis"><span>−1 s</span><span>jetzt</span></div>
+                <div id="pin-scope" class="pin-scope" hidden><strong>Usage-Scope · LOW → HIGH → LOW</strong><div id="pin-scope-plot" class="scope-plot"></div><small id="pin-scope-stats"></small></div>
+                <p id="pin-note" class="pin-note"></p>
+                <label class="field">Funktion<select id="pin-function"><option value="input">GPIO · Input</option><option value="output">GPIO · Output</option></select></label>
+                <div id="planned-function" class="planned" hidden></div>
+                <label class="field" id="pull-field">Pull-Widerstand<select id="pin-pull"><option value="none">Keiner / Floating</option><option value="up">Pull-up</option><option value="down">Pull-down</option></select></label>
+                <div id="output-controls" hidden><p class="field-label">Ausgang setzen</p><div class="level-buttons"><button id="set-low">0 <small>LOW</small></button><button id="set-high">1 <small>HIGH</small></button></div></div>
+                <p class="inspector-help" id="inspector-help">Zum Steuern mit Hardware verbinden oder die Demo starten.</p>
+                <details class="register-details"><summary>GPIO-Register dieses Pins</summary><dl id="pin-registers"></dl></details>
+            </aside>
+        </div>
+        <section class="panel scan-panel">
+            <div class="section-heading"><div><h2>Usage-Scan</h2><span class="muted">Reaktion auf eine Testansteuerung messen</span></div><span id="scan-state" class="chip-badge">BEREIT</span></div>
+            <div class="scan-options">
+                <label>Ziel <select id="scan-target"><option value="selected">Ausgewählter Pin</option><option value="all">Alle verfügbaren GPIOs</option></select></label>
+                <label>Methode <select id="scan-method"><option value="compare" selected>Pull / OUT überlagern · LOW → HIGH → LOW</option><option value="pull">Pull-down / Pull-up / Pull-down</option><option value="drive">Output LOW / HIGH / LOW</option></select></label>
+                <label>Messfenster pro Phase <select id="scan-settle"><option value="5">5 ms</option><option value="20">20 ms</option><option value="50" selected>50 ms</option><option value="100">100 ms</option><option value="200">200 ms</option></select></label>
+                <button id="scan-start" disabled>Scan starten</button><button id="scan-cancel" hidden>Abbrechen</button><button id="scan-export" class="subtle" disabled>Messdaten JSON ↓</button>
+            </div>
+            <p id="scan-info" class="scan-info">LOW → HIGH → LOW mit ADC und digitalem Istwert. Pull- und Output-Durchlauf pro Pin überlagern.</p>
+            <p id="scan-progress" role="status" aria-live="polite"></p>
+            <div id="scan-results" class="scan-results"><p>Noch kein Scan. Die bisherige Konfiguration wird nach jedem getesteten Pin wiederhergestellt.</p></div>
+        </section>
+        <section class="panel peripheral-panel">
+            <div class="section-heading"><div><h2>Peripherie &amp; Register</h2><span class="muted">GPIO · ADC · SD</span></div><span id="catalog-count" class="chip-badge"></span></div>
+            <div class="peripheral-buttons" id="peripherals"></div>
+            <p id="peripheral-description" class="muted">GPIO wird per Registerzugriff bedient. Weitere Blöcke lassen sich erkunden; deren Steuerung folgt später.</p>
+            <div id="i2c-panel" class="sd-panel" hidden>
+                <div class="sd-heading"><div><h3>I²C-Port</h3><p id="i2c-backend"></p></div><span id="i2c-state" class="chip-badge">NICHT AKTIV</span></div>
+                <div id="i2c-configuration">
+                    <div class="sd-actions">
+                        <label>Controller <select id="i2c-port"><option value="0">I²C0</option><option value="1">I²C1</option></select></label>
+                        <label>SDA <select id="i2c-sda" aria-label="I²C SDA"></select></label>
+                        <label>SCL <select id="i2c-scl" aria-label="I²C SCL"></select></label>
+                        <label>Takt <select id="i2c-speed"><option value="100000">100 kHz</option><option value="400000">400 kHz</option></select></label>
+                        <label><input id="i2c-pullups" type="checkbox" checked> interne Pull-ups zusätzlich</label>
+                    </div>
+                    <div class="sd-actions"><button id="i2c-apply">I²C-Port aktivieren</button><button id="i2c-release" hidden>Port freigeben</button><button id="i2c-board-preset" class="subtle" hidden>Onboard-I²C belegen</button></div>
+                    <p id="i2c-note" class="sd-note"></p><p class="sd-note">Open Drain · externe Pull-ups zur passenden I/O-Spannung. Interne Pull-ups sind schwach. Zugewiesene Pins sind gelb und während der Nutzung für andere Funktionen gesperrt.</p>
+                    <div class="sd-command-area">
+                        <div class="sd-actions"><button id="i2c-scan">Adressen scannen · 0x03–0x77</button><button id="i2c-cancel" hidden>Abbrechen</button><span id="i2c-progress" role="status" aria-live="polite"></span></div>
+                        <div id="i2c-addresses" class="peripheral-buttons"></div>
+                        <div class="sd-actions"><label>7-Bit-Adresse <input id="i2c-address" value="0x18" spellcheck="false"></label><label>Schreiben · Hex-Bytes <input id="i2c-write" placeholder="z. B. 00 A5 FF" spellcheck="false"></label><label>Lesen · Bytes <input id="i2c-read" type="number" min="0" max="32" value="1"></label><button id="i2c-transfer">Übertragen</button></div>
+                        <p class="sd-note">Schreiben + Lesen verwendet Repeated Start ohne STOP dazwischen. Reines Lesen: Schreibfeld leer lassen. Nur Schreiben: 0 Lesebytes. 0 Schreib-/Lesebytes prüft die Adresse. Maximal 31 Schreibbytes, bei kombiniertem Zugriff 30; maximal 32 Lesebytes.</p>
+                        <pre id="i2c-result" class="bus-log" aria-label="I²C-Transaktionsprotokoll">Noch keine Transaktionen.</pre>
+                    </div>
+                </div>
+            </div>
+            <div id="sd-panel" class="sd-panel" hidden>
+                <div class="sd-heading"><div><h3>SD-Port</h3><p id="sd-backend"></p></div><span id="sd-state" class="chip-badge">NICHT AKTIV</span></div>
+                <div id="sd-configuration">
+                    <div class="sd-pins">
+                        <label>D0 *<select id="sd-d0" aria-label="SD D0"></select></label>
+                        <label>D1<select id="sd-d1" aria-label="SD D1"></select></label>
+                        <label>D2<select id="sd-d2" aria-label="SD D2"></select></label>
+                        <label>D3<select id="sd-d3" aria-label="SD D3"></select></label>
+                        <label>CMD *<select id="sd-cmd" aria-label="SD CMD"></select></label>
+                        <label>CLK *<select id="sd-clk" aria-label="SD CLK"></select></label>
+                    </div>
+                    <div class="sd-actions"><label>Busbreite <select id="sd-width"><option value="1">1 Bit</option><option value="4">4 Bit · D0–D3 erforderlich</option></select></label><span>400 kHz · Identifikation</span><button id="sd-apply">SD-Port aktivieren</button><button id="sd-release" hidden>Port freigeben</button></div>
+                    <div class="sd-actions"><label>Versorgung <select id="sd-power"><option value="external">Vorhandene / externe 3,3 V</option></select></label><button id="sd-board-preset" class="subtle" hidden>Onboard-Slot belegen</button></div>
+                    <p id="sd-config-note" class="sd-note"></p>
+                    <p id="sd-power-note" class="sd-note">3,3-V-SD mit gemeinsamer Masse und Pull-ups an CMD/DAT, auch D3 im 1-Bit-Modus. Zugewiesene Pins sind gelb; weitere Pins sind in der Chipansicht wählbar.</p>
+                    <div class="sd-command-area">
+                        <div class="sd-actions"><button id="sd-identify" class="primary">Karte identifizieren</button><button id="sd-cancel" hidden>Abbrechen</button><span id="sd-progress" role="status" aria-live="polite"></span></div>
+                        <div class="sd-actions"><label>Kommando <select id="sd-command"></select></label><label>Argument <input id="sd-argument" value="0x00000000" spellcheck="false" aria-label="SD-Kommandoargument"></label><button id="sd-send">Senden</button></div>
+                        <p class="sd-note">Identifikation: CMD0 → CMD8 → CMD55 / ACMD41 → CMD2 → CMD3 → CMD9 → CMD7 → optional ACMD6 für 4 Bit → CMD13.</p>
+                        <div id="sd-card" class="sd-card" hidden></div>
+                        <div class="sd-download">
+                            <h4>SD-Inhalt herunterladen</h4>
+                            <div class="sd-actions"><label>Startsektor <input id="sd-download-start" value="0" inputmode="numeric"></label><label>Endsektor (inkl.) <input id="sd-download-end" value="max" placeholder="max"></label><button id="sd-download-all" class="subtle">0–max</button><button id="sd-download">Abbild herunterladen ↓</button><button id="sd-download-cancel" hidden>Abbrechen</button></div>
+                            <p id="sd-download-range" class="sd-note">Zuerst die Karte identifizieren. Rohabbild mit 512 Bytes pro Sektor.</p>
+                            <progress id="sd-download-progress" max="1" value="0" aria-label="SD-Download-Fortschritt"></progress>
+                            <p id="sd-download-status" class="sd-note" role="status" aria-live="polite">Noch kein Download.</p>
+                        </div>
+                        <div class="sd-log-heading"><strong>Kommandos &amp; Antworten</strong><button id="sd-clear" class="subtle">Leeren</button></div>
+                        <pre id="sd-log" aria-label="SD-Kommandoprotokoll">Noch keine Kommandos.</pre>
+                    </div>
+                </div>
+            </div>
+            <details id="catalog-details"><summary>Registerkatalog öffnen</summary><label class="catalog-search">Registerblock <select id="register-block" aria-label="Registerblock"></select></label><label class="catalog-search">Register suchen <input id="register-filter" placeholder="z. B. GPIO_IN, RMT, SPI_CMD …" type="search"></label><div id="register-list"></div></details>
+        </section>
+        <details class="panel logs"><summary>Verbindungsprotokoll <span id="log-count">0</span></summary><pre id="log" aria-label="Verbindungsprotokoll"></pre></details>
+        <footer><span>ESP I/O Lab <b>02</b> · Kein Flash-Schreiben · Kein Firmware-Build</span><span id="measurement-note">Grün zeigt den digitalen Pinpegel, keine Spannung. Kurze Pulse zwischen Abtastungen können fehlen.</span></footer>
+    </main>
+</body>
+</html>
