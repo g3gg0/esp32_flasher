@@ -2,13 +2,13 @@
   "name": "esp-io-rpc",
   "version": {
     "major": 1,
-    "minor": 4
+    "minor": 5
   },
   "byteOrder": "little",
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.6.0",
+  "buildVersion": "0.7.0",
   "header": [
     [
       "magic",
@@ -580,7 +580,8 @@
     "PWM": 5,
     "UART": 6,
     "I2S": 7,
-    "CAPTURE": 8
+    "CAPTURE": 8,
+    "FLASH": 9
   },
   "modules": {
     "I2C": {
@@ -610,6 +611,10 @@
     "I2S": {
       "command": "I2SC",
       "response": "I2SR"
+    },
+    "FLASH": {
+      "command": "FLAC",
+      "response": "FLAR"
     }
   },
   "peripheralErrors": {
@@ -664,5 +669,23 @@
   "rmtEncodings": {
     "RAW": 0,
     "BITMAP": 1
+  },
+  "flashOperations": {
+    "INFO": 4,
+    "READ": 16,
+    "WRITE": 17,
+    "ERASE": 18,
+    "CHECK": 19,
+    "VERIFY": 20
+  },
+  "flashErrors": {
+    "NONE": 0,
+    "NO_DEVICE": 1,
+    "RANGE": 2,
+    "ALIGNMENT": 3,
+    "ROM": 4,
+    "NEEDS_ERASE": 5,
+    "VERIFY": 6,
+    "UNSUPPORTED_MODE": 7
   }
 }

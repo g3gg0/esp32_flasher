@@ -6,6 +6,7 @@
     const hex = value => `0x${(value >>> 0).toString(16).padStart(8, '0')}`;
     const labels = { observe: 'BEOBACHTEN', input: 'INPUT', output: 'OUTPUT', unknown: 'FEHLER', sd: 'SD', i2c: 'I²C', spi: 'SPI', pwm: 'PWM', rmt: 'RMT' };
     const functions = [
+        { id: 'flash', name: 'FLASH', blocks: ['spi_mem', 'spi'] },
         { id: 'i2c', name: 'I²C', blocks: ['i2c'] },
         { id: 'spi', name: 'SPI', blocks: ['spi'] },
         { id: 'sd', name: 'SD', blocks: ['sdmmc', 'spi'] },
@@ -43,6 +44,8 @@
     const peripheralPanels = ESPIO.createPeripheralPanels({ controller: () => controller, chip: () => chip, board: () => board, pins: exposedPins, gpioOption, log, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); } });
 
     const rmtPanel = ESPIO.createRMTPanel({ controller: () => controller, chip: () => chip, board: () => board, pins: exposedPins, gpioOption, log, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); } });
+
+    const flashPanel = ESPIO.createFlashPanel({ controller: () => controller, chip: () => chip, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); }, log });
 
     function gpioOption(id) {
         const pin = chip.pins.find(pin => pin.id === id);
@@ -113,7 +116,7 @@
         return chip.pins.find(pin => pin.id === id)?.reserved || '';
     }
     function exposedPins() { return [...new Set([...board.pins.map(pin => pin.gpio), ...(board.back?.pins || []).map(pin => pin.gpio), ...(board.extra || [])].filter(id => id !== null))]; }
-    function supported(fn) { return chip.peripherals.some(block => fn.blocks.includes(block.id)); }
+    function supported(fn) { if (fn.id === 'flash') return !chip.readOnlyGPIO; return chip.peripherals.some(block => fn.blocks.includes(block.id)); }
 
     function renderDevices() {
         $('preview-chip').value = chip.id;
@@ -325,13 +328,13 @@
         $('peripherals').replaceChildren();
         for (const fn of [{ id: 'gpio', name: 'GPIO' }, ...(ESPIO.ldo4Profiles[chip.id] ? [{ id: 'ldo4', name: 'LDO4', blocks: ['pmu'] }] : []), ...functions.filter(supported)]) {
             const button = document.createElement('button'); button.textContent = fn.name; button.dataset.peripheral = fn.id;
-            button.className = fn.id === peripheral ? 'active' : ''; button.disabled = fn.id !== 'gpio' && (!accelerated() || (fn.id === 'rmt' && !transport?.supports?.('RMT')));
-            const small = document.createElement('small'); small.textContent = ['gpio', 'ldo4'].includes(fn.id) || (fn.id === 'adc' && adcProfiles[chip.id]) || (fn.id === 'sd' && sdProfiles[chip.id]) || (['i2c', 'spi', 'pwm', 'rmt'].includes(fn.id)) ? 'AKTIV' : 'GEPLANT'; button.append(small);
+            button.className = fn.id === peripheral ? 'active' : ''; button.disabled = fn.id !== 'gpio' && (!accelerated() || (fn.id === 'rmt' && !transport?.supports?.('RMT')) || (fn.id === 'flash' && !transport?.supports?.('FLASH')));
+            const small = document.createElement('small'); small.textContent = ['gpio', 'ldo4'].includes(fn.id) || (fn.id === 'adc' && adcProfiles[chip.id]) || (fn.id === 'sd' && sdProfiles[chip.id]) || (['i2c', 'spi', 'pwm', 'rmt', 'flash'].includes(fn.id)) ? 'AKTIV' : 'GEPLANT'; button.append(small);
             button.addEventListener('click', () => {
-                peripheral = ['sd', 'i2c', 'spi', 'pwm', 'rmt', 'ldo4'].includes(fn.id) && peripheral === fn.id ? 'gpio' : fn.id;
+                peripheral = ['sd', 'i2c', 'spi', 'pwm', 'rmt', 'ldo4', 'flash'].includes(fn.id) && peripheral === fn.id ? 'gpio' : fn.id;
                 $('register-block').value = fn.id === 'gpio' ? 'gpio' : chip.peripherals.find(block => fn.blocks.includes(block.id))?.id || '*';
                 $('peripheral-description').textContent = fn.id === 'i2c' && ESPIO.i2cProfiles[chip.id] ? 'I²C-Port: SDA/SCL zuordnen, Adressen scannen und Bytes übertragen.' : fn.id === 'sd' ? 'SD-Port: Pins zuordnen und die Karte über den nativen Host identifizieren.' : fn.id === 'gpio' ? 'GPIO Input / Output: Registerzugriffe aktiv.' : fn.id === 'adc' && adcProfiles[chip.id] ? 'ADC verfügbar: Messquelle im Live-Pinout auf ADC umschalten. 12-Bit-Rohwerte, sequenziell, ohne Spannungskalibrierung.' : `${fn.name} ist als Erweiterung vorgesehen. Der Registerkatalog ist verfügbar; es werden keine Peripherieregister geschrieben.`;
-                if (['i2c', 'spi', 'pwm', 'rmt'].includes(fn.id)) $('peripheral-description').textContent = fn.name + ': beschleunigter RPC im RAM-Stub.';
+                if (['i2c', 'spi', 'pwm', 'rmt', 'flash'].includes(fn.id)) $('peripheral-description').textContent = fn.name + ': beschleunigter RPC im RAM-Stub.';
                 if (fn.id === 'ldo4') $('peripheral-description').textContent = ESPIO.ldo4Profiles[chip.id].description;
                 renderPeripherals(); renderCatalog();
             });
@@ -344,7 +347,7 @@
         $('register-block').value = chip.peripherals.some(block => block.id === previous) ? previous : 'gpio';
         renderSD();
         updateLDO4Controls();
-        i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral);
+        i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral);
     }
     async function loadCatalog() {
         const request = ++catalogRequest;
@@ -414,13 +417,13 @@
         updateScanControls();
         updateSDControls();
         updateLDO4Controls();
-        i2cPanel.update(); peripheralPanels.update(); rmtPanel.update();
+        i2cPanel.update(); peripheralPanels.update(); rmtPanel.update(); flashPanel.update();
     }
     async function initializeBoard() {
         const token = ++boardRequest;
         sampleTimes = []; lastPoll = null;
         if (controller) { await controller.release(); await controller.close(); controller = null; }
-        sdHost = null; clearSDResults(); renderSD(); i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral);
+        sdHost = null; clearSDResults(); renderSD(); i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral);
         if (!transport || session === 'offline') return;
         const current = new GPIOController(transport, chip, {
             readOnly: !accelerated(),
@@ -443,7 +446,7 @@
         controller = current;
         await current.initialize(exposedPins().filter(id => !chip.pins.find(pin => pin.id === id)?.reserved));
         if (token !== boardRequest || !transport || session === 'offline') { await current.close(); return; }
-        renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral);
+        renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral);
         current.start(Number($('interval').value));
     }
     async function chooseBoard(config) {
@@ -530,7 +533,7 @@
             status('Releasing I/O and loading accelerated stub into RAM…');
             await controller.release(); await controller.close(); controller = null;
             transport.close(); transport = null;
-            sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); clearScan();
+            sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); clearScan();
             transport = await ESPIO.startAccelerated(flasher, manifest);
             $('interval').value = '1';
             await initializeBoard();
@@ -610,7 +613,7 @@
             status(error.message || String(error), 'error'); log('LDO4:', error.message || error);
         } finally {
             operation = false;
-            renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral);
+            renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral);
             updateControls();
         }
     }

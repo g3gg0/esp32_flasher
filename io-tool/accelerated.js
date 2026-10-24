@@ -156,13 +156,15 @@
         captureADCRelease() { return this.captureRequest('capture_command', { operation: protocol.captureOperations.ADC_RELEASE }); }
         async peripheral(module, operation, port, args = [], data = new Uint8Array(), timeoutUs = 100000) {
             const pair = protocol.modules[module];
-            if (!['I2C', 'SPI', 'PWM', 'RMT'].includes(module) || !this.supports(module)) throw new RPCError(protocol.status.UNSUPPORTED, module);
+            if (!['I2C', 'SPI', 'PWM', 'RMT', 'FLASH'].includes(module) || !this.supports(module)) throw new RPCError(protocol.status.UNSUPPORTED, module);
             let result, failure;
-            try { result = await this.request('peripheral_command', { operation, port, timeout_us: timeoutUs, args }, 'peripheral_response', pair.command, pair.response, data, module === 'RMT' ? Math.ceil(timeoutUs / 1000) + 2000 : 2000); }
+            try { result = await this.request('peripheral_command', { operation, port, timeout_us: timeoutUs, args }, 'peripheral_response', pair.command, pair.response, data, ['RMT', 'FLASH'].includes(module) ? Math.ceil(timeoutUs / 1000) + 2000 : 2000); }
             catch (error) { if (!error.response) throw error; result = error.response; failure = error; }
-            if (result.operation !== operation || result.port !== port || ((failure || operation !== protocol.operations.TRANSFER) && result.data.length)) { this.closed = true; throw new Error(`${module} RPC correlation mismatch. Reconnect.`); }
+            const receivesData = module === 'FLASH' ? operation === protocol.flashOperations.READ : operation === protocol.operations.TRANSFER;
+            if (result.operation !== operation || result.port !== port || ((failure || !receivesData) && result.data.length)) { this.closed = true; throw new Error(`${module} RPC correlation mismatch. Reconnect.`); }
             if (failure) {
-                const detail = result.error && Object.keys(protocol.peripheralErrors).find(key => protocol.peripheralErrors[key] === result.error);
+                const errors = module === 'FLASH' ? protocol.flashErrors : protocol.peripheralErrors;
+                const detail = result.error && Object.keys(errors).find(key => errors[key] === result.error);
                 if (detail) failure.message += ` · ${detail}`;
                 failure.message += ` (${Object.keys(protocol.operations).find(key => protocol.operations[key] === operation) || operation}, port ${port}, args ${args.join(', ')})`;
                 throw failure;

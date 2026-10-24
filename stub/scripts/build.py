@@ -71,7 +71,7 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
         # IDF's xtensa-esp32[s2/s3]-elf wrappers select the correct CPU plugin
         # and matching libgcc multilib automatically.
         flags += ["-mlongcalls", "-mtext-section-literals"]
-    flags += ['-DNDEBUG', '-DSTUB_HAS_PERIPHERALS=1', f'-DSTUB_HAS_RMT={int(target not in ("esp32c2", "esp32c61"))}']
+    flags += ['-DNDEBUG', '-DSTUB_HAS_PERIPHERALS=1', '-DSTUB_HAS_FLASH=1', f'-DSTUB_HAS_RMT={int(target not in ("esp32c2", "esp32c61"))}']
     for inc in includes:
         if inc.is_dir():
             flags += ["-isystem" if inc.is_relative_to(components) else "-I", str(inc)]
@@ -79,10 +79,18 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
     for name in (f"{target}.rom.ld", f"{target}.rom.api.ld"):
         flags += [f"-T{rom / name}"]
     flags += [f'-T{components / f"soc/{target}/ld/{target}.peripherals.ld"}']
+    legacy_flash = rom / f'{target}.rom.spiflash_legacy.ld'
+    if legacy_flash.is_file():
+        flags += [f'-T{legacy_flash}']
     elf = out / "stub.elf"
-    sources = [ROOT / f'src/{name}' for name in ('start.S', 'stub.c', 'platform.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'rmt.c', 'rmt_port.c', 'peripheral.c', 'peripheral_port.c')]
+    sources = [ROOT / f'src/{name}' for name in ('start.S', 'stub.c', 'platform.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'rmt.c', 'rmt_port.c', 'flash.c', 'flash_port.c', 'peripheral.c', 'peripheral_port.c')]
     if target == 'esp32':
         sources += [components / 'soc/esp32/dport_access.c']
+        # IDF replaces the original ESP32 ROM flash routines (including an
+        # unsafe status-register unlock). Keep those fixes in this RAM stub.
+        patch = out / 'flash-rom.o'
+        run([prefix + 'gcc', *flags, '-Wno-unused-parameter', '-Wno-sign-compare', '-c', components / 'esp_rom/patches/esp_rom_spiflash.c', '-o', patch])
+        sources += [patch]
     sources += [components / f'esp_hal_{name}/{target}/{stem}_periph.c' for name, stem in [('i2c', 'i2c'), ('gpspi', 'spi'), ('ledc', 'ledc')]]
     if target not in ('esp32c2','esp32c61'):
         sources += [components / f'esp_hal_rmt/{target}/rmt_periph.c']

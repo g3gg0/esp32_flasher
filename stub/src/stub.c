@@ -5,6 +5,7 @@
 #include "peripheral.h"
 #include "capture.h"
 #include "rmt.h"
+#include "flash.h"
 
 extern uint8_t _bss_start[], _bss_end[];
 static uint8_t rx_buffer[RPC_MAX_PACKET_LENGTH] __attribute__((aligned(4)));
@@ -66,7 +67,7 @@ static void dispatch(uint32_t size, int malformed) {
         set_header(&id.header, RPC_MAGIC_IDENTITY, sizeof(id));
         id.protocol_major = RPC_PROTOCOL_MAJOR; id.protocol_minor = RPC_PROTOCOL_MINOR;
         id.max_packet_length = RPC_MAX_PACKET_LENGTH;
-        id.capabilities = (1u << RPC_CAPABILITIES_REGISTERS) | rpc_sdmmc_capabilities() | rpc_peripheral_capabilities() | rpc_capture_capabilities() | rpc_rmt_capabilities();
+        id.capabilities = (1u << RPC_CAPABILITIES_REGISTERS) | rpc_sdmmc_capabilities() | rpc_peripheral_capabilities() | rpc_capture_capabilities() | rpc_rmt_capabilities() | rpc_flash_capabilities();
         platform_identity(&id); rpc_send(&id, sizeof(id)); return;
     }
     if (magic_is(header, RPC_MAGIC_REGISTER_COMMAND)) {
@@ -88,6 +89,7 @@ static void dispatch(uint32_t size, int malformed) {
     if (rpc_capture_handle(header,size))return;
     if (magic_is(header, "SDMC") && rpc_sdmmc_handle(header, size)) return;
     if (rpc_rmt_handle(header,size))return;
+    if (rpc_flash_handle(header,size))return;
     if (rpc_peripheral_handle(header, size)) return;
 #define MODULE_CASE(name, command, reply) \
     if (magic_is(header, command)) { \

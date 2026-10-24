@@ -99,7 +99,7 @@ try {
                         await this.processPacket(response);
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SYNC') {
                         const target = ESPIO.acceleratedTargets[window.peerChip];
-                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:4, max_packet_length:1024, capabilities:(target.sdmmc ? 303 : 295) | (["esp32c2","esp32c61"].includes(window.peerChip)?0:16), chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
+                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:5, max_packet_length:1024, capabilities:512 | (target.sdmmc ? 303 : 295) | (["esp32c2","esp32c61"].includes(window.peerChip)?0:16), chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'IOCC') {
                         await this.processPacket(await this.captureReply(packet));
                     } else if (['I2CC','SPIC','PWMC','RMTC'].includes(new TextDecoder().decode(packet.slice(0,4)))) {
@@ -111,6 +111,16 @@ try {
                         if(tag==='I2CC'&&q.operation===2&&q.data[0]===99){status=5;error=9;data=new Uint8Array();}
                         if(tag==='RMTC'){if(q.operation===16){this.rmtSymbols=q.args[1];this.rmtBytes=0;}if(q.operation===17){if(q.args[0]!==this.rmtBytes)throw new Error('RMT upload offset');this.rmtBytes+=q.data.length;}if(q.operation===18){v[0]=this.rmtSymbols*q.args[0];v[1]=Math.ceil(v[0]/24);v[2]=v[0]*1.25+q.args[1];}}
                         await this.processPacket(ESPIO.rpcEncode('peripheral_response',{status,error,operation:q.operation,port:q.port,actual_hz:q.args[0]||1000000,values:v},tag.slice(0,3)+'R',data));
+                    } else if (new TextDecoder().decode(packet.slice(0,4)) === 'FLAC') {
+                        const q=ESPIO.rpcDecode(packet,'peripheral_command','FLAC'),[a,n]=q.args,v=new Array(8).fill(0);
+                        this.flashMemory ||= new Uint8Array(131072).fill(255);let data=new Uint8Array();v[0]=n;
+                        if(q.operation===4)v.splice(0,8,0x1140ef,131072,4096,256,768,0,131072,1);
+                        if(q.operation===16)data=this.flashMemory.slice(a,a+n);
+                        if(q.operation===17)this.flashMemory.set(q.data,a);
+                        if(q.operation===18)this.flashMemory.fill(255,a,a+n);
+                        if(q.operation===20&&q.data.some((b,i)=>b!==this.flashMemory[a+i]))throw new Error('Flash verify mismatch');
+                        if(q.operation===19){let crc=0xffffffff,first=0xffffffff;for(let i=0;i<n;i++){const b=this.flashMemory[a+i];if(b!==255&&first===0xffffffff)first=a+i;crc^=b;for(let j=0;j<8;j++)crc=(crc>>>1)^(crc&1?0xedb88320:0);}v[1]=(crc^0xffffffff)>>>0;v[2]=first;}
+                        await this.processPacket(ESPIO.rpcEncode('peripheral_response',{operation:q.operation,port:0,values:v},'FLAR',data));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SDMC') {
                         await this.processPacket(await this.sdReply(packet));
                     } else {
@@ -186,7 +196,7 @@ try {
     assert.equal(await evaluate(`${$('disconnect')}.hidden`), true);
     await evaluate(`window.failStubFetch=false;${$('load-accelerated')}.click()`);
     await wait(`${$('load-accelerated')}.textContent === 'Accelerated stub active' && ${$('status')}.textContent.includes('SYNC verified')`);
-    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.4'));
+    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.5'));
     assert.equal(await evaluate(`${$('load-accelerated')}.disabled`), true);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);
     await wait(`!${$('disconnect')}.disabled`);
@@ -196,6 +206,20 @@ try {
     await wait(`${$('drive-level')}.textContent === '1 / HIGH'`);
     await wait(`!${$('disconnect')}.disabled`);
     await exercisePeripherals('accelerated');
+    await evaluate(`document.querySelector('[data-peripheral="flash"]').click();${$('flash-probe')}.click();`);
+    await wait(`!${$('flash-download')}.disabled`);
+    assert.ok((await evaluate(`${$('flash-info')}.textContent`)).includes('131.072'));
+    await evaluate(`${$('flash-check')}.click()`);await wait(`${$('flash-result')}.textContent.startsWith('Leer')`);
+    await evaluate(`serialPeer.flashMemory.fill(0x55,0,3);serialPeer.flashMemory.fill(0x33,4104,8192);window.flashBytes=Uint8Array.from({length:4101},(_,i)=>i&255);const dt=new DataTransfer();dt.items.add(new File([flashBytes],'test.bin'));${$('flash-file')}.files=dt.files;${$('flash-file')}.dispatchEvent(new Event('change'));${$('flash-address')}.value='3';${$('flash-write')}.click();`);
+    await wait(`${$('flash-result')}.textContent.startsWith('Geschrieben')`);
+    assert.equal(await evaluate(`serialPeer.flashMemory.slice(3,4104).every((b,i)=>b===flashBytes[i]) && serialPeer.flashMemory[0]===0x55 && serialPeer.flashMemory[4104]===0x33`),true);
+    await evaluate(`${$('flash-verify')}.click()`);await wait(`${$('flash-result')}.textContent.startsWith('Vergleich OK')`);
+    await evaluate(`${$('flash-address')}.value='0';${$('flash-length')}.value='8192';window.flashDump=[];window.flashClosed=false;window.showSaveFilePicker=async()=>({createWritable:async()=>({write:async bytes=>flashDump.push(bytes.slice()),close:async()=>{window.flashClosed=true;},abort:async()=>{}})});${$('flash-download')}.click();`);
+    await wait(`window.flashClosed && ${$('flash-result')}.textContent.startsWith('Download fertig')`);
+    assert.equal(await evaluate(`flashDump.length===1 && flashDump[0].every((b,i)=>b===serialPeer.flashMemory[i])`),true);
+    await evaluate(`window.confirm=()=>true;${$('flash-erase')}.click();`);await wait(`${$('flash-result')}.textContent.startsWith('Gelöscht')`);
+    await evaluate(`${$('flash-check')}.click()`);await wait(`${$('flash-result')}.textContent.startsWith('Leer')`);
+    console.log(`PASS: ${chip} FLASH probe, CRC/blank check, partial-sector program with preserved edges, verify, streaming download and erase; simulated memory.`);
     if(await evaluate(`!!ESPIO.adcProfiles[window.peerChip]`)){
         await evaluate(`const id=Object.keys(ESPIO.adcProfiles[window.peerChip].channels).map(Number).find(id=>document.querySelector('[data-pin="'+id+'"]')&&!ESPIO.chips[window.peerChip].pins.find(p=>p.id===id).reserved);document.querySelector('[data-pin="'+id+'"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));${$('read-mode')}.value='adc';${$('read-mode')}.dispatchEvent(new Event('change'));`);
         await wait(`!${$('adc-info')}.hidden && (serialPeer.adcSweeps||0)>3 && !${$('read-mode')}.disabled`);

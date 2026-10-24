@@ -28,7 +28,7 @@ class CaptureTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();cls.exe=Path(cls.temp.name)/'capture-test'
-        subprocess.run(['cc','-std=c11','-Os','-Wall','-Wextra','-Werror','-fno-builtin','-DRPC_CAPTURE_TEST=1','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-I',str(ROOT/'include'),'-I',str(ROOT/'src'),*[str(ROOT/'src'/n) for n in ('stub.c','capture.c','adc_calibration.c','peripheral.c','sdmmc.c','rmt.c')],str(ROOT/'tests/host-platform.c'),str(ROOT/'tests/capture-mock.c'),'-o',str(cls.exe)],check=True)
+        subprocess.run(['cc','-std=c11','-Os','-Wall','-Wextra','-Werror','-fno-builtin','-DRPC_CAPTURE_TEST=1','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-I',str(ROOT/'include'),'-I',str(ROOT/'src'),*[str(ROOT/'src'/n) for n in ('stub.c', 'flash.c','capture.c','adc_calibration.c','peripheral.c','sdmmc.c','rmt.c')],str(ROOT/'tests/host-platform.c'),str(ROOT/'tests/capture-mock.c'),'-o',str(cls.exe)],check=True)
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
     def exchange(self,*requests,mode=''):
