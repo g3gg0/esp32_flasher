@@ -66,6 +66,8 @@ Serve the repository over localhost or HTTPS and open `io-tool/`:
 3. Release peripheral leases, ADC state and GPIO outputs, stop the measurement
    queue, reset into ROM and sync again. Upload both RAM segments using
    MEM_BEGIN/MEM_DATA, checking every ROM status, then jump using MEM_END.
+   The build pads segments to 4 bytes: the S3 ROM hangs on MEM_DATA blocks
+   whose length is not word-aligned.
 4. Send `SYNC` and require a matching chip/protocol `IDEN` response. Identity is
    displayed; GPIO/ADC scans use batched IOCC/IOCR, while control/setup uses accelerated commands.
 

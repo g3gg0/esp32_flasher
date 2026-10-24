@@ -84,6 +84,12 @@ test('every chip profile has a generated target and a validated RAM-only build',
     for (const chip of Object.keys(acceleratedTargets)) {
         const value = await prepareAccelerated(chip, fetchManifest(manifest(chip)));
         assert.equal(value.ramOnly, true);
+        for (const segment of value.segments) assert.equal(segment.length % 4, 0, `${chip} segment ${segment.address} must be word-aligned for ROM MEM_DATA`);
+    }
+    {
+        const value = manifest('esp32c3'), bytes = Buffer.from(value.segments[0].data, 'base64').subarray(0, -2);
+        Object.assign(value.segments[0], { data: bytes.toString('base64'), length: bytes.length, sha256: require('crypto').createHash('sha256').update(bytes).digest('hex') });
+        await assert.rejects(prepareAccelerated('esp32c3', fetchManifest(value)), /32-bit aligned/);
     }
     for (const mutate of [m => { m.chip = 'esp32p4'; }, m => { m.entry = 0x42000000; }, m => { m.segments[0].address = 0x42000000; }, m => { m.segments[0].sha256 = '0'.repeat(64); }, m => { m.segments[0].length--; }, m => { m.ram.dataUsed = 999999; }]) {
         const value = manifest('esp32c3'); mutate(value);

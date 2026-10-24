@@ -63,13 +63,18 @@ test('ADC initialization/calibration use one stub command; repeated full sweeps 
         const ids = Object.keys(profile.channels).map(Number).filter(id => !chips[profile.chip].pins.find(p => p.id === id)?.reserved);
         await c.initialize(ids); traffic.length = 0; await c.setReadMode('adc');
         assert.equal(traffic.filter(t => t.tag === 'IOCC' && rpcDecode(t.raw, 'capture_command').operation === 6).length, 1);
-        if (id === 'esp32c6') {
+        if (id === 'esp32c6' || id === 'esp32s3') {
             const setup = rpcDecode(traffic.find(t => t.tag === 'IOCC' && rpcDecode(t.raw, 'capture_command').operation === 6).raw, 'adc_setup');
             const v = new DataView(setup.data.buffer, setup.data.byteOffset, setup.data.byteLength);
             const ops = Array.from({ length: setup.init_count }, (_, i) => Array.from({ length: 3 }, (_, j) => v.getUint32(i * 12 + j * 4, true)));
-            const clocks = ops.findIndex(op => op[0] === 0x600af020);
-            assert.deepEqual(ops[clocks], [0x600af020, 0x44000000, 0x44000000]);
-            assert.ok(clocks < ops.findIndex(op => op[0] === 0x600af018), 'clock domains precede analog master enable');
+            if (id === 'esp32c6') {
+                const clocks = ops.findIndex(op => op[0] === 0x600af020);
+                assert.deepEqual(ops[clocks], [0x600af020, 0x44000000, 0x44000000]);
+                assert.ok(clocks < ops.findIndex(op => op[0] === 0x600af018), 'clock domains precede analog master enable');
+            } else {
+                // ROM leaves most analog blocks unmasked; SAR must be the only selected block.
+                assert.deepEqual(ops.find(op => op[0] === 0x6000e044), [0x6000e044, 0xfffbffff, 0xffffffff]);
+            }
         }
         const efuses = new Set([profile.hardwareCalibration.major.address, profile.hardwareCalibration.minor?.address]);
         assert.ok(!traffic.some(t => t.tag === 'REGC' && efuses.has(rpcDecode(t.raw, 'register_command').address)), 'factory trim is read inside stub');

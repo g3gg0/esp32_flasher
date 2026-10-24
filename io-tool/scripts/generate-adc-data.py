@@ -143,7 +143,9 @@ for chip in ["esp32c3", "esp32c6", "esp32p4", "esp32s3", "esp32h2"]:
         # legacy HOSTID macro. rom_chip_i2c_readReg_org uses command bit 26.
         bus = {'control': 0x6000e000, 'commandMask': 1 << 26, 'init': [
             write('RTC_CNTL_ANA_CONF_REG', ('RTC_CNTL_SAR_I2C_PU', 1)),
-            {'address': n('ANA_CONFIG_REG'), 'value': 0, 'mask': n('I2C_SAR_M')},
+            # Like rom_chip_i2c_readReg_org: mask every other analog block.
+            # After ROM download most blocks are unmasked and SAR accesses read 0.
+            {'address': n('ANA_CONFIG_REG'), 'value': 0xffffffff & ~n('I2C_SAR_M'), 'mask': 0xffffffff},
             {'address': n('ANA_CONFIG2_REG'), 'value': 0x1ff40, 'mask': 0x1fff0}]}
     else:
         prefix = 'I2C_MST_' if chip == 'esp32h2' else 'I2C_ANA_MST_'

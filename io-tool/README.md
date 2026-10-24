@@ -138,6 +138,9 @@ Vor ADC1-Konvertierungen wird der Idle-Status geprüft; ADC2-Arbiterfehler
 werden als Fehler gemeldet und niemals als Rohwerte ausgegeben.
 Der S3-Analog-I²C-Zugriff nutzt Master 0, das Command-Bit 26 und die
 ANA_CONFIG2-Initialisierung aus Espressifs S3-ROM (Release 20241011).
+Wie die ROM-Routine wählt das Profil in ANA_CONFIG ausschließlich den SAR-Block
+aus; nach dem ROM-Download sind sonst mehrere Analogblöcke gleichzeitig aktiv
+und SAR-Lesezugriffe liefern 0.
 Beim H2 wird eFuse-Blockversion `major × 100 + minor >= 2` vorausgesetzt;
 ältere Formate werden mit Diagnose abgelehnt. Der H2-SAR-Takt beträgt 800 kHz
 (32-MHz-XTAL, Teiler 20 und 2). Nach DONE wartet der Stub zusätzlich 10 µs

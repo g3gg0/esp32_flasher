@@ -96,6 +96,8 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
         dest = out / (section[1:] + ".bin")
         run([prefix + "objcopy", "-O", "binary", "-j", section, elf, dest])
         payload = dest.read_bytes()
+        # ROM MEM_DATA stores whole words on some targets (e.g. S3 IRAM); an unaligned tail hangs the ROM.
+        payload += bytes(-len(payload) % 4)
         if payload:
             segments.append({"address": address, "data": base64.b64encode(payload).decode(), "length": len(payload), "sha256": hashlib.sha256(payload).hexdigest()})
     symbols = subprocess.check_output([prefix + "nm", "-n", str(elf)], text=True)

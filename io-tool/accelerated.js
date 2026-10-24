@@ -201,6 +201,7 @@
             if (segment.address !== start || !Number.isInteger(segment.length) || segment.length < 1 || segment.length > budget || typeof segment.data !== 'string' || !/^[a-f0-9]{64}$/.test(segment.sha256)) throw new Error('Stub segment outside reserved RAM.');
             const bytes = Uint8Array.from(atob(segment.data), c => c.charCodeAt(0));
             if (bytes.length !== segment.length) throw new Error('Truncated RAM stub segment.');
+            if (segment.length & 3) throw new Error('RAM stub segment length is not 32-bit aligned; rebuild the stub.');
             const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), byte => byte.toString(16).padStart(2, '0')).join('');
             if (hash !== segment.sha256) throw new Error('RAM stub checksum mismatch.');
             if (!index && Number.isInteger(manifest.entry) && manifest.entry >= start && manifest.entry < start + bytes.length && !(manifest.entry & 3)) entryFound = true;
