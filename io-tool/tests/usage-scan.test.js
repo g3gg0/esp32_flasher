@@ -6,8 +6,8 @@ const { adcProfiles, classifyUsage } = require('../adc.js');
 const { GPIOController, DemoTransport } = require('../gpio.js');
 const { scopeSVG, scopeLegend } = require('../scope.js');
 
-test('digital scan works for every GPIO chip profile without opening or reading an ADC', async () => {
-    for (const chip of Object.values(chips)) {
+test('digital scan works for every writable GPIO chip profile without opening or reading an ADC', async () => {
+    for (const chip of Object.values(chips).filter(chip => !chip.readOnlyGPIO)) {
         const pin = chip.pins.find(pin => !pin.reserved && pin.output && pin.pulls && !adcProfiles[chip.id]?.channels[pin.id] && (chip.gpio.banks.length < 2 || pin.id >= 32));
         assert.ok(pin, chip.id);
         const transport = new DemoTransport(chip), controller = new GPIOController(transport, chip);

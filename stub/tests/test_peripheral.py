@@ -17,7 +17,7 @@ class PeripheralTest(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         cls.exe = Path(cls.temp.name)/'peripheral-test'
-        subprocess.run(['cc', '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-DRPC_PERIPHERAL_TEST=1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-I', str(ROOT/'include'), '-I', str(ROOT/'src'), *[str(ROOT/'src'/s) for s in ('stub.c', 'sdmmc.c', 'peripheral.c')], str(ROOT/'tests/host-platform.c'), str(ROOT/'tests/peripheral-mock.c'), '-o', str(cls.exe)], check=True)
+        subprocess.run(['cc', '-std=c11', '-Os', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-DRPC_PERIPHERAL_TEST=1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-I', str(ROOT/'include'), '-I', str(ROOT/'src'), *[str(ROOT/'src'/s) for s in ('stub.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'peripheral.c')], str(ROOT/'tests/host-platform.c'), str(ROOT/'tests/peripheral-mock.c'), '-o', str(cls.exe)], check=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -65,3 +65,7 @@ class PeripheralTest(unittest.TestCase):
             r=self.exchange(request(kind,4,port),request(kind,3,port),request(kind,2,port),packet(kind+'C'),request(kind,1,port,timeout=0))
             self.assertEqual(self.status(r[0]),0);self.assertEqual(self.status(r[1]),0)
             self.assertNotEqual(self.status(r[2]),0);self.assertNotEqual(self.status(r[3]),0);self.assertNotEqual(self.status(r[4]),0)
+
+    def test_i2c_argument_errors_identify_rejected_parameter(self):
+        r=self.exchange(request('I2C',1,2,[100000]),request('I2C',1,0,[12345]),request('I2C',1,0,[100000],timeout=0))
+        self.assertEqual([self.error(x) for x in r],[8,10,12])

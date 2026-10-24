@@ -16,7 +16,7 @@
         function validation() {
             if (ctx.backendReason?.()) return ctx.backendReason();
             const d = draft(), pins = ctx.pins(), chip = ctx.chip();
-            if (!i2cProfiles[chip.id] && !ctx.controller()?.transport.supports?.('I2C')) return 'Beschleunigten Stub für I²C laden.';
+            if (!ctx.controller()?.transport.supports?.('I2C')) return 'Beschleunigten Stub für I²C laden.';
             if (d.sda === null || d.scl === null) return 'SDA und SCL auswählen.';
             if (d.sda === d.scl) return 'SDA und SCL benötigen verschiedene GPIOs.';
             for (const id of [d.sda, d.scl]) {
@@ -39,11 +39,11 @@
         }
         function render(visible) {
             $('i2c-panel').hidden = !visible;
-            $('i2c-backend').textContent = i2cProfiles[ctx.chip().id] ? 'P4 · nativer HP-I²C-Master 0/1 · GPIO-Matrix · 7-Bit-Adressen' : 'I²C-Steuerung ist zunächst für ESP32-P4 implementiert.';
+            $('i2c-backend').textContent = 'Beschleunigten Stub laden, um I²C zu verwenden.';
             const rpc = ctx.controller()?.transport.supports?.('I2C');
             $('i2c-configuration').hidden = false;
             if (rpc) $('i2c-backend').textContent = 'RAM RPC · I²C-Master · Repeated START · 7-Bit-Adressen';
-            $('i2c-port').options[1].disabled = rpc && !['esp32', 'esp32s2', 'esp32s3', 'esp32h2', 'esp32p4'].includes(ctx.chip().id);
+            $('i2c-port').options[1].disabled = !['esp32', 'esp32s2', 'esp32s3', 'esp32h2', 'esp32p4'].includes(ctx.chip().id);
             if ($('i2c-port').options[1].disabled) draft().port = 0;
             const fifo = ctx.chip().id === 'esp32c2' ? 16 : 32;
             $('i2c-read').max = $('i2c-register-read').max = fifo;
@@ -88,7 +88,7 @@
                 else {
                     if (!live()) {
                         const simulation = ctx.session() === 'demo';
-                        const Host = ctx.controller().transport.supports?.('I2C') ? root.ESPIO.RPCI2CHost : I2CHost;
+                        const Host = root.ESPIO.RPCI2CHost;
                         host = new Host(ctx.controller(), { onTransaction: entry => { log.push({ ...entry, simulation }); if (log.length > 150) log.shift(); renderLog(); } });
                         await host.open(draft(), signal);
                     }

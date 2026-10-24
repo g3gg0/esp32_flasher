@@ -21,7 +21,7 @@ class SDMMCTest(unittest.TestCase):
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
         cls.exe = Path(cls.temp.name) / 'sdmmc-test'
-        subprocess.run(['cc', '-std=gnu11', '-Os', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-DRPC_SDMMC_TEST=1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-I', str(ROOT / 'include'), '-I', str(ROOT / 'src'), '-I', str(ROOT / 'tests'), str(ROOT / 'src/stub.c'), str(ROOT / 'src/sdmmc.c'), str(ROOT / 'src/peripheral.c'), str(ROOT / 'tests/host-platform.c'), str(ROOT / 'tests/sdmmc-mock.c'), '-o', str(cls.exe)], check=True)
+        subprocess.run(['cc', '-std=gnu11', '-Os', '-Wall', '-Wextra', '-Werror', '-fno-builtin', '-DRPC_SDMMC_TEST=1', '-ffunction-sections', '-fdata-sections', '-Wl,--gc-sections', '-I', str(ROOT / 'include'), '-I', str(ROOT / 'src'), '-I', str(ROOT / 'tests'), str(ROOT / 'src/stub.c'), str(ROOT / 'src/sdmmc.c'), str(ROOT / 'src/capture.c'), str(ROOT / 'src/adc_calibration.c'), str(ROOT / 'src/peripheral.c'), str(ROOT / 'tests/host-platform.c'), str(ROOT / 'tests/sdmmc-mock.c'), '-o', str(cls.exe)], check=True)
 
     @classmethod
     def tearDownClass(cls):

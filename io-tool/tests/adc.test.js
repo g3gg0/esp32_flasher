@@ -258,6 +258,26 @@ test('an ACK with ignored analog writes is rejected by masked readback verificat
     assert.equal(reader.ready, false);
 });
 
+test('C6 enables both analog-I2C clock domains after ROM startup and restores their state', async () => {
+    const p = adcProfiles.esp32c6, transport = new DemoTransport(chips.esp32c6);
+    const address = 0x600af020, mask = 0x44000000, original = 0x22000000;
+    transport.registers.set(address, original);
+    const read = transport.read.bind(transport), write = transport.write.bind(transport);
+    const gated = address => [p.analog.bus.control, p.analog.bus.control + 4].includes(address) &&
+        ((transport.registers.get(0x600af020) || 0) & mask) !== mask;
+    transport.read = address => gated(address) ? Promise.resolve(0) : read(address);
+    transport.write = (address, ...args) => gated(address) ? Promise.resolve() : write(address, ...args);
+    const missingClocks = structuredClone(p);
+    missingClocks.analog.bus.init = missingClocks.analog.bus.init.filter(op => op.address !== address);
+    await assert.rejects(new ADCReader(transport, missingClocks).open(), /wurde nicht übernommen/);
+    const reader = new ADCReader(transport, p);
+    await reader.open();
+    assert.equal(transport.registers.get(address), original | mask);
+    assert.equal(reader.calibration.source, 'efuse');
+    await reader.close();
+    assert.equal(transport.registers.get(address), original);
+});
+
 test('missing factory trim stops measurement and restores all analog fields', async () => {
     const transport = new DemoTransport(chips.esp32c6), p = adcProfiles.esp32c6, reader = new ADCReader(transport, p);
     transport.registers.set(p.hardwareCalibration.minor.address, 0);

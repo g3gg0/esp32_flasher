@@ -6,6 +6,9 @@
 #include "soc/efuse_reg.h"
 #include "soc/soc_caps.h"
 #include "soc/uart_reg.h"
+#if defined(__riscv)
+#include "riscv/rv_utils.h"
+#endif
 #if __has_include("soc/rtc_cntl_reg.h")
 #include "soc/rtc_cntl_reg.h"
 #endif
@@ -26,8 +29,11 @@ static void copy_string(char *dest, const char *source, unsigned size) {
 void platform_init(void) {
     ets_set_user_start(0);
     serial_port = GetUartDevice()->buff_uart_no;
-    /* ROM SYNC already selected the download channel. Keep its console routing;
-       C3's console-switch entry varies between silicon revisions. */
+    /* Download RX and console TX can select different channels after ROM SYNC. */
+#if !CONFIG_IDF_TARGET_ESP32C3
+    esp_rom_output_set_as_console(serial_port);
+#endif
+    /* C3 has no stable ROM console-switch entry; keep its inherited routing. */
     /* ROM download can leave the RTC watchdog armed (notably USB-JTAG). */
 #ifdef RTC_CNTL_WDTWPROTECT_REG
     REG_WRITE(RTC_CNTL_WDTWPROTECT_REG, 0x50d83aa1);
@@ -63,7 +69,7 @@ uint32_t platform_ticks_per_us(void) { return esp_rom_get_cpu_ticks_per_us(); }
 uint32_t platform_cycles(void) {
     uint32_t cycles;
 #if defined(__riscv)
-    __asm__ volatile("csrr %0, mcycle" : "=r"(cycles));
+    cycles = rv_utils_get_cycle_count();
 #else
     __asm__ volatile("rsr.ccount %0" : "=a"(cycles));
 #endif

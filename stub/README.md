@@ -67,7 +67,7 @@ Serve the repository over localhost or HTTPS and open `io-tool/`:
    queue, reset into ROM and sync again. Upload both RAM segments using
    MEM_BEGIN/MEM_DATA, checking every ROM status, then jump using MEM_END.
 4. Send `SYNC` and require a matching chip/protocol `IDEN` response. Identity is
-   displayed; GPIO/ADC continue through the existing controller using REGC/REGR.
+   displayed; GPIO/ADC scans use batched IOCC/IOCR, while control/setup uses accelerated commands.
 
 The ROM reset avoids overwriting a running legacy stub, and deliberately starts
 a new I/O session: existing outputs are released and board pins start as inputs.
@@ -80,7 +80,7 @@ writer and command lock. The RPC adapter serializes requests and stops using
 the session after a timeout or malformed reply, including already queued calls;
 without transaction IDs a late reply cannot safely be reused.
 
-## Protocol v1.2
+## Protocol v1.3
 
 `protocol.json` is authoritative. Run `make protocol` (or
 `python3 scripts/generate-protocol.py`) to regenerate `include/protocol.h` and
@@ -134,7 +134,7 @@ does not itself accelerate their polling.
 All targets advertise I2C, SPI and PWM/LEDC in addition to registers. P4/S3
 also advertise SDMMC. RMT/UART/I2S retain the reserved module envelope and
 return UNSUPPORTED. The browser checks capability bits before selecting an
-accelerated backend. Legacy P4 I2C/SD remain available before loading the stub.
+accelerated backend. Peripheral controls require the accelerated stub. Classic mode only observes GPIO inputs.
 
 
 ### Shared P4/S3 SDMMC sector dumps
@@ -203,8 +203,13 @@ exercise SDSC, faults, cancellation, restoration and file batching.
 
 All ten targets compile with the supplied ESP-IDF 6.1 toolchain. This does not
 verify physical startup, RAM availability across silicon revisions, watchdogs,
-or USB/UART behavior. The shared platform layer retains ROM serial routing and
-polls ROM RX/TX entrypoints. S2/S3 ROM USB-CDC receive/transmit routines have been
+or USB/UART behavior on every target. C6 startup, GPIO capture and seven-channel
+ADC scans have been checked on physical USB Serial/JTAG hardware.
+The shared platform layer routes ROM console TX to the download RX channel
+(C3 retains inherited routing because its ROM console-switch entry differs),
+then polls ROM RX/TX entrypoints. RISC-V timing uses IDF's cycle-counter helper:
+C6 requires its custom performance-counter CSR rather than `mcycle`.
+S2/S3 ROM USB-CDC receive/transmit routines have been
 inspected: they service USB events by polling, so no application USB stack or
 CPU interrupt setup is required. Full ROM TX FIFOs are retried to preserve every
 binary byte. Physical UART, USB Serial/JTAG and USB-CDC startup still need checks
@@ -226,13 +231,13 @@ validation boundaries.
 ESP-IDF headers/linker symbols remain under their upstream licenses; see
 `../io-tool/LICENSE-ESP-IDF.txt`. No legacy flasher-stub source is linked.
 
-## Shared I2C, SPI and LEDC RPC (build 0.4.0)
+## Shared I2C, SPI and LEDC RPC (build 0.5.0)
 
 `src/peripheral.c` contains the shared command/state machines and bounds;
 `src/peripheral_port.c` uses ESP-IDF 6.1 target LL headers and signal tables.
 No IDF driver tasks, interrupts, heap, flash or RTOS are linked. All ten
-manifests include these drivers. Payloads are about 9.1-12.2 KiB and total
-DRAM reservations actually used are under 4.7 KiB, including the 2-KiB stack.
+manifests include these drivers plus native capture/calibration. Payloads are
+about 13.8-17.3 KiB; DRAM use is at most 7.5 KiB including the 2-KiB stack.
 
 `peripheral_command` is 48 bytes before TX data: common header, operation u16,
 port u16, timeout_us u32, args[8] u32. `peripheral_response` is 56 bytes before
@@ -272,7 +277,65 @@ continue; recovery failure is BUS. SPI excludes the flash controllers and
 uses one hardware CS0 window per full-duplex transfer, with no splitting.
 SPI configuration-update waits and completion polling have deadlines.
 Peripheral error codes are NONE=0, NACK=1, TIMEOUT=2, ARBITRATION=3,
-SHORT_DATA=4, NOT_CONFIGURED=5, TIMER_CONFLICT=6, BUS=7.
+SHORT_DATA=4, NOT_CONFIGURED=5, TIMER_CONFLICT=6, BUS=7, BAD_PORT=8,
+BAD_CLOCK=9, BAD_SPEED=10, BAD_TRANSFER=11, BAD_TIMEOUT=12. Browser diagnostics
+include operation, port and arguments; NONE is not displayed as an error detail.
+
+Build 0.4.1 fixes cold-ROM I2C activation on P4 and other fixed-crystal chips:
+RTC crystal-frequency storage may be unset when no IDF application has booted.
+Fixed-crystal targets use their specified 40 MHz (H2: 32 MHz); C2 can use ROM
+calibration for 26/40 MHz. SPI clears the previous transaction-complete flag
+before each start. ESP32/S2 I2C reset pulses preserve the other peripheral reset
+fields instead of replaying the SDK helper's full-register reset writes.
+
+### Accelerated-only operations and batched capture (0.5.0)
+
+Classic mode only observes GPIO bank inputs for logging/plots. It does not
+configure pins, drive outputs, initialize ADC, change supplies or operate
+peripheral modules. Load buttons in the header and Peripherie & Register use
+the same RAM upload/SYNC workflow. All control operations require the accelerated
+stub; there is no classic register fallback. Baud defaults to 115200 throughout.
+
+CAPTURE capability bit 8 enables IOCC/IOCR. `capture_command` has operation u16,
+count u16 and selection u32 after the header. GPIO_CONFIGURE=1 uploads count
+bank addresses as trailing little-endian u32 words (max 4). ADC_CONFIGURE=2 uses
+`capture_plan`: one bounded channel recipe per slot (max 24). GPIO_SCAN=3 and
+ADC_SCAN=4 return all selected banks/channels in one reply. RELEASE=5 releases
+all capture/calibration state; ADC_INITIALIZE=6 consumes `adc_setup` and
+ADC_RELEASE=7 restores ADC state without clearing GPIO bank configuration.
+
+`capture_response` is 24 bytes before trailing samples: status u32, count u16,
+failed_slot u16, duration_us u32, detail u32. Samples are 12 bytes: pin/bank u16,
+kind u16 (GPIO bank=0, ADC=1, factory trim=2), value u32, offset_us u32. Count must
+match the exact trailing length. A failed scan returns no partial samples. All
+register addresses are checked against the target peripheral window; conversion
+and analog-I2C waits are bounded. Timestamp offsets are measured on the device;
+UART delivery time is separate from capture duration.
+
+ADC_INITIALIZE performs the eFuse version check, cross-word trim extraction,
+clock/power setup, analog-I2C configuration, per-unit hardware trim writes and
+power-up delay in the stub. Descriptors contain init operations, analog register
+fields and eFuse locations; the browser does not read/decode trim values. Native
+code stores prior register/analog fields and restores them on release or a
+partial initialization failure. The reply reports applied trim codes/version.
+Existing C3/C6/P4/S3/H2 profiles are supported; other targets retain GPIO capture
+until their ADC profiles are supplied. Values remain raw 12-bit ADC readings,
+not calibrated millivolts.
+
+A scan executes conversions locally, discards the first result after changing
+channels, checks fresh completion, and returns selected values together. The
+browser uploads channel configuration once and sends one ADC_SCAN per subsequent
+sweep. GPIO banks are read locally in one sweep rather than separate serial
+transactions. The UI offers 1-ms polling after accelerated load; actual sample
+rate is bounded by conversion time, browser scheduling and serial bandwidth.
+On UART at 115200 baud the 8N1 payload ceiling is about 11.5 kB/s; a 20-channel reply is
+264 bytes before SLIP escapes, so a full ADC sweep cannot run at 1 kHz over that
+link. Native USB transports can be faster even with the baud setting left at
+115200. No physical update rate is claimed without board measurement.
+
+All images remain RAM-only. Capture and calibration bring total DRAM usage to
+about 6.5-7.6 KiB including the 2-KiB stack. S3 reserves 20 KiB of IRAM for the
+additional native calibration/capture code; other target budgets are unchanged.
 
 Host-native tests exercise the actual parser/shared driver with mocked
 hardware. Browser QA covers all ten profiles with a simulated serial peer;

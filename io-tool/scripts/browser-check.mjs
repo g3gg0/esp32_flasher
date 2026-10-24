@@ -288,7 +288,7 @@ try {
                 if(opcode===9)await this.mock.write(address,view.getUint32(12,true),view.getUint32(16,true));
                 else if(opcode===10)value=await this.mock.read(address);
                 else throw new Error('Unexpected command '+opcode);
-                return new Promise((resolve,reject)=>callback(resolve,reject,{value,data:new Uint8Array(2)}));
+                return new Promise((resolve,reject)=>callback(resolve,reject,{value,data:new Uint8Array(this.stubLoaded?2:4)}));
             }
         };`);
     for (const chip of ['esp32c3', 'esp32c6', 'esp32p4']) {
@@ -312,8 +312,12 @@ try {
         }
     }
     await evaluate(`window.__qaChip='esp8266';window.__qaCalls=[];document.getElementById('connect').click();`);
-    await wait(`document.getElementById('status').textContent.includes('kein geprüftes GPIO-Registerprofil') && !document.getElementById('connect').disabled`);
+    await wait(`document.getElementById('status').textContent.includes('ROM-Registerzugriff') && !document.getElementById('pause').disabled`);
+    assert.deepEqual(await evaluate(`window.__qaCalls.slice(0,3)`), ['open', 'reset-boot', 'sync']);
+    assert.equal(await evaluate(`window.__qaCalls.includes('download-stub')`), false);
     assert.equal(await evaluate(`window.__qaCalls.includes('write')`), false);
+    await evaluate(`document.getElementById('disconnect').click();`);
+    await wait(`document.getElementById('session-badge').textContent==='OFFLINE'`);
     await evaluate(`ESPFlasher=window.__qaOriginalFlasher;`);
     await call('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await screenshot('mobile');

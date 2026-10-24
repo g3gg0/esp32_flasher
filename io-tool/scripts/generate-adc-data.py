@@ -152,6 +152,13 @@ for chip in ["esp32c3", "esp32c6", "esp32p4", "esp32s3", "esp32h2"]:
         bus['init'].append({"address": n(prefix + 'ANA_CONF1_REG'), "value": n(prefix + 'ANA_CONF1_M') & ~(1 << 9) if modem_master else 0, "mask": n(prefix + 'ANA_CONF1_M')})
         if modem_master:
             bus['init'].insert(0, write('MODEM_LPCON_CLK_CONF_REG', ('MODEM_LPCON_CLK_I2C_MST_EN', 1)))
+            if chip == 'esp32c6':
+                # A RAM stub inherits ROM clock gating, not IDF's rtc_clk_init().
+                active = write('MODEM_LPCON_CLK_CONF_POWER_ST_REG',
+                    ('MODEM_LPCON_CLK_LP_APB_ST_MAP', 1 << 2),
+                    ('MODEM_LPCON_CLK_I2C_MST_ST_MAP', 1 << 2))
+                active['mask'] = active['value']
+                bus['init'].insert(0, active)
         else:
             bus['init'].insert(0, write('LPPERI_CLK_EN_REG', ('LPPERI_CK_EN_LP_I2CMST', 1)))
             bus['init'].append({"address": bus['select'], "value": bus['selectBit'], "mask": n('I2C_ANA_MST_ANA_CONF2_M')})

@@ -4,13 +4,13 @@
   "name": "esp-io-rpc",
   "version": {
     "major": 1,
-    "minor": 2
+    "minor": 3
   },
   "byteOrder": "little",
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.4.0",
+  "buildVersion": "0.5.0",
   "header": [
     [
       "magic",
@@ -453,6 +453,243 @@
         "values": 24
       },
       "size": 56
+    },
+    "capture_command": {
+      "magic": "IOCC",
+      "response": "capture_response",
+      "fields": [
+        [
+          "operation",
+          "u16"
+        ],
+        [
+          "count",
+          "u16"
+        ],
+        [
+          "selection",
+          "u32"
+        ]
+      ],
+      "trailing": true,
+      "offsets": {
+        "operation": 8,
+        "count": 10,
+        "selection": 12
+      },
+      "size": 16
+    },
+    "capture_plan": {
+      "magic": "IOCC",
+      "response": "capture_response",
+      "fields": [
+        [
+          "operation",
+          "u16"
+        ],
+        [
+          "slot",
+          "u16"
+        ],
+        [
+          "pin",
+          "u16"
+        ],
+        [
+          "flags",
+          "u16"
+        ],
+        [
+          "low_us",
+          "u32"
+        ],
+        [
+          "data_delay_us",
+          "u32"
+        ],
+        [
+          "steps",
+          "u32",
+          9
+        ],
+        [
+          "wait_addr",
+          "u32"
+        ],
+        [
+          "wait_mask",
+          "u32"
+        ],
+        [
+          "data_addr",
+          "u32"
+        ],
+        [
+          "data_mask",
+          "u32"
+        ],
+        [
+          "invalid_mask",
+          "u32"
+        ],
+        [
+          "idle_addr",
+          "u32"
+        ],
+        [
+          "idle_mask",
+          "u32"
+        ],
+        [
+          "cleanup_addr",
+          "u32"
+        ],
+        [
+          "cleanup_mask",
+          "u32"
+        ]
+      ],
+      "offsets": {
+        "operation": 8,
+        "slot": 10,
+        "pin": 12,
+        "flags": 14,
+        "low_us": 16,
+        "data_delay_us": 20,
+        "steps": 24,
+        "wait_addr": 60,
+        "wait_mask": 64,
+        "data_addr": 68,
+        "data_mask": 72,
+        "invalid_mask": 76,
+        "idle_addr": 80,
+        "idle_mask": 84,
+        "cleanup_addr": 88,
+        "cleanup_mask": 92
+      },
+      "size": 96
+    },
+    "capture_response": {
+      "magic": "IOCR",
+      "fields": [
+        [
+          "status",
+          "u32"
+        ],
+        [
+          "count",
+          "u16"
+        ],
+        [
+          "failed_slot",
+          "u16"
+        ],
+        [
+          "duration_us",
+          "u32"
+        ],
+        [
+          "detail",
+          "u32"
+        ]
+      ],
+      "trailing": true,
+      "offsets": {
+        "status": 8,
+        "count": 12,
+        "failed_slot": 14,
+        "duration_us": 16,
+        "detail": 20
+      },
+      "size": 24
+    },
+    "adc_setup": {
+      "magic": "IOCC",
+      "response": "capture_response",
+      "fields": [
+        [
+          "operation",
+          "u16"
+        ],
+        [
+          "init_count",
+          "u16"
+        ],
+        [
+          "analog_count",
+          "u16"
+        ],
+        [
+          "unit_count",
+          "u16"
+        ],
+        [
+          "bus_control",
+          "u32"
+        ],
+        [
+          "bus_select",
+          "u32"
+        ],
+        [
+          "bus_select_mask",
+          "u32"
+        ],
+        [
+          "bus_command_mask",
+          "u32"
+        ],
+        [
+          "block",
+          "u32"
+        ],
+        [
+          "major",
+          "u32",
+          3
+        ],
+        [
+          "minor",
+          "u32",
+          3
+        ],
+        [
+          "version_min",
+          "u32"
+        ],
+        [
+          "version_exact",
+          "u32"
+        ],
+        [
+          "minor_multiplier",
+          "u32"
+        ],
+        [
+          "units",
+          "u32",
+          38
+        ]
+      ],
+      "trailing": true,
+      "offsets": {
+        "operation": 8,
+        "init_count": 10,
+        "analog_count": 12,
+        "unit_count": 14,
+        "bus_control": 16,
+        "bus_select": 20,
+        "bus_select_mask": 24,
+        "bus_command_mask": 28,
+        "block": 32,
+        "major": 36,
+        "minor": 48,
+        "version_min": 60,
+        "version_exact": 64,
+        "minor_multiplier": 68,
+        "units": 72
+      },
+      "size": 224
     }
   },
   "registerOperations": {
@@ -490,7 +727,8 @@
     "RMT": 4,
     "PWM": 5,
     "UART": 6,
-    "I2S": 7
+    "I2S": 7,
+    "CAPTURE": 8
   },
   "modules": {
     "I2C": {
@@ -530,7 +768,37 @@
     "SHORT_DATA": 4,
     "NOT_CONFIGURED": 5,
     "TIMER_CONFLICT": 6,
-    "BUS": 7
+    "BUS": 7,
+    "BAD_PORT": 8,
+    "BAD_CLOCK": 9,
+    "BAD_SPEED": 10,
+    "BAD_TRANSFER": 11,
+    "BAD_TIMEOUT": 12
+  },
+  "captureOperations": {
+    "GPIO_CONFIGURE": 1,
+    "ADC_CONFIGURE": 2,
+    "GPIO_SCAN": 3,
+    "ADC_SCAN": 4,
+    "RELEASE": 5,
+    "ADC_INITIALIZE": 6,
+    "ADC_RELEASE": 7
+  },
+  "captureResult": {
+    "size": 12,
+    "offsets": {
+      "pin": 0,
+      "kind": 2,
+      "value": 4,
+      "offset_us": 8
+    },
+    "kinds": {
+      "GPIO_BANK": 0,
+      "ADC": 1,
+      "CALIBRATION": 2
+    },
+    "maxBanks": 4,
+    "maxChannels": 24
   }
 };
     if (typeof module === "object" && module.exports) module.exports = protocol;

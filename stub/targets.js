@@ -128,7 +128,7 @@
   },
   "esp32s3": {
     "textStart": 1077379072,
-    "textBudget": 16384,
+    "textBudget": 20480,
     "dataStart": 1070202880,
     "dataBudget": 8192,
     "stackBytes": 2048,

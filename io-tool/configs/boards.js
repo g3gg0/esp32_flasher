@@ -15,6 +15,7 @@
                 [36, 768, 755, 'right'], [35, 768, 776, 'right'],
                 ...[48, 47, 46, 45, 42, 41, 40, 39].map((gpio, index) => [gpio, 863, 713 + index * 21, 'right'])
             ] },
+            extra: [0, 19, 20], extraLabel: 'INTERN VERBUNDENE GPIOs',
             notes: { 0: 'BOOT-Taster, nicht an den Stiftleisten', 48: 'RGB-LED und Rückseitenpad', 19: 'Natives USB D−, nicht an den Stiftleisten', 20: 'Natives USB D+, nicht an den Stiftleisten' },
             description: 'ESP32-S3 Super Mini mit USB-C und 2 × 9 Seitenpads. Die Rückseite bietet 20 weitere GPIO-Lötpads; GPIO48 ist mit der RGB-LED verbunden. Pinbelegung und Bestückung am eigenen Board vergleichen.'
         },
@@ -22,6 +23,8 @@
             id: 'xiao-esp32c5', chip: 'esp32c5', name: 'XIAO ESP32C5', subtitle: 'Seeed Studio · 13 GPIOs inkl. Rückseitenpads', file: 'xiao-esp32c5-pinout.png', height: 923,
             front: { crop: { x: 690, y: 155, width: 220, height: 275 }, left: [1, 0, 25, 7, 23, 24, 11], right: ['5V', 'GND', '3V3', 10, 9, 8, 12], xLeft: 710, xRight: 890, y: 215, step: 29.5 },
             back: { crop: { x: 690, y: 505, width: 220, height: 275 }, xLeft: 710, xRight: 890, y: 560, step: 30, pads: [[3, 815, 550, 'right'], [2, 815, 610, 'right']] },
+            extra: [4, 5, 6, 26, 27, 28], extraLabel: 'INTERN VERBUNDENE GPIOs',
+            notes: { 2: 'JTAG-Pad MTMS auf der Rueckseite', 3: 'JTAG-Pad MTDI auf der Rueckseite', 4: 'JTAG-Pad MTCK auf der Rueckseite', 5: 'JTAG-Pad MTDO auf der Rueckseite', 6: 'Batteriespannungsmessung (ADC_BAT)', 26: 'Batteriemessung aktivieren (ADC_CRL)', 27: 'Gelbe User-LED', 28: 'BOOT-Taster' },
             description: 'Kompaktes C5-Board mit Dualband-Wi-Fi 6, BLE, USB-C und LiPo-Lader. GPIO2/3 liegen zusätzlich auf der Rückseite; GPIO25 und GPIO7 haben Boot-Funktionen.'
         },
         {
@@ -33,17 +36,21 @@
         {
             id: 'esp32-h2-devkitm-1', chip: 'esp32h2', name: 'ESP32-H2-DevKitM-1', subtitle: 'Espressif · 19 GPIOs · 2 × 15 Pins', file: 'esp32-h2-devkitm-1-pinout.png', height: 1021,
             front: { crop: { x: 640, y: 225, width: 315, height: 665 }, left: ['GND', 26, 27, 'GND', 9, 'GND', 22, 8, 12, 25, 11, 10, 23, 24, 'GND'], right: ['GND', '5V', 'GND', 'VBAT', 'NC', 5, 4, 14, 13, 3, 2, 1, 0, 'RST', '3V3'], xLeft: 660, xRight: 938, y: 368, step: 31 },
+            notes: { 8: 'RGB-LED', 9: 'BOOT-Taster', 26: 'Natives USB D-', 27: 'Natives USB D+' },
             description: 'Offizielles H2-Entwicklungsboard mit 2,54-mm-Stiftleisten, nativem USB Serial/JTAG und RGB-LED. GPIO26/27 sind die nativen USB-Leitungen.'
         },
         {
             id: 'xiao-esp32c6', chip: 'esp32c6', name: 'XIAO ESP32C6', subtitle: 'Seeed Studio · 13 GPIOs inkl. Rückseitenpads', file: 'xiao-esp32c6-pinout.png', height: 909,
             front: { crop: { x: 690, y: 155, width: 220, height: 270 }, left: [0, 1, 2, 21, 22, 23, 16], right: ['5V', 'GND', '3V3', 18, 20, 19, 17], xLeft: 710, xRight: 890, y: 210, step: 29.5 },
-            back: { crop: { x: 690, y: 495, width: 220, height: 270 }, xLeft: 710, xRight: 890, y: 550, step: 30, pads: [[7, 785, 535, 'left'], [6, 785, 595, 'left']] },
+            back: { crop: { x: 690, y: 495, width: 220, height: 270 }, xLeft: 710, xRight: 890, y: 550, step: 30, pads: [[7, 785, 535, 'left'], [5, 815, 535, 'right'], [6, 785, 595, 'left'], [4, 815, 595, 'right']] },
+            extra: [3, 9, 14, 15], extraLabel: 'INTERN VERBUNDENE GPIOs',
+            notes: { 3: 'RF-Switch-Steuerung einschalten (LOW)', 4: 'Strapping-Pin: Pegel wird beim Reset ausgewertet. JTAG-Pad MTMS auf der Rueckseite; ADC1, Kanal 4.', 5: 'Strapping-Pin: Pegel wird beim Reset ausgewertet. JTAG-Pad MTDI auf der Rueckseite; ADC1, Kanal 5.', 6: 'JTAG-Pad MTCK auf der Rueckseite; ADC1, Kanal 6.', 7: 'JTAG-Pad MTDO auf der Rueckseite', 9: 'BOOT-Taster', 14: 'RF-Switch: LOW Keramikantenne, HIGH U.FL-Antenne', 15: 'User-LED' },
             description: 'Kleines C6-Board mit Wi-Fi 6, BLE, Thread/Zigbee, USB-C und LiPo-Lader. GPIO6/7 sind zusätzlich über Rückseitenpads zugänglich.'
         },
         {
             id: 'esp32-c6-devkitm-1', chip: 'esp32c6', name: 'ESP32-C6-DevKitM-1', subtitle: 'Espressif · 22 GPIOs · 2 × 15 Pins', file: 'esp32-c6-devkitm-1-pinout.png', height: 960,
             front: { crop: { x: 655, y: 220, width: 290, height: 610 }, left: ['GND', 12, 13, 'GND', 9, 15, 18, 19, 20, 21, 22, 23, 17, 16, 'GND'], right: ['GND', '5V', 'GND', 14, 7, 6, 8, 1, 0, 5, 4, 3, 2, 'EN', '3V3'], xLeft: 672, xRight: 928, y: 352, step: 28.2 },
+            notes: { 8: 'RGB-LED', 9: 'BOOT-Taster', 12: 'Natives USB D-', 13: 'Natives USB D+' },
             description: 'Offizielles C6-Board mit Wi-Fi 6, BLE und Thread/Zigbee. GPIO8 steuert die RGB-LED, GPIO9 den BOOT-Taster; GPIO12/13 tragen natives USB.'
         },
         {
@@ -82,12 +89,14 @@
             id: 'esp32-c6-super-mini', chip: 'esp32c6', name: 'ESP32-C6 Super Mini', subtitle: 'Generic · 22 GPIOs inkl. Rückseitenpads', file: 'esp32-c6-super-mini-pinout.png', height: 1005,
             front: { crop: { x: 690, y: 170, width: 220, height: 305 }, left: [16, 17, 0, 1, 2, 3, 4, 5, 6, 7], right: ['5V', 'GND', '3V3', 20, 19, 18, 15, 14, 9, 8], xLeft: 710, xRight: 890, y: 187, step: 29.5 },
             back: { crop: { x: 690, y: 555, width: 220, height: 305 }, pads: [[21, 768, 778, 'left'], [22, 778, 801, 'left'], [23, 858, 789, 'right'], [12, 739, 812, 'left'], [13, 739, 840, 'left']] },
+            notes: { 8: 'RGB-LED', 9: 'BOOT-Taster', 12: 'Natives USB D-', 13: 'Natives USB D+', 15: 'Onboard-LED', 21: 'Zusatzpad', 22: 'Zusatzpad', 23: 'Zusatzpad' },
             description: 'Kompaktes C6-Board mit Wi-Fi 6, BLE und Thread/Zigbee. Fünf weitere GPIO-Pads liegen auf der Rückseite; GPIO8 und GPIO15 sind mit LEDs verbunden.'
         },
         {
             id: 'esp32-c6-zero-mini', chip: 'esp32c6', name: 'ESP32-C6 Zero Mini', subtitle: 'Waveshare · 22 GPIOs inkl. Rückseitenpads', file: 'esp32-c6-zero-mini-pinout.png', height: 971,
             front: { crop: { x: 690, y: 175, width: 220, height: 310 }, left: ['5V', 'GND', '3V3', 0, 1, 2, 3, 4, 5], right: [16, 17, 14, 15, 18, 19, 20, 21, 22], xLeft: 710, xRight: 890, y: 195, step: 30 },
             back: { crop: { x: 690, y: 545, width: 220, height: 300 }, xLeft: 710, xRight: 890, y: 567, step: 29.5, mirror: false, pads: [[13, 740, 642, 'left'], [12, 740, 663, 'left'], [23, 740, 683, 'left'], [9, 740, 703, 'left'], [8, 740, 723, 'left'], [7, 740, 743, 'left'], [6, 740, 763, 'left']] },
+            notes: { 8: 'RGB-LED', 9: 'BOOT-Taster', 12: 'Natives USB D-', 13: 'Natives USB D+' },
             description: 'Kompaktes Waveshare-C6-Board mit sieben zusätzlichen GPIO-Pads auf der Rückseite. GPIO8 ist mit der RGB-LED und GPIO9 mit BOOT verbunden.'
         },
         {
@@ -95,11 +104,13 @@
             front: { crop: { x: 695, y: 130, width: 210, height: 260 }, left: [2, 3, 4, 5, 6, 7, 21], right: ['5V', 'GND', '3V3', 10, 9, 8, 20], xLeft: 718, xRight: 885, y: 185, step: 28 },
             back: { crop: { x: 695, y: 450, width: 210, height: 245 }, xLeft: 718, xRight: 885, y: 486, step: 28,
                 pads: [[7, 783, 485, 'left'], [6, 783, 541, 'left'], [5, 818, 485, 'right'], [4, 818, 541, 'right']] },
+            notes: { 18: 'Natives USB D-', 19: 'Natives USB D+' },
             description: 'Kleines C3-Board mit USB-C und LiPo-Lader. Die rückseitigen GPIO-Kontakte sind bereits an den Stiftleisten auf der Vorderseite zugänglich.'
         },
         {
             id: 'esp32-c3-devkitm-1', chip: 'esp32c3', name: 'ESP32-C3-DevKitM-1', subtitle: 'Espressif · 15 GPIOs · 2 × 15 Pins', file: 'esp32-c3-devkitm-1-pinout.png', height: 804,
             front: { crop: { x: 665, y: 205, width: 270, height: 445 }, left: ['GND', 19, 18, 'GND', 4, 5, 6, 7, 'GND', 8, 9, 'GND', 20, 21, 'GND'], right: ['GND', '5V', '5V', 'GND', 10, 1, 0, 'GND', 'RST', 'GND', 3, 2, '3V3', '3V3', 'GND'], xLeft: 682, xRight: 918, y: 232, step: 26.5 },
+            notes: { 8: 'RGB-LED', 9: 'BOOT-Taster', 18: 'Natives USB D-', 19: 'Natives USB D+' },
             description: 'Offizielles C3-Entwicklungsboard mit USB-UART-Brücke und Micro-USB. GPIO9 ist BOOT, GPIO8 treibt die RGB-LED; GPIO18/19 dienen nativem USB Serial/JTAG.'
         },
         {
@@ -117,7 +128,8 @@
         {
             id: 'lilygo-t-display-s3', chip: 'esp32s3', name: 'LilyGo T-Display-S3', subtitle: 'LilyGo · 13 Header-GPIOs · 1,9-Zoll-LCD', file: 'lilygo-t-display-s3-pinout.png', width: 1083, height: 1098,
             front: { crop: { x: 418, y: 195, width: 252, height: 590 }, left: ['3V3', 1, 2, 3, 10, 11, 12, 13, 'NC', 'NC', 'GND', '5V'], right: ['GND', 'GND', 43, 44, 18, 17, 21, 16, 'NC', 'GND', 'GND', '3V3'], xLeft: 433, xRight: 651, y: 282, step: 24.5 },
-            notes: { 3: 'Strapping-Pin', 10: 'SPI Chip Select', 11: 'SPI MOSI', 12: 'SPI Clock', 13: 'SPI MISO', 17: 'I²C SCL; beim Touch-Modell mit Touch-Controller verbunden', 18: 'I²C SDA; beim Touch-Modell mit Touch-Controller verbunden', 21: 'Beim Touch-Modell Touch-Reset', 16: 'Beim Touch-Modell Touch-Interrupt', 43: 'UART0 TX', 44: 'UART0 RX' },
+            extra: [0, 4, 5, 6, 7, 8, 9, 14, 15, 38, 39, 40, 41, 42, 45, 46, 47, 48], extraLabel: 'INTERN VERBUNDENE GPIOs',
+            notes: { 0: 'BOOT-Taster; Strapping-Pin', 4: 'Batteriespannungsmessung (ADC)', 5: 'LCD-Reset', 6: 'LCD-Chip-Select', 7: 'LCD Data/Command', 8: 'LCD Write', 9: 'LCD Read', 14: 'User-Taster', 15: 'LCD-/Peripherie-Stromversorgung einschalten (HIGH)', 38: 'LCD-Hintergrundbeleuchtung', 39: 'LCD-Datenleitung D0', 40: 'LCD-Datenleitung D1', 41: 'LCD-Datenleitung D2', 42: 'LCD-Datenleitung D3', 45: 'LCD-Datenleitung D4', 46: 'LCD-Datenleitung D5', 47: 'LCD-Datenleitung D6', 48: 'LCD-Datenleitung D7', 3: 'Strapping-Pin', 10: 'SPI Chip Select', 11: 'SPI MOSI', 12: 'SPI Clock', 13: 'SPI MISO', 17: 'I²C SCL; beim Touch-Modell mit Touch-Controller verbunden', 18: 'I²C SDA; beim Touch-Modell mit Touch-Controller verbunden', 21: 'Beim Touch-Modell Touch-Reset', 16: 'Beim Touch-Modell Touch-Interrupt', 43: 'UART0 TX', 44: 'UART0 RX' },
             attribution: 'Pinout-Abbildung: LilyGo, bereitgestellt von ESPboards',
             description: 'ESP32-S3 mit 1,9-Zoll-ST7789V-LCD und zwei Tastern. Das Pinout-Bild zeigt die zugänglichen Header auf der bestückten Rückseite; zahlreiche weitere GPIOs sind intern mit LCD und Tastern verbunden.'
         }
@@ -141,10 +153,33 @@
     // are never treated as GPIOs. Raw-chip view uses logical GPIO numbers.
     const boards = [
         {
+            id: 'lolin-nodemcu-v3', chip: 'esp8266', name: 'LoLin NodeMCU V3', subtitle: 'ESP8266 · 30 Pins · GPIO-Register lesen',
+            image: 'assets/lolin-nodemcu-v3.jpg',
+            imageSize: { width: 900, height: 1742 }, crop: { x: 60, y: 85, width: 665, height: 1580 },
+            pins: [
+                ...[['A0', null], ['GND', null], ['VU', null], ['S3', 10], ['S2', 9], ['S1', 8], ['SC', 11], ['S0', 7], ['SK', 6], ['GND', null], ['3V3', null], ['EN', null], ['RST', null], ['GND', null], ['VIN', null]]
+                    .map(([label, gpio], index) => ({ label, gpio, x: 90, y: 465 + index * 57.5, side: 'left' })),
+                ...[['D0', 16], ['D1', 5], ['D2', 4], ['D3', 0], ['D4', 2], ['3V3', null], ['GND', null], ['D5', 14], ['D6', 12], ['D7', 13], ['D8', 15], ['RX', 3], ['TX', 1], ['GND', null], ['3V3', null]]
+                    .map(([label, gpio], index) => ({ label, gpio, x: 670, y: 390 + index * 67.5, side: 'right' }))
+            ],
+            notes: { 0: 'D3 / FLASH-Taster; Boot-Strapping, beim Start HIGH.', 1: 'TX / UART0 TX zur CH340-USB-Seriell-Brücke.',
+                2: 'D4; Boot-Strapping, beim Start HIGH; blaue Onboard-LED (aktiv LOW).', 3: 'RX / UART0 RX zur CH340-USB-Seriell-Brücke.',
+                4: 'D2 / I²C SDA.', 5: 'D1 / I²C SCL.', 6: 'SK / SPI-Flash-Takt; nicht frei nutzbar.',
+                7: 'S0 / SPI-Flash-Daten; nicht frei nutzbar.', 8: 'S1 / SPI-Flash-Daten; nicht frei nutzbar.',
+                9: 'S2 / SPI-Flash-Daten; nicht frei nutzbar.', 10: 'S3 / SPI-Flash-Daten; nicht frei nutzbar.',
+                11: 'SC / SPI-Flash-Chip-Select; nicht frei nutzbar.', 12: 'D6 / HSPI MISO.',
+                13: 'D7 / HSPI MOSI.', 14: 'D5 / HSPI SCLK.', 15: 'D8 / HSPI CS; Boot-Strapping, beim Start LOW.',
+                16: 'D0 / RTC-GPIO16; eigener Eingangsregisterpfad (RTC_GPIO_IN_DATA), Wake-Funktion.' },
+            source: 'https://commons.wikimedia.org/wiki/File:NodeMCU_Lua_Lol1n_V3.jpg',
+            attribution: 'Boardfoto: Popolon / Wikimedia Commons · CC BY-SA 4.0; um 90° gedreht und verkleinert',
+            description: 'LoLin NodeMCU V3 mit ESP-12E, CH340-USB-UART und Micro-USB. D0–D8 entsprechen GPIO16, 5, 4, 0, 2, 14, 12, 13, 15; RX/TX sind GPIO3/1. SK und S0–S3/SC sind mit dem SPI-Flash verbunden. A0 ist ein analoger Eingang und gehört nicht zum digitalen GPIO-Register. Live-Zugriff liest nur GPIO-Eingangsregister; Pin-Konfiguration und Ausgänge bleiben deaktiviert.'
+        },
+        {
             id: 'c3-supermini', chip: 'esp32c3', name: 'C3 SuperMini', subtitle: '13 GPIOs · USB-C · 2 × 8 Pins',
             image: 'assets/c3-pinout.webp', imageSize: { width: 1600, height: 1100 }, crop: { x: 540, y: 95, width: 510, height: 685 },
             pins: columns([5, 6, 7, 8, 9, 10, 20, 21], ['5V', 'GND', '3V3', 4, 3, 2, 1, 0], 595, 1008, 197, 68.5),
-            notes: { 8: 'Onboard-LED (häufig aktiv Low)', 9: 'BOOT-Taster' },
+            extra: [18, 19], extraLabel: 'INTERN VERBUNDENE GPIOs',
+            notes: { 18: 'Natives USB D-', 19: 'Natives USB D+', 8: 'Onboard-LED (häufig aktiv Low)', 9: 'BOOT-Taster' },
             source: 'https://arduino-projekte.info/products/esp32-c3-supermini-kompaktes-wi-fi-ble-development-board-mit-risc-v-power',
             attribution: 'Boardabbildung: arduino-projekte.info',
             description: 'SuperMini-Standardlayout, USB-C oben. Varianten vor dem Verdrahten mit dem eigenen Board vergleichen.'
@@ -154,7 +189,7 @@
             image: 'assets/c6-pinout.webp', imageSize: { width: 2000, height: 1579 }, crop: { x: 710, y: 205, width: 570, height: 855 },
             pins: columns([16, 17, 0, 1, 2, 3, 4, 5, 6, 7], ['5V', 'GND', '3V3', 20, 19, 18, 15, 14, 9, 8], 765, 1222, 321, 75.4),
             extra: [21, 22, 23, 12, 13],
-            notes: { 8: 'RGB-LED', 9: 'BOOT-Taster', 15: 'Onboard-LED', 21: 'Zusatzpad', 22: 'Zusatzpad', 23: 'Zusatzpad' },
+            notes: { 8: 'RGB-LED', 9: 'BOOT-Taster', 12: 'Natives USB D-', 13: 'Natives USB D+', 15: 'Onboard-LED', 21: 'Zusatzpad', 22: 'Zusatzpad', 23: 'Zusatzpad' },
             source: 'https://arduino-projekte.info/products/esp32-c6-super-mini-kompaktes-wi-fi-6-ble-5-zigbee-dev-board-mit-risc-v-power',
             attribution: 'Boardabbildung: arduino-projekte.info',
             description: 'Violettes SuperMini-Layout, USB-C oben. Zusatzpads sind unter dem Foto schematisch dargestellt; Positionen auf der Unterseite prüfen.'
@@ -186,7 +221,10 @@
             image: 'assets/p4-pinout.jpg', imageSize: { width: 960, height: 969 }, crop: { x: 239, y: 85, width: 223, height: 849 },
             pins: columns([54, 19, 'GND', 18, 17, 16, 15, 'GND', 14, 6, 5, 4, 'GND', 3, 2, 8, 7, 'GND', 24, 25],
                 ['VBUS', 'VSYS', 'GND', 'EN', '3V3', 20, 21, 'GND', 22, 23, 'RUN', 26, 'GND', 27, 32, 33, 46, 'GND', 47, 48], 254, 446, 153, 27),
-            notes: { 7: 'I²C SDA', 8: 'I²C SCL',
+            notes: { 7: 'I2C SDA zum Codec und Zubehoerbus', 8: 'I2C SCL zum Codec und Zubehoerbus',
+                9: 'I2S Daten zum Lautsprecher-Codec', 10: 'I2S Word Select (LRCK)', 11: 'I2S Mikrofon-Daten', 12: 'I2S Bit Clock', 13: 'I2S Master Clock',
+                28: 'Ethernet RMII RXDV', 29: 'Ethernet RMII RXD0', 30: 'Ethernet RMII RXD1', 31: 'Ethernet MDC', 34: 'Ethernet RMII TXD0', 35: 'Ethernet RMII TXD1',
+                49: 'Ethernet RMII TX_EN', 50: 'Ethernet RMII REF_CLK', 51: 'Ethernet PHY Reset', 52: 'Ethernet MDIO', 53: 'Audioverstaerker Enable',
                 39: 'SD Data 0 · LDO4-Domäne, separate Stromversorgung',
                 40: 'SD Data 1 · LDO4-Domäne, separate Stromversorgung',
                 41: 'SD Data 2 · LDO4-Domäne, separate Stromversorgung',
@@ -197,7 +235,7 @@
                 46: 'LDO4-Domäne, separate Stromversorgung',
                 47: 'LDO4-Domäne, separate Stromversorgung',
                 48: 'LDO4-Domäne, separate Stromversorgung' },
-            extra: [39, 40, 41, 42, 43, 44, 45],
+            extra: [9, 10, 11, 12, 13, 28, 29, 30, 31, 34, 35, 39, 40, 41, 42, 43, 44, 45, 49, 50, 51, 52, 53], extraLabel: 'INTERN VERBUNDENE GPIOs',
             i2c: { sda: 7, scl: 8 },
             sd: { pins: { d0: 39, d1: 40, d2: 41, d3: 42, clk: 43, cmd: 44 },
                 note: 'Onboard-Slot: LDO4-Domäne separat mit 3,3 V versorgen und GPIO45 manuell als Output LOW setzen.',

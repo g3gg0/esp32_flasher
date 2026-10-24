@@ -21,7 +21,7 @@ static int i2c_wait(unsigned port, unsigned last, io_deadline_t d) {
 }
 static unsigned i2c(const rpc_peripheral_command_t *q, const uint8_t *data, unsigned length) {
     unsigned port = q->port;
-    if (port >= hw_i2c_count() || port >= 2) return fail(RPC_STATUS_BAD_ARGUMENT, 0);
+    if (port >= hw_i2c_count() || port >= 2) return fail(RPC_STATUS_BAD_ARGUMENT, RPC_PERIPHERALERRORS_BAD_PORT);
     if (q->operation == RPC_OPERATIONS_INFO) {
         uint32_t values[8]; hw_i2c_info(port, values);
         for (unsigned i = 0; i < 8; ++i) packet.reply.values[i] = values[i];
@@ -32,7 +32,9 @@ static unsigned i2c(const rpc_peripheral_command_t *q, const uint8_t *data, unsi
         i2c_state[port].active = 0; return 0;
     }
     if (q->operation == RPC_OPERATIONS_CONFIGURE) {
-        if (length || (q->args[0] != 100000 && q->args[0] != 400000) || !hw_i2c_clock()) return fail(RPC_STATUS_BAD_ARGUMENT, 0);
+        if (length) return fail(RPC_STATUS_BAD_ARGUMENT, RPC_PERIPHERALERRORS_BAD_TRANSFER);
+        if (q->args[0] != 100000 && q->args[0] != 400000) return fail(RPC_STATUS_BAD_ARGUMENT, RPC_PERIPHERALERRORS_BAD_SPEED);
+        if (!hw_i2c_clock()) return fail(RPC_STATUS_BAD_ARGUMENT, RPC_PERIPHERALERRORS_BAD_CLOCK);
         hw_i2c_config(port, q->args[0]); i2c_state[port].active = 1;
         packet.reply.actual_hz = i2c_state[port].hz = q->args[0]; return 0;
     }
@@ -40,7 +42,7 @@ static unsigned i2c(const rpc_peripheral_command_t *q, const uint8_t *data, unsi
     if (!i2c_state[port].active) return io_fail(RPC_PERIPHERALERRORS_NOT_CONFIGURED);
     unsigned address = q->args[0], write = q->args[1], read = q->args[2];
     unsigned tx_count = write + ((write || !read) ? 1 : 0) + (read ? 1 : 0);
-    if (address > 127 || write != length || read > hw_i2c_fifo() || tx_count > hw_i2c_fifo()) return fail(RPC_STATUS_BAD_ARGUMENT, 0);
+    if (address > 127 || write != length || read > hw_i2c_fifo() || tx_count > hw_i2c_fifo()) return fail(RPC_STATUS_BAD_ARGUMENT, RPC_PERIPHERALERRORS_BAD_TRANSFER);
     io_deadline_t d = deadline(q->timeout_us);
     while (!hw_i2c_idle(port)) if (expired(d)) return io_fail(RPC_PERIPHERALERRORS_TIMEOUT);
     io_i2c_cmd_t cmds[8]; uint8_t tx[32]; unsigned n = 0, pos = 0;
@@ -164,7 +166,8 @@ int rpc_peripheral_handle(const rpc_header_t *request, uint32_t length) {
         const rpc_peripheral_command_t *q = (const void *)request;
         packet.reply.operation = q->operation; packet.reply.port = q->port;
         unsigned bytes = length - sizeof(*q);
-        if (q->timeout_us < 100 || q->timeout_us > 1500000 || (q->operation != RPC_OPERATIONS_TRANSFER && bytes)) fail(RPC_STATUS_BAD_ARGUMENT, 0);
+        if (q->timeout_us < 100 || q->timeout_us > 1500000) fail(RPC_STATUS_BAD_ARGUMENT, RPC_PERIPHERALERRORS_BAD_TIMEOUT);
+        else if (q->operation != RPC_OPERATIONS_TRANSFER && bytes) fail(RPC_STATUS_BAD_ARGUMENT, RPC_PERIPHERALERRORS_BAD_TRANSFER);
         else if (is_i2c) result = i2c(q, (const uint8_t *)(q + 1), bytes);
         else if (is_spi) result = spi(q, (const uint8_t *)(q + 1), bytes);
         else result = pwm(q, bytes);

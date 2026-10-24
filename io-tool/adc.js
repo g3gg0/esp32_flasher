@@ -12,9 +12,14 @@
             this.transport = transport; this.profile = profile; this.clock = clock;
             this.saved = new Map(); this.ready = false; this.lastChannel = null;
             this.analogSaved = new Map(); this.calibration = null; this.busAddress = null;
+            this.captureSlots = new Map();
         }
         channel(id) { return this.profile.channels[id] || null; }
         async set(address, value, mask = 0xffffffff, delayUs = 0) {
+            await this.remember(address, mask);
+            await this.transport.write(address, value, mask, delayUs);
+        }
+        async remember(address, mask) {
             mask >>>= 0;
             const previous = this.saved.get(address) || { value: 0, mask: 0 };
             const fresh = (mask & ~previous.mask) >>> 0;
@@ -24,10 +29,39 @@
                 previous.mask = (previous.mask | mask) >>> 0;
                 this.saved.set(address, previous);
             }
-            await this.transport.write(address, value, mask, delayUs);
+        }
+        async capture(ids) {
+            await this.open();
+            if (ids.length > 24) throw new Error('ADC capture supports at most 24 channels.');
+            for (const id of ids) if (!this.captureSlots.has(id)) {
+                const channel = this.channel(id); if (!channel) throw new Error(`GPIO${id}: no ADC channel.`);
+                const p = this.profile, slot = this.captureSlots.size;
+                if (slot >= 24) throw new Error('Too many configured ADC channels.');
+                let plan;
+                if (p.kind === 'digital-sar') {
+                    const s = p.sample, value = ((channel.channel << s.channel.shift) | (p.attenuation << s.attenuation.shift)) >>> 0;
+                    const mask = (s.channel.mask | s.attenuation.mask | s.start | s.disableMask) >>> 0;
+                    await this.remember(s.address, mask);
+                    plan = { low_us: 10, data_delay_us: s.dataDelayUs || 0, steps: [s.address, value, mask, s.clear, s.done, 0xffffffff, s.address, value | s.enable | s.start, mask], wait_addr: s.status, wait_mask: s.done, data_addr: s.data, data_mask: p.max, cleanup_addr: s.address, cleanup_mask: (s.start | s.disableMask) >>> 0 };
+                } else {
+                    const u = p.units[channel.unit], index = channel.channel + u.channelOffset, mask = (3 << (index * 2)) >>> 0, pad = (2 ** index << u.pad.shift) >>> 0;
+                    await this.remember(u.attenuation, mask); await this.remember(u.control, (u.force | u.pad.mask | u.start) >>> 0);
+                    plan = { steps: [u.attenuation, (p.attenuation << (index * 2)) >>> 0, mask, u.control, (u.force | pad) >>> 0, (u.force | u.pad.mask | u.start) >>> 0, u.control, u.start, u.start], wait_addr: u.control, wait_mask: u.done, data_addr: u.control, data_mask: p.max, invalid_mask: ((0xffff & ~p.max) | (u.invalidMask || 0)) >>> 0, idle_addr: u.idle?.address || 0, idle_mask: u.idle?.mask || 0, cleanup_addr: u.control, cleanup_mask: (u.start | u.pad.mask) >>> 0 };
+                }
+                plan.steps = plan.steps.map(n => n >>> 0);
+                await this.transport.captureConfigureADC({ ...plan, slot, pin: id }); this.captureSlots.set(id, slot);
+            }
+            const selection = ids.reduce((mask, id) => mask | 1 << this.captureSlots.get(id), 0) >>> 0;
+            const result = await this.transport.captureADC(selection), expected = new Set(ids);
+            if (result.samples.length !== ids.length || result.samples.some(s => !expected.has(s.pin) || s.value > this.profile.max)) { this.transport.close(); throw new Error('ADC capture selection/value mismatch.'); }
+            return result;
         }
         async open() {
             if (this.ready) return;
+            if (this.transport.supports?.('CAPTURE')) {
+                this.calibration = await this.transport.captureADCInitialize(this.profile); this.ready = true; this.nativeCalibration = true; return;
+            }
+            if (this.transport.flasher) throw new Error('Load accelerated stub 0.5.0 or newer for ADC initialization and calibration.');
             try {
                 for (const op of this.profile.init) await this.set(op.address, op.value, op.mask);
                 await this.openAnalog();
@@ -154,6 +188,12 @@
         async read(id, signal) {
             const channel = this.channel(id);
             if (!channel) throw new Error(`GPIO${id}: kein unterstützter ADC-Kanal.`);
+            if (this.transport.supports?.('CAPTURE')) {
+                checkAbort(signal);
+                const result = await this.capture([id]), sample = result.samples[0], t = result.anchor + sample.offsetUs / 1000;
+                this.lastTiming = { startedAt: result.anchor, doneAt: result.anchor + result.durationUs / 1000 };
+                return { raw: sample.value, value: sample.value / this.profile.max, t, ...this.lastTiming, receivedAt: result.receivedAt, unit: channel.unit, channel: channel.channel };
+            }
             await this.open(); checkAbort(signal);
             const key = `${channel.unit}:${channel.channel}`;
             if (key !== this.lastChannel) {
@@ -182,7 +222,11 @@
                 try { await this.transport.write(address, state.value, state.mask); }
                 catch (error) { errors.push(error); }
             }
-            this.ready = false; this.lastChannel = null; this.saved.clear();
+            if (this.nativeCalibration) {
+                try { await this.transport.captureADCRelease(); } catch (error) { errors.push(error); }
+                this.nativeCalibration = false;
+            }
+            this.ready = false; this.lastChannel = null; this.saved.clear(); this.captureSlots.clear();
             if (errors.length) throw new AggregateError(errors, 'ADC-Register konnten nicht vollständig wiederhergestellt werden.');
         }
     }

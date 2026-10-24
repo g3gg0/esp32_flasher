@@ -59,8 +59,9 @@
     }
 
     class GPIOController {
-        constructor(transport, chip, { clock = now, onSample = () => {}, onError = () => {} } = {}) {
+        constructor(transport, chip, { clock = now, onSample = () => {}, onError = () => {}, readOnly = transport instanceof RegisterTransport } = {}) {
             this.transport = transport; this.chip = chip; this.clock = clock;
+            this.readOnly = readOnly || !!chip.readOnlyGPIO;
             this.onSample = onSample; this.onError = onError;
             this.queue = new Queue(); this.pins = new Map(); this.running = false;
             this.timer = null; this.pollPromise = null; this.interval = 20; this.active = true;
@@ -78,6 +79,7 @@
         analogRoute(id) { return (this.readMode === 'adc' || this.adcScanRouting) && this.adc?.channel(id) ? this.adc.profile.padRoute : null; }
         bank(id) { return this.analogRoute(id)?.bank || this.chip.gpio.banks[Math.floor(id / 32)]; }
         async configurePin(id, mode = 'input', pull = 'none', level = 0) {
+            if (this.readOnly) throw new Error('Load the accelerated stub to configure GPIO.');
             const pin = this.descriptor(id);
             if (this.pinOwners.has(id)) throw new Error(`GPIO${id} wird von ${this.pinOwners.get(id)} verwendet; zuerst den Port freigeben.`);
             if (!['input', 'output'].includes(mode)) throw new Error('Diese Funktion ist noch nicht implementiert.');
@@ -138,11 +140,14 @@
             return this.queue.run(async () => {
                 for (const id of ids) {
                     if (!this.active) break;
-                    await this.configurePin(id, 'input');
+                    if (this.readOnly) this.pins.set(id, { id, mode: 'observe', pull: null, level: null, read: null, history: new History() });
+                    else await this.configurePin(id, 'input');
                 }
+                if (this.transport.supports?.('CAPTURE')) await this.transport.captureConfigureGPIO(this.chip.gpio.banks.map(b => b.input));
             });
         }
         updateLDO4(mode) {
+            if (this.readOnly) return Promise.reject(new Error('Load the accelerated stub for peripheral operations.'));
             return this.queue.run(async () => {
                 if (!this.ldo4 || !this.active || this.fault || this.scanning) throw new Error('LDO4 derzeit nicht verfügbar.');
                 if (mode && [...this.pinOwners.keys()].some(id => this.ldo4.affects(id))) throw new Error('Zuerst die Peripherieports der Versorgungsdomäne freigeben.');
@@ -150,6 +155,7 @@
             });
         }
         setLevel(id, level) {
+            if (this.readOnly) return Promise.reject(new Error('Load the accelerated stub to drive GPIO.'));
             return this.queue.run(async () => {
                 const state = this.pins.get(id);
                 if (!state || state.mode !== 'output') throw new Error('Zuerst GPIO Output konfigurieren.');
@@ -164,6 +170,25 @@
         }
         async sample() {
             return this.queue.run(async () => {
+                if (this.transport.supports?.('CAPTURE')) {
+                    const states = [...this.pins.values()].filter(s => !this.pinOwners.has(s.id) && (this.readMode !== 'adc' || this.adc?.channel(s.id)));
+                    if (!states.length) return;
+                    const mask = states.reduce((m, s) => m | 1 << Math.floor(s.id / 32), 0);
+                    const result = this.readMode === 'adc' ? await this.adc.capture(states.map(s => s.id)) : await this.transport.captureGPIO(mask);
+                    this.captureDurationUs = result.durationUs;
+                    const samples = new Map(result.samples.map(s => [s.pin, s]));
+                    for (const state of this.pins.values()) {
+                        const sample = samples.get(this.readMode === 'adc' ? state.id : Math.floor(state.id / 32));
+                        if (!sample || this.pinOwners.has(state.id)) { state.read = null; state.adcRaw = null; continue; }
+                        const t = result.anchor + sample.offsetUs / 1000, raw = this.readMode === 'adc' ? sample.value : sample.value >>> (state.id % 32) & 1;
+                        state.read = this.readMode === 'adc' ? raw / this.adc.profile.max : raw; state.adcRaw = this.readMode === 'adc' ? raw : null;
+                        state.samplePeriod = state.lastRead ? t - state.lastRead : null; state.lastRead = t;
+                        state.history.push(t, state.read, state.mode === 'output' ? state.level : null);
+                        if (this.readMode === 'adc') this.onSample(this.pins, t, state.id);
+                    }
+                    if (this.readMode !== 'adc') this.onSample(this.pins, result.anchor, null);
+                    return;
+                }
                 if (this.readMode === 'adc') {
                     for (const state of this.pins.values()) {
                         if (!this.active) break;
@@ -184,9 +209,16 @@
                     const value = await this.transport.read(this.chip.gpio.banks[bank].input);
                     values.set(bank, { value: value >>> 0, t: this.clock() });
                 }
+                const overrides = new Map();
                 for (const state of this.pins.values()) {
-                    const sample = values.get(Math.floor(state.id / 32));
-                    state.read = (sample.value >>> (state.id % 32)) & 1;
+                    const source = this.chip.gpio.inputOverrides?.[state.id];
+                    if (source && !overrides.has(source.address)) overrides.set(source.address,
+                        { value: (await this.transport.read(source.address)) >>> 0, t: this.clock() });
+                }
+                for (const state of this.pins.values()) {
+                    const source = this.chip.gpio.inputOverrides?.[state.id];
+                    const sample = source ? overrides.get(source.address) : values.get(Math.floor(state.id / 32));
+                    state.read = (sample.value >>> (source?.bit ?? state.id % 32)) & 1;
                     state.lastRead = sample.t;
                     state.history.push(sample.t, state.read, state.mode === 'output' ? state.level : null);
                 }
@@ -194,6 +226,7 @@
             });
         }
         setReadMode(mode) {
+            if (this.readOnly && mode !== 'digital') return Promise.reject(new Error('Load the accelerated stub for ADC.'));
             return this.queue.run(async () => {
                 if (this.fault || !this.active) throw new Error('Sitzung gestoppt; bitte neu verbinden.');
                 if (!['digital', 'adc'].includes(mode)) throw new Error('Unbekannte Messquelle.');
@@ -212,6 +245,7 @@
             });
         }
         async scanUsage(ids, { method = 'pull', settleMs = 20, signal, onResult = () => {}, onPhase = () => {} } = {}) {
+            if (this.readOnly) throw new Error('Load the accelerated stub for usage scans.');
             if (this.scanning || this.fault || !this.active) throw new Error('Usage-Scan nicht verfügbar.');
             if (!['pull', 'drive', 'compare'].includes(method) || !Number.isFinite(settleMs) || settleMs < 5 || settleMs > 200) throw new Error('Ungültige Scanparameter.');
             const targets = [...new Set(ids)];
@@ -267,6 +301,7 @@
             await this.pause();
             return this.queue.run(async () => {
                 const errors = [];
+                if (this.readOnly) { this.pins.clear(); return; }
                 for (const peripheral of [...this.peripheralSessions]) {
                     try { await peripheral.closeUnqueued(); } catch (error) { errors.push(error); }
                 }
@@ -274,6 +309,7 @@
                     try { await this.transport.write(this.bank(id).enableClear, bit(id)); } catch (error) { errors.push(error); }
                 }
                 try { await this.adc?.close(); } catch (error) { errors.push(error); }
+                if (this.transport.supports?.('CAPTURE')) try { await this.transport.captureRelease(); } catch (error) { errors.push(error); }
                 if (errors.length) { this.fault = true; throw new AggregateError(errors, 'GPIO-/ADC-Freigabe unvollständig.'); }
                 this.pins.clear();
             });
@@ -291,6 +327,8 @@
         constructor(chip, clock = now) { this.chip = chip; this.clock = clock; this.registers = new Map(); this.closed = false; this.pinDescriptors = new Map(chip.pins.map(pin => [pin.id, pin])); this.adcModel = adcAPI.createADCModel(chip, this.registers, clock); this.sdModel = sdAPI?.createSDModel(chip, this.registers); this.i2cModel = i2cAPI?.createI2CModel(chip, this.registers); }
         async read(address) {
             if (this.closed) throw new Error('Demo beendet.');
+            if (this.chip.gpio.inputOverrides && Object.values(this.chip.gpio.inputOverrides).some(source => source.address === address))
+                return Math.floor(this.clock() / 350) % 2;
             const sd = this.sdModel?.read(address); if (sd !== undefined) return sd;
             const i2c = this.i2cModel?.read(address); if (i2c !== undefined) return i2c;
             const banks = [...this.chip.gpio.banks, ...(this.adcModel?.padRoute ? [this.adcModel.padRoute.bank] : [])];

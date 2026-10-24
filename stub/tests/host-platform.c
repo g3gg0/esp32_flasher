@@ -10,7 +10,14 @@ void platform_flush(void) {}
 void platform_delay(uint32_t us) { (void)us; }
 uint32_t platform_cycles(void) { static uint32_t cycles; return cycles += 10; }
 uint32_t platform_ticks_per_us(void) { return 1; }
-int platform_register_allowed(uint32_t address, int write) { (void)address; (void)write; return 0; }
+int platform_register_allowed(uint32_t address, int write) {
+    (void)write;
+#ifdef RPC_CAPTURE_TEST
+    return address>=0x60000000&&address<0x60001000&&!(address&3);
+#else
+    (void)address;return 0;
+#endif
+}
 void platform_identity(void *packet) {
     rpc_identity_t *id = packet;
     id->cpu_cores = 1;

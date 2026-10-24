@@ -29,7 +29,10 @@ static inline uint32_t xtal_hz(void) {
 #elif CONFIG_IDF_TARGET_ESP32H2
     return 32000000u;
 #else
-    return clk_ll_xtal_load_freq_mhz() * 1000000u;
+    uint32_t mhz = clk_ll_xtal_load_freq_mhz();
+    if (mhz == 26 || mhz == 40) return mhz * 1000000u;
+    extern uint32_t ets_get_xtal_freq(void);
+    return ets_get_xtal_freq(); /* ROM calibration also supports C2's 26 MHz. */
 #endif
 }
 #elif CONFIG_IDF_TARGET_ESP32S2
@@ -58,8 +61,23 @@ void hw_i2c_info(unsigned port, uint32_t v[8]) {
     v[0] = s->sda_out_sig; v[1] = s->sda_in_sig; v[2] = s->scl_out_sig; v[3] = s->scl_in_sig;
     v[4] = GPIO_FUNC0_IN_SEL_CFG_REG; v[5] = SOC_I2C_FIFO_LEN; v[6] = SOC_HP_I2C_NUM; v[7] = 0;
 }
+static void reset_i2c(unsigned port) {
+    /* IDF's ESP32/S2 helper writes the entire shared reset register. Keep
+     * other peripheral reset fields intact in both the RPC and legacy paths. */
+#if CONFIG_IDF_TARGET_ESP32
+    uint32_t mask = port ? DPORT_I2C_EXT1_RST : DPORT_I2C_EXT0_RST;
+    DPORT_SET_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, mask);
+    DPORT_CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN_REG, mask);
+#elif CONFIG_IDF_TARGET_ESP32S2
+    uint32_t mask = port ? DPORT_I2C_EXT1_RST_M : DPORT_I2C_EXT0_RST_M;
+    SET_PERI_REG_MASK(DPORT_PERIP_RST_EN0_REG, mask);
+    CLEAR_PERI_REG_MASK(DPORT_PERIP_RST_EN0_REG, mask);
+#else
+    i2c_ll_reset_register(port);
+#endif
+}
 void hw_i2c_config(unsigned port, unsigned speed) {
-    i2c_ll_enable_bus_clock(port, true); i2c_ll_reset_register(port);
+    i2c_ll_enable_bus_clock(port, true); reset_i2c(port);
     (void)port; i2c_dev_t *hw = I2C_LL_GET_HW(port);
     i2c_ll_enable_controller_clock(hw, true);
     i2c_ll_set_source_clk(hw, I2C_SOURCE);
@@ -78,7 +96,7 @@ void hw_i2c_config(unsigned port, unsigned speed) {
 }
 void hw_i2c_release(unsigned port) {
     (void)port; i2c_dev_t *hw = I2C_LL_GET_HW(port);
-    i2c_ll_disable_intr_mask(hw, 0xffffffff); i2c_ll_reset_register(port);
+    i2c_ll_disable_intr_mask(hw, 0xffffffff); reset_i2c(port);
     i2c_ll_enable_controller_clock(hw, false); i2c_ll_enable_bus_clock(port, false);
 }
 bool hw_i2c_idle(unsigned port) { (void)port; return !i2c_ll_is_bus_busy(I2C_LL_GET_HW(port)); }
@@ -150,6 +168,7 @@ bool hw_spi_begin(unsigned port, const uint8_t *data, unsigned size, unsigned ti
 #else
     (void)timeout_us;
 #endif
+    spi_ll_clear_int_stat(hw);
     spi_ll_user_start(hw); return true;
 }
 bool hw_spi_done(unsigned port) { return spi_ll_usr_is_done(SPI_LL_GET_HW(port)); }

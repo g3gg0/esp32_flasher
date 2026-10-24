@@ -50,9 +50,9 @@
         }
         function update() {
             for (const kind of ['spi', 'pwm']) {
-                const ready = active(kind), blocked = ctx.blocked() || !ctx.controller() || ctx.controller().fault, supported = ctx.controller()?.transport.supports?.(kind.toUpperCase());
+                const c = ctx.controller(), ready = active(kind), blocked = ctx.blocked() || !c || c.fault, supported = c?.transport.supports?.(kind.toUpperCase());
                 $(`${kind}-state`).textContent = ready ? `AKTIV · ${hosts[kind].actualHz} Hz` : 'NICHT AKTIV';
-                $(`${kind}-note`).textContent = supported ? 'Pins werden reserviert und bei Freigabe wiederhergestellt.' : 'Beschleunigten Stub laden, um diese Funktion zu verwenden.';
+                $(`${kind}-note`).textContent = supported ? 'Beschleunigter RPC · Pins werden reserviert und bei Freigabe wiederhergestellt.' : 'Beschleunigten Stub laden.';
                 for (const input of $(`${kind}-config`).querySelectorAll('input,select')) input.disabled = blocked || (ready && input.id !== 'pwm-duty');
                 $(`${kind}-apply`).disabled = blocked || ready || !supported || roles(kind).some(role => draft(kind)[role] === '');
                 $(`${kind}-release`).hidden = !ready; $(`${kind}-release`).disabled = blocked;

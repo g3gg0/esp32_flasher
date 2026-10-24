@@ -80,7 +80,7 @@ test('a timeout closes RPC and prevents a late reply from being reused', async (
 });
 
 test('every chip profile has a generated target and a validated RAM-only build', async () => {
-    assert.deepEqual(Object.keys(acceleratedTargets).sort(), Object.keys(require('../configs/chips.js')).sort());
+    assert.deepEqual(Object.keys(acceleratedTargets).sort(), Object.values(require('../configs/chips.js')).filter(chip => !chip.readOnlyGPIO).map(chip => chip.id).sort());
     for (const chip of Object.keys(acceleratedTargets)) {
         const value = await prepareAccelerated(chip, fetchManifest(manifest(chip)));
         assert.equal(value.ramOnly, true);

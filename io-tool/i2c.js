@@ -59,6 +59,7 @@
             return profile;
         }
         open(config, signal) {
+            if (this.transport.flasher) return Promise.reject(new Error('Use the accelerated I2C RPC backend.'));
             try { this.validate(config); } catch (error) { return Promise.reject(error); }
             return this.controller.queue.run(async () => {
                 const c = this.controller, g = c.chip.gpio;

@@ -18,7 +18,7 @@ def run(args):
     subprocess.run([str(a) for a in args], check=True)
 
 
-def build(target, legacy=False):
+def build(target):
     idf = Path(os.environ.get("IDF_PATH", ""))
     version_file = idf / "tools/cmake/version.cmake"
     if not version_file.is_file() or "IDF_VERSION_MAJOR 6" not in version_file.read_text() or "IDF_VERSION_MINOR 1" not in version_file.read_text():
@@ -46,10 +46,6 @@ def build(target, legacy=False):
     for name in ('i2c', 'gpspi', 'ledc', 'gpio'):
         includes += [components / f'esp_hal_{name}/{target}/include', components / f'esp_hal_{name}/include']
     includes += [p / 'include' for p in components.iterdir() if p.name != 'linux' and (p / 'include').is_dir()]
-    if legacy:
-        from legacy_profiles import generate
-        generate(target, cfg, includes, components, out)
-        return
     text, data = int(cfg["text"], 0), int(cfg["data"], 0)
     text_budget, data_budget, stack = cfg["textBudget"], cfg["dataBudget"], cfg["stack"]
     linker = f'''ENTRY(_start)
@@ -84,7 +80,7 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
         flags += [f"-T{rom / name}"]
     flags += [f'-T{components / f"soc/{target}/ld/{target}.peripherals.ld"}']
     elf = out / "stub.elf"
-    sources = [ROOT / f'src/{name}' for name in ('start.S', 'stub.c', 'platform.c', 'sdmmc.c', 'peripheral.c', 'peripheral_port.c')]
+    sources = [ROOT / f'src/{name}' for name in ('start.S', 'stub.c', 'platform.c', 'sdmmc.c', 'capture.c', 'adc_calibration.c', 'peripheral.c', 'peripheral_port.c')]
     if target == 'esp32':
         sources += [components / 'soc/esp32/dport_access.c']
     sources += [components / f'esp_hal_{name}/{target}/{stem}_periph.c' for name, stem in [('i2c', 'i2c'), ('gpspi', 'spi'), ('ledc', 'ledc')]]
@@ -113,6 +109,5 @@ ASSERT(SIZEOF(.data) + SIZEOF(.bss) + SIZEOF(.dma) + SIZEOF(.stack) <= {data_bud
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--target", required=True)
-    parser.add_argument('--legacy', action='store_true')
     args = parser.parse_args()
-    build(args.target, args.legacy)
+    build(args.target)

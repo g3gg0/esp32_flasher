@@ -1,0 +1,31 @@
+{
+  "chip": "esp8266",
+  "sourceRef": "ESP8266 Technical Reference v1.7",
+  "blocks": [
+    {
+      "id": "gpio",
+      "source": "https://documentation.espressif.com/esp8266-technical_reference_en.pdf",
+      "registers": [
+        { "name": "GPIO_OUT", "expression": "GPIO_BASE + 0x00", "address": 1610613504 },
+        { "name": "GPIO_OUT_W1TS", "expression": "GPIO_BASE + 0x04", "address": 1610613508 },
+        { "name": "GPIO_OUT_W1TC", "expression": "GPIO_BASE + 0x08", "address": 1610613512 },
+        { "name": "GPIO_ENABLE", "expression": "GPIO_BASE + 0x0C", "address": 1610613516 },
+        { "name": "GPIO_ENABLE_W1TS", "expression": "GPIO_BASE + 0x10", "address": 1610613520 },
+        { "name": "GPIO_ENABLE_W1TC", "expression": "GPIO_BASE + 0x14", "address": 1610613524 },
+        { "name": "GPIO_IN", "expression": "GPIO_BASE + 0x18 (GPIO0–15)", "address": 1610613528 },
+        { "name": "GPIO_STATUS", "expression": "GPIO_BASE + 0x1C", "address": 1610613532 },
+        { "name": "GPIO_STATUS_W1TS", "expression": "GPIO_BASE + 0x20", "address": 1610613536 },
+        { "name": "GPIO_STATUS_W1TC", "expression": "GPIO_BASE + 0x24", "address": 1610613540 }
+      ]
+    },
+    {
+      "id": "rtc_gpio",
+      "source": "https://github.com/espressif/ESP8266_RTOS_SDK/blob/master/components/esp8266/include/esp8266/eagle_soc.h",
+      "registers": [
+        { "name": "RTC_GPIO_OUT", "expression": "RTC_BASE + 0x68", "address": 1610614632 },
+        { "name": "RTC_GPIO_ENABLE", "expression": "RTC_BASE + 0x74", "address": 1610614644 },
+        { "name": "RTC_GPIO_IN_DATA", "expression": "RTC_BASE + 0x8C (GPIO16, bit 0)", "address": 1610614668 }
+      ]
+    }
+  ]
+}

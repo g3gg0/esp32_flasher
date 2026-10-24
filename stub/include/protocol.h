@@ -3,10 +3,10 @@
 #include <stdint.h>
 #include <stddef.h>
 #define RPC_PROTOCOL_MAJOR 1u
-#define RPC_PROTOCOL_MINOR 2u
+#define RPC_PROTOCOL_MINOR 3u
 #define RPC_MAX_PACKET_LENGTH 1024u
 #define RPC_MAX_REGISTER_DELAY_US 100000u
-#define RPC_BUILD_VERSION "0.4.0"
+#define RPC_BUILD_VERSION "0.5.0"
 #define RPC_STATUS_OK 0u
 #define RPC_STATUS_UNSUPPORTED 1u
 #define RPC_STATUS_BAD_LENGTH 2u
@@ -29,6 +29,7 @@
 #define RPC_CAPABILITIES_PWM 5u
 #define RPC_CAPABILITIES_UART 6u
 #define RPC_CAPABILITIES_I2S 7u
+#define RPC_CAPABILITIES_CAPTURE 8u
 #define RPC_SDMMCRESPONSETYPES_NONE 0u
 #define RPC_SDMMCRESPONSETYPES_R1 1u
 #define RPC_SDMMCRESPONSETYPES_R1B 2u
@@ -56,6 +57,18 @@
 #define RPC_PERIPHERALERRORS_NOT_CONFIGURED 5u
 #define RPC_PERIPHERALERRORS_TIMER_CONFLICT 6u
 #define RPC_PERIPHERALERRORS_BUS 7u
+#define RPC_PERIPHERALERRORS_BAD_PORT 8u
+#define RPC_PERIPHERALERRORS_BAD_CLOCK 9u
+#define RPC_PERIPHERALERRORS_BAD_SPEED 10u
+#define RPC_PERIPHERALERRORS_BAD_TRANSFER 11u
+#define RPC_PERIPHERALERRORS_BAD_TIMEOUT 12u
+#define RPC_CAPTUREOPERATIONS_GPIO_CONFIGURE 1u
+#define RPC_CAPTUREOPERATIONS_ADC_CONFIGURE 2u
+#define RPC_CAPTUREOPERATIONS_GPIO_SCAN 3u
+#define RPC_CAPTUREOPERATIONS_ADC_SCAN 4u
+#define RPC_CAPTUREOPERATIONS_RELEASE 5u
+#define RPC_CAPTUREOPERATIONS_ADC_INITIALIZE 6u
+#define RPC_CAPTUREOPERATIONS_ADC_RELEASE 7u
 typedef struct __attribute__((packed)) {
     uint8_t magic[4];
     uint32_t length;
@@ -175,6 +188,65 @@ typedef struct __attribute__((packed)) {
     uint32_t values[8];
 } rpc_peripheral_response_t;
 _Static_assert(sizeof(rpc_peripheral_response_t) == 56, "peripheral_response wire size");
+typedef struct __attribute__((packed)) {
+    rpc_header_t header;
+    uint16_t operation;
+    uint16_t count;
+    uint32_t selection;
+} rpc_capture_command_t;
+_Static_assert(sizeof(rpc_capture_command_t) == 16, "capture_command wire size");
+#define RPC_MAGIC_CAPTURE_COMMAND "IOCC"
+typedef struct __attribute__((packed)) {
+    rpc_header_t header;
+    uint16_t operation;
+    uint16_t slot;
+    uint16_t pin;
+    uint16_t flags;
+    uint32_t low_us;
+    uint32_t data_delay_us;
+    uint32_t steps[9];
+    uint32_t wait_addr;
+    uint32_t wait_mask;
+    uint32_t data_addr;
+    uint32_t data_mask;
+    uint32_t invalid_mask;
+    uint32_t idle_addr;
+    uint32_t idle_mask;
+    uint32_t cleanup_addr;
+    uint32_t cleanup_mask;
+} rpc_capture_plan_t;
+_Static_assert(sizeof(rpc_capture_plan_t) == 96, "capture_plan wire size");
+#define RPC_MAGIC_CAPTURE_PLAN "IOCC"
+typedef struct __attribute__((packed)) {
+    rpc_header_t header;
+    uint32_t status;
+    uint16_t count;
+    uint16_t failed_slot;
+    uint32_t duration_us;
+    uint32_t detail;
+} rpc_capture_response_t;
+_Static_assert(sizeof(rpc_capture_response_t) == 24, "capture_response wire size");
+#define RPC_MAGIC_CAPTURE_RESPONSE "IOCR"
+typedef struct __attribute__((packed)) {
+    rpc_header_t header;
+    uint16_t operation;
+    uint16_t init_count;
+    uint16_t analog_count;
+    uint16_t unit_count;
+    uint32_t bus_control;
+    uint32_t bus_select;
+    uint32_t bus_select_mask;
+    uint32_t bus_command_mask;
+    uint32_t block;
+    uint32_t major[3];
+    uint32_t minor[3];
+    uint32_t version_min;
+    uint32_t version_exact;
+    uint32_t minor_multiplier;
+    uint32_t units[38];
+} rpc_adc_setup_t;
+_Static_assert(sizeof(rpc_adc_setup_t) == 224, "adc_setup wire size");
+#define RPC_MAGIC_ADC_SETUP "IOCC"
 #define RPC_MODULES(X) \
     X(I2C, "I2CC", "I2CR") \
     X(SPI, "SPIC", "SPIR") \

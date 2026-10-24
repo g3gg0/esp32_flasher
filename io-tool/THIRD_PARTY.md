@@ -41,6 +41,8 @@ these images is asserted by this project.
 | `assets/esp32-h2-devkitm-1-pinout.png` | https://cdn.espboards.net/boards/esp32-h2-devkitm-1/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
 | `assets/xiao-esp32c6-pinout.png` | https://cdn.espboards.net/boards/xiao-esp32c6/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
 | `assets/esp32-c6-devkitm-1-pinout.png` | https://cdn.espboards.net/boards/esp32-c6-devkitm-1/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
+| `assets/lolin-nodemcu-v3.jpg` | https://commons.wikimedia.org/wiki/File:NodeMCU_Lua_Lol1n_V3.jpg | Popolon, CC BY-SA 4.0; rotated and resized |
+| `assets/esp32-c6-touch-lcd-1-47.webp` | https://docs.waveshare.com/assets/images/ESP32-C6-Touch-LCD-1.47-details-inter-27f8f0c6d70114f21e2fee2ea079c0c7.webp | Waveshare |
 | `assets/esp32-c6-super-mini-pinout.png` | https://cdn.espboards.net/boards/esp32-c6-super-mini/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
 | `assets/esp32-c6-zero-mini-pinout.png` | https://cdn.espboards.net/boards/esp32-c6-zero-mini/diagram-1600.png | ESPboards, CC BY-NC 4.0 |
 | `assets/esp32c3-pinout.png` | https://cdn.espboards.net/boards/xiao-esp32c3/diagram-1600.png | ESPboards, CC BY-NC 4.0 |

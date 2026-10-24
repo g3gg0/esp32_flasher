@@ -37,10 +37,10 @@
         <a class="brand" href="./"><span class="brand-mark">⏚</span><span>ESP <b>I/O Lab</b><small>REGISTER WORKBENCH</small></span></a>
         <span class="session-badge" id="session-badge">OFFLINE</span>
         <div class="connection-actions">
-            <label class="baud-label">Baud<select id="baud"><option>115200</option><option>460800</option><option selected>921600</option></select></label>
+            <label class="baud-label">Baud<select id="baud"><option selected>115200</option><option>460800</option><option>921600</option></select></label>
             <button id="connect" class="primary">Mit ESP verbinden <span>↗</span></button>
-            <button id="load-accelerated" hidden>Load accelerated stub</button>
             <button id="disconnect" hidden>Trennen &amp; Reset</button>
+            <button id="load-accelerated-top" hidden>Load accelerated stub</button>
         </div>
     </header>
     <main>
@@ -59,8 +59,8 @@
         <div class="workspace">
             <section class="panel board-panel">
                 <div class="section-heading"><div><span class="step">02</span><h2>Live-Pinout</h2><span id="pin-count" class="muted"></span></div><button id="pause" class="subtle" disabled>Ⅱ Pause</button></div>
-                <div class="trace-toolbar"><span id="sampling">Noch keine Messwerte</span><label>Messquelle <select id="read-mode"><option value="digital">GPIO · digital</option><option value="adc">ADC · 12 Bit</option></select></label><label>Poll-Abstand <select id="interval"><option value="10">10 ms</option><option value="20" selected>20 ms</option><option value="50">50 ms</option><option value="100">100 ms</option></select></label></div>
-                <p id="adc-info" class="mode-info" hidden>ADC-Rohwerte 0–4095 · nicht spannungskalibriert · Kanäle werden nacheinander gelesen. Pins ohne ADC bleiben ohne Messkurve.</p>
+                <div class="trace-toolbar"><span id="sampling">Noch keine Messwerte</span><label>Messquelle <select id="read-mode"><option value="digital">GPIO · digital</option><option value="adc">ADC · 12 Bit</option></select></label><label>Poll-Abstand <select id="interval"><option value="1">1 ms</option><option value="5">5 ms</option><option value="10">10 ms</option><option value="20" selected>20 ms</option><option value="50">50 ms</option><option value="100">100 ms</option></select></label></div>
+                <p id="adc-info" class="mode-info" hidden>ADC-Rohwerte 0–4095 · nicht spannungskalibriert · Initialisierung, Werkstrim und Kanal-Scan laufen im RAM-Stub. Ein Datenpaket pro Scan; Pins ohne ADC bleiben ohne Messkurve.</p>
                 <div class="map-scroll"><div id="pinmap"><canvas id="map-traces" aria-hidden="true"></canvas><svg id="board-svg" role="group" aria-label="Board mit anklickbaren GPIO-Pins"></svg><div id="quick-controls"></div></div></div>
                 <div class="board-caption"><span>Pin anklicken, um ihn zu konfigurieren. <i class="dot reserved"></i> Reserviert / nicht verfügbar</span><a id="board-source" target="_blank" rel="noreferrer">Bild- und Pinoutquelle ↗</a></div>
             </section>
@@ -93,9 +93,9 @@
             <div id="scan-results" class="scan-results"><p>Noch kein Scan. Die bisherige Konfiguration wird nach jedem getesteten Pin wiederhergestellt.</p></div>
         </section>
         <section class="panel peripheral-panel">
-            <div class="section-heading"><div><h2>Peripherie &amp; Register</h2><span class="muted">GPIO · ADC · SD</span></div><span id="catalog-count" class="chip-badge"></span></div>
+            <div class="section-heading"><div><h2>Peripherie &amp; Register</h2><span class="muted">GPIO · ADC · SD</span></div><button id="load-accelerated" hidden>Load accelerated stub</button><span id="catalog-count" class="chip-badge"></span></div>
             <div class="peripheral-buttons" id="peripherals"></div>
-            <p id="peripheral-description" class="muted">GPIO wird per Registerzugriff bedient. Weitere Blöcke lassen sich erkunden; deren Steuerung folgt später.</p>
+            <p id="peripheral-description" class="muted">Klassischer Stub: nur GPIO beobachten und plotten. Für GPIO-Steuerung, ADC und Peripherie den beschleunigten Stub laden.</p>
             <div id="ldo4-panel" class="sd-panel" hidden>
                 <div class="sd-heading"><div><h3>LDO4 · Separate Stromversorgung</h3><p>PMU · unabhängig von GPIO und SDMMC</p></div><span id="ldo4-state" class="chip-badge">UNBEKANNT</span></div>
                 <p class="sd-note">3,3-V-Rail-Bypass schaltet die vorhandene Versorgung durch. Nur für eine dafür geeignete 3,3-V-Beschaltung verwenden, nicht für 1,8-V-Geräte. Die Einstellung betrifft die gesamte Versorgungsdomäne; Hinweise am Board beachten. Registerzustand, keine Spannungsmessung.</p>

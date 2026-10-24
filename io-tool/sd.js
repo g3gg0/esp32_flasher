@@ -171,6 +171,7 @@
             await this.updateClock(signal);
         }
         open(config, signal) {
+            if (this.transport.flasher && !this.rpcSD) return Promise.reject(new Error('Load the accelerated stub for SDMMC.'));
             const c = this.controller;
             if (!c.active || c.fault || c.scanning) return Promise.reject(new Error('SD-Port ist in dieser Sitzung nicht verfügbar.'));
             let checked;

@@ -1241,7 +1241,7 @@ class ESPFlasher {
             return this.stubLoaded;
         }
 
-        this.stubLoaded = this.executeCommand(this.buildCommandPacketU32(READ_REG, this.chip_magic_addr),
+        this.stubLoaded = await this.executeCommand(this.buildCommandPacketU32(READ_REG, this.chip_magic_addr),
             async (resolve, reject, responsePacket) => {
                 if (responsePacket && responsePacket.data) {
                     if (responsePacket.data.length == 2) {
@@ -1498,9 +1498,7 @@ class ESPFlasher {
         }
 
         this.synced = false;
-        if (this.skipMagicRead) {
-            this.stubLoaded = false;
-        }
+        this.stubLoaded = false;
         this.consoleBuffer = '';
         this._preSyncState = 'idle';
 
@@ -1630,9 +1628,7 @@ class ESPFlasher {
         const syncTimeoutMs = 300; /* Timeout for each individual sync attempt */
         let synchronized = false;
 
-        if (this.skipMagicRead) {
-            this.stubLoaded = false;
-        }
+        this.stubLoaded = false;
         this.logDebug(`Attempting to synchronize (${maxRetries} attempts)...`);
 
         const syncData = new Uint8Array([0x07, 0x07, 0x12, 0x20, ...Array(32).fill(0x55)]);
@@ -1690,7 +1686,7 @@ class ESPFlasher {
 
             this.logDebug(`Security Info: Flags=${this.securityInfo.flags_hex}, Flash Crypt=${this.securityInfo.flash_crypt_cnt}, Chip ID=${this.securityInfo.chip_id_hex} (${this.current_chip}), ECO=${this.securityInfo.eco_version_hex}`);
 
-            if (this.skipMagicRead && syncModeDetected) {
+            if (syncModeDetected) {
                 /* The SYNC response identifies stub mode without a register probe. */
                 this.stubLoaded = syncStubDetected;
             }
@@ -1757,7 +1753,7 @@ class ESPFlasher {
             this.logError(`Synced, but chip magic value 0x${currentValue.toString(16)} is unknown.`);
             this.current_chip = "unknown"; // Mark as unknown
         }
-        if (this.skipMagicRead && syncModeDetected) {
+        if (syncModeDetected) {
             this.stubLoaded = syncStubDetected;
         }
     }

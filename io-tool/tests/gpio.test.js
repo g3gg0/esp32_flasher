@@ -40,7 +40,7 @@ test('S3 board headers match the pictured layouts and keep power pads non-intera
     const mini = boards.find(board => board.id === 's3-supermini'), ai = boards.find(board => board.id === 'ai-s3');
     assert.equal(mini.chip, 'esp32s3'); assert.equal(ai.chip, 'esp32s3');
     assert.deepEqual(mini.pins.map(pin => pin.label), ['43', '44', '1', '2', '3', '4', '5', '6', '7', '5V', 'GND', '3V3', '13', '12', '11', '10', '9', '8']);
-    assert.equal(mini.pins.filter(pin => pin.gpio !== null).length + mini.extra.length, 35);
+    assert.equal(mini.pins.filter(pin => pin.gpio !== null).length + mini.back.pins.length, 35);
     assert.equal(ai.pins.length, 44);
     assert.equal(ai.pins.filter(pin => pin.gpio !== null).length, 36);
     assert.deepEqual(ai.pins.slice(0, 3).map(pin => pin.label), ['3V3', '3V3', 'RST']);
@@ -66,6 +66,7 @@ test('every pictured board provides image dimensions for both thumbnail and pino
 
 test('GPIO default initialization keeps the output driver disabled and sets input enable', async () => {
     for (const chip of Object.values(chips)) {
+        if (chip.readOnlyGPIO) continue;
         const transport = new RecordingTransport(chip);
         const controller = new GPIOController(transport, chip);
         const requested = chip.pins.filter(pin => !pin.reserved).map(pin => pin.id);
@@ -82,6 +83,23 @@ test('GPIO default initialization keeps the output driver disabled and sets inpu
         }
         await controller.close();
     }
+});
+
+test('ESP8266 reads GPIO0-15 and RTC GPIO16 without configuring pins', async () => {
+    const chip = chips.esp8266, transport = new RecordingTransport(chip);
+    const controller = new GPIOController(transport, chip);
+    await controller.initialize([0, 5, 16]);
+    assert.ok([...controller.pins.values()].every(pin => pin.mode === 'observe'));
+    transport.reads = [];
+    transport.read = async address => {
+        transport.reads.push(address);
+        return address === 0x6000078c ? 1 : (1 << 5);
+    };
+    await controller.sample();
+    assert.deepEqual(transport.reads, [0x60000318, 0x6000078c]);
+    assert.deepEqual([0, 5, 16].map(id => controller.pins.get(id).read), [0, 1, 1]);
+    assert.equal(transport.writes.length, 0);
+    await controller.close();
 });
 
 test('output preloads LOW/HIGH before enabling the driver, including P4 GPIO54', async () => {
@@ -189,7 +207,7 @@ test('register adapter emits masked WRITE_REG and rejects failed or malformed AC
     transport.close(); await assert.rejects(transport.read(0x6000403c), /geschlossen/);
 });
 
-test('GPIO works through the existing flasher command queue, SLIP frames and response parser', async () => {
+test('classic GPIO logging uses the existing flasher queue and SLIP parser without writes', async () => {
     const flasher = new ESPFlasher(), chip = chips.esp32c3;
     const device = new DemoTransport(chip);
     flasher.port = { writable: {} }; flasher.stubLoaded = true;
@@ -214,9 +232,9 @@ test('GPIO works through the existing flasher command queue, SLIP frames and res
     };
     const controller = new GPIOController(new RegisterTransport(flasher), chip);
     await controller.initialize([0]);
-    await controller.configure(0, 'output', 'none', 1);
-    await controller.sample(); assert.equal(controller.pins.get(0).read, 1);
-    await controller.setLevel(0, 0); await controller.sample(); assert.equal(controller.pins.get(0).read, 0);
-    assert.ok(opcodes.includes(0x09) && opcodes.includes(0x0a));
+    await controller.sample(); assert.ok([0, 1].includes(controller.pins.get(0).read));
+    await assert.rejects(controller.configure(0, 'output', 'none', 1));
+    await assert.rejects(controller.setLevel(0, 0));
+    assert.ok(opcodes.includes(0x0a)); assert.ok(!opcodes.includes(0x09));
     await controller.release(); await controller.close();
 });

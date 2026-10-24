@@ -1,19 +1,19 @@
 # ESP I/O Lab
 
 Lokales HTML-/JavaScript-Werkzeug für GPIO-, ADC-, SD- und Usage-Scan-Zugriffe über den vorhandenen
-ESP-Flasher und seinen RAM-Stub. GPIO/ADC benötigen keinen eigenen Firmware-Build;
+ESP-Flasher und seinen RAM-Stub. Der klassische Stub dient nur der GPIO-Beobachtung;
 es gibt keine Flash-Schreib-/Löschoperationen. `../chips.js` und `../flasher.js` bleiben die
 vorhandene Transport-/Stub-Implementierung; die neuen Registerprofile sind davon
 getrennt.
 
-Optional lädt **Load accelerated stub** nach dem Verbinden den neuen RAM-only-RPC-
+Für GPIO-Steuerung, ADC und alle Moduloperationen lädt **Load accelerated stub** den RAM-only-RPC-
 Stub für alle zehn Chipprofile: ESP32, S2, S3, C2, C3, C5, C6, C61, H2 und P4.
 Builds, Protokoll-JSON und die gemeinsam generierten C-/Browser-Definitionen
 stehen unter [../stub/](../stub/README.md).
-Der Wechsel gibt I/O frei und startet eine neue Sitzung über ROM; GPIO/ADC bleiben
-verfügbar. P4-/S3-SDMMC verwendet bei geladenem und entsprechend fähigem Stub
+Der Wechsel gibt I/O frei und startet eine neue Sitzung über ROM; danach sind GPIO-Steuerung
+und ADC freigeschaltet. P4-/S3-SDMMC verwendet bei entsprechend fähigem Stub
 automatisch RPC: ein kompletter 512-Byte-Sektor pro Anfrage, inklusive lokaler
-DMA-/Timeout-/CRC-Prüfung. Die übrigen Peripherie-RPCs bleiben reserviert.
+DMA-/Timeout-/CRC-Prüfung. I²C, SPI und PWM/LEDC verwenden ebenfalls native RPCs.
 
 Für einen SD-Dump die Karte identifizieren und im bestehenden Downloadbereich
 Start-/Endsektor, `0–max` oder einen **MiB-Umfang ab Start** wählen. P4 bietet
@@ -120,8 +120,14 @@ werden. Nicht-ADC-Pins erhalten keine Analogwerte oder erfundene Kurven.
 | ESP32-S3 | ADC1 auf GPIO1–10; ADC2 auf GPIO11–20; GPIO19/20 bleiben als USB-Transportpins gesperrt |
 
 Für die anderen GPIO-Chipprofile bleibt die ADC-Option deaktiviert. Die neuen
-ADC-Registersequenzen sind aus ESP-IDF v5.5.1 abgeleitet, **noch nicht am realen
-Chip validiert**. Der analoge SAR-Block wird über den internen Analog-I²C-Master
+ADC-Registersequenzen sind aus ESP-IDF v5.5.1 abgeleitet. Auf einem realen C6
+wurden Initialisierung, eFuse-Version 3 und ADC-Scans über USB Serial/JTAG
+geprüft; dies ist keine Validierung der Spannungsgenauigkeit oder anderer Chips.
+Beim C6 aktiviert das Profil vor dem Analog-I²C-Zugriff die LP-APB- und
+I²C-Master-Clock-Domains im aktiven PMU-Zustand. Der ROM-Download-Start führt
+nicht die entsprechende IDF-Clock-Initialisierung aus. Die vorherigen
+Clock-Felder werden beim Beenden wiederhergestellt.
+Der analoge SAR-Block wird über den internen Analog-I²C-Master
 initialisiert: interne Referenz-/Test-/Massepfade aus, DREF und Sample-Cycle
 explizit setzen. Der Hardware-Initialcode für ATTEN3 wird aus den eFuse-
 Schattenregistern gelesen und nach ESP-IDF geladen (C3: Feld + 1000,
@@ -369,17 +375,21 @@ Quellen: [P4 SDMMC-LL](https://github.com/espressif/esp-idf/blob/v5.5.1/componen
 
 ## Chips, Boards und reservierte Pins
 
-GPIO-Registerprofile gibt es für ESP32, S2, S3, C2, C3, C5, C6, C61, H2 und P4.
+GPIO-Registerprofile gibt es für ESP8266, ESP32, S2, S3, C2, C3, C5, C6, C61, H2 und P4.
 Das bedeutet, dass deren Registerdefinitionen implementiert sind; eine
 Hardwarevalidierung dieser Kombinationen ist noch ausstehend. Der vorhandene
 Flasher muss den konkreten Chip erkennen und einen passenden Stub besitzen.
-Unbekannte Chips, ESP8266 und gesondert erkannte P4-RC1-Varianten bekommen ohne
+Unbekannte Chips und gesondert erkannte P4-RC1-Varianten bekommen ohne
 eigenes geprüftes Profil keinen GPIO-Zugriff.
+Beim ESP8266 liest das Tool im ROM-Bootloader nur `GPIO_IN` (GPIO0–15) und
+`RTC_GPIO_IN_DATA` (GPIO16). Pin-Konfiguration und Ausgänge bleiben deaktiviert;
+der ROM-Zugriff wurde bisher nicht an einem echten NodeMCU V3 geprüft.
 
 Die erste Boardauswahl enthält:
 
 | Board | Darstellung |
 | --- | --- |
+| LoLin NodeMCU V3 | Boardfoto, 30 Headerpins; 11 digitale GPIOs außerhalb des Flash-Busses über ROM-Register lesbar, Flash-Pins gesperrt und A0 separat |
 | C3 SuperMini | Boardfoto, 13 GPIOs am 2 × 8-Pin-Header |
 | C6 SuperMini | Boardfoto, seitliche Header; GPIO21/22/23 und USB12/13 als separat beschriftete schematische Zusatzpads |
 | H2 SuperMini | Boardfoto, 15 GPIOs an 2 × 9 Seitenpads; GPIO22/25/26/27 als schematische Innenpads; fehlerhaften Aufdruck „28“ als GPIO26 zugeordnet |
@@ -432,8 +442,9 @@ wird der gewünschte Pegel vor dem Aktivieren des Treibers vorgeladen.
 IO-MUX-/Matrix-Änderungen verwenden maskierte `WRITE_REG`-Befehle;
 Output/Output-Enable verwenden die atomaren W1TS-/W1TC-Register.
 
-I²C, SPI und PWM/LEDC verwenden den beschleunigten RAM-Stub. Legacy-I²C bleibt
-auf P4 verfügbar. RMT, UART und I²S bleiben Erweiterungen ohne aktive Steuerung.
+I²C, SPI, PWM/LEDC und alle weiteren Moduloperationen erfordern den beschleunigten
+RAM-Stub. Der klassische Stub unterstützt nur GPIO-Beobachtung und Plotting.
+RMT, UART und I²S bleiben Erweiterungen ohne aktive Steuerung.
 Der Registerkatalog bietet außerdem die übrigen im Profil aufgeführten Blöcke.
 ADC, SD und Usage-Scan nutzen denselben serialisierten Ablauf.
 
@@ -501,31 +512,42 @@ Diese Prüfungen ersetzen **keine Validierung am realen C3, C6, P4, S3 oder H2**
 Siehe auch `THIRD_PARTY.md`. Bildnachweise sind direkt im Tool verlinkt.
 
 
-### Accelerated I2C, SPI and PWM/LEDC
+### Classic observation and accelerated operations
 
-Load the accelerated RAM stub after connecting. All ten chip profiles share
-I2C master transactions, SPI full duplex and low-speed LEDC. The browser uses
-RPC automatically when the matching capability is present; legacy P4 I2C
-remains available before loading the accelerated stub. SPI and LEDC require
-it. Pins are leased, excluded from GPIO/ADC polling and restored on release,
-board changes and disconnect. Hardware timing/electrical operation still needs
-real-board testing; automated browser checks use a simulated serial peer.
+Classic mode only logs/plots GPIO inputs. It does not configure pads or drive
+outputs. GPIO control, ADC, supplies, usage scans and all peripheral operations
+are enabled only after loading the accelerated RAM stub. The load button is
+available in both the header and Peripherie & Register. The default baud rate
+is 115200. All accelerated operations use the maintained RPC protocol; classic
+register backends and their generated recipes have been removed.
 
-I2C supports 100/400 kHz, 7-bit addresses, scanning and combined write/read
-with repeated START. C2 has a 16-byte FIFO; others have 32. Address bytes count
-against the TX limit. SPI offers mode 0-3, MSB/LSB first, configurable clock up
-to 20 MHz, and 1-64 bytes in one CS0 transaction. It does not split a transfer
-or use the flash controller. LEDC exposes channel, timer, frequency, resolution
-and duty in permille, plus live duty updates. Incompatible shared timer
-settings are rejected.
+I2C, SPI and PWM/LEDC share native drivers across all ten targets. P4/S3 also
+provide native read-only SDMMC sector dumps. ADC is available on the existing
+C3/C6/P4/S3/H2 profiles. The stub handles ADC initialization, eFuse version/trim
+decoding, analog calibration setup and restoration. The browser supplies chip
+configuration and selected channels, then receives samples. ADC values are raw
+12-bit values, not calibrated millivolts.
 
-The I2C **Register-Scan** uses the device address above the table. Set the
-register address width (1-64 bits), BE/LE byte order, inclusive start/end range
-and read length. The address is encoded into ceil(bits/8) bytes with zero
-unused upper bits; each row performs a combined register-address write and
-read, then shows register, exact TX and RX bytes. For example, register 0x123
-with 16 bits sends `01 23` in BE or `23 01` in LE. Reads are 1-32 bytes (C2:
-1-16), scans at most 4096 rows. Cancel stops before the next transaction;
-a bus error is shown in its row and stops the scan. Register reads can have
-device-specific side effects. The same feature uses the legacy I2C backend
-when that backend is active.
+GPIO banks and all selected ADC channels are captured by IOCC/IOCR in one
+request/reply per sweep. Channel recipes are uploaded once. Conversion waits,
+first-sample discard and timestamps happen on the device; subsequent browser
+polls contain no ADC register polling. Pins leased by modules are excluded.
+The accelerated default polling interval is 1 ms, with actual throughput bounded
+by hardware, browser scheduling and transport bandwidth (UART at 115200: about 11.5 kB/s
+before framing/escapes). A 20-channel ADC reply alone is 264 bytes, so the setting
+does not promise 1000 full sweeps/s over UART. Native USB can be faster without
+changing the 115200 baud setting. The plot reports observed sample rate.
+
+I2C register scans use the device address, register width (1-64 bits), BE/LE
+byte order, inclusive range and read length. Each row uses one combined
+register-address write/read and displays exact TX/RX bytes. Register 0x123 with
+16 bits sends `01 23` in BE or `23 01` in LE. Reads are 1-32 bytes (C2: 1-16),
+with at most 4096 rows. Cancellation stops before the next transaction; bus
+errors stop the scan and appear in the table. Access may have device-specific
+side effects. Register scans also require the accelerated stub.
+
+Build 0.5.0 retains the cold-ROM P4 clock fix and native SPI completion/reset
+fixes from 0.4.1. Automated tests cover native calibration/capture and the UI via
+a simulated serial peer; real electrical behavior and update rates still need
+physical hardware validation. The shared connected browser is never reloaded
+by the isolated headless test workflow.

@@ -2,13 +2,13 @@
   "name": "esp-io-rpc",
   "version": {
     "major": 1,
-    "minor": 2
+    "minor": 3
   },
   "byteOrder": "little",
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.4.0",
+  "buildVersion": "0.5.0",
   "header": [
     [
       "magic",
@@ -356,6 +356,192 @@
         ]
       ],
       "trailing": "Successful I2C/SPI RX bytes; no bytes on failure. Tag matches module response."
+    },
+    "capture_command": {
+      "magic": "IOCC",
+      "response": "capture_response",
+      "fields": [
+        [
+          "operation",
+          "u16"
+        ],
+        [
+          "count",
+          "u16"
+        ],
+        [
+          "selection",
+          "u32"
+        ]
+      ],
+      "trailing": true
+    },
+    "capture_plan": {
+      "magic": "IOCC",
+      "response": "capture_response",
+      "fields": [
+        [
+          "operation",
+          "u16"
+        ],
+        [
+          "slot",
+          "u16"
+        ],
+        [
+          "pin",
+          "u16"
+        ],
+        [
+          "flags",
+          "u16"
+        ],
+        [
+          "low_us",
+          "u32"
+        ],
+        [
+          "data_delay_us",
+          "u32"
+        ],
+        [
+          "steps",
+          "u32",
+          9
+        ],
+        [
+          "wait_addr",
+          "u32"
+        ],
+        [
+          "wait_mask",
+          "u32"
+        ],
+        [
+          "data_addr",
+          "u32"
+        ],
+        [
+          "data_mask",
+          "u32"
+        ],
+        [
+          "invalid_mask",
+          "u32"
+        ],
+        [
+          "idle_addr",
+          "u32"
+        ],
+        [
+          "idle_mask",
+          "u32"
+        ],
+        [
+          "cleanup_addr",
+          "u32"
+        ],
+        [
+          "cleanup_mask",
+          "u32"
+        ]
+      ]
+    },
+    "capture_response": {
+      "magic": "IOCR",
+      "fields": [
+        [
+          "status",
+          "u32"
+        ],
+        [
+          "count",
+          "u16"
+        ],
+        [
+          "failed_slot",
+          "u16"
+        ],
+        [
+          "duration_us",
+          "u32"
+        ],
+        [
+          "detail",
+          "u32"
+        ]
+      ],
+      "trailing": true
+    },
+    "adc_setup": {
+      "magic": "IOCC",
+      "response": "capture_response",
+      "fields": [
+        [
+          "operation",
+          "u16"
+        ],
+        [
+          "init_count",
+          "u16"
+        ],
+        [
+          "analog_count",
+          "u16"
+        ],
+        [
+          "unit_count",
+          "u16"
+        ],
+        [
+          "bus_control",
+          "u32"
+        ],
+        [
+          "bus_select",
+          "u32"
+        ],
+        [
+          "bus_select_mask",
+          "u32"
+        ],
+        [
+          "bus_command_mask",
+          "u32"
+        ],
+        [
+          "block",
+          "u32"
+        ],
+        [
+          "major",
+          "u32",
+          3
+        ],
+        [
+          "minor",
+          "u32",
+          3
+        ],
+        [
+          "version_min",
+          "u32"
+        ],
+        [
+          "version_exact",
+          "u32"
+        ],
+        [
+          "minor_multiplier",
+          "u32"
+        ],
+        [
+          "units",
+          "u32",
+          38
+        ]
+      ],
+      "trailing": true
     }
   },
   "registerOperations": {
@@ -393,7 +579,8 @@
     "RMT": 4,
     "PWM": 5,
     "UART": 6,
-    "I2S": 7
+    "I2S": 7,
+    "CAPTURE": 8
   },
   "modules": {
     "I2C": {
@@ -433,6 +620,36 @@
     "SHORT_DATA": 4,
     "NOT_CONFIGURED": 5,
     "TIMER_CONFLICT": 6,
-    "BUS": 7
+    "BUS": 7,
+    "BAD_PORT": 8,
+    "BAD_CLOCK": 9,
+    "BAD_SPEED": 10,
+    "BAD_TRANSFER": 11,
+    "BAD_TIMEOUT": 12
+  },
+  "captureOperations": {
+    "GPIO_CONFIGURE": 1,
+    "ADC_CONFIGURE": 2,
+    "GPIO_SCAN": 3,
+    "ADC_SCAN": 4,
+    "RELEASE": 5,
+    "ADC_INITIALIZE": 6,
+    "ADC_RELEASE": 7
+  },
+  "captureResult": {
+    "size": 12,
+    "offsets": {
+      "pin": 0,
+      "kind": 2,
+      "value": 4,
+      "offset_us": 8
+    },
+    "kinds": {
+      "GPIO_BANK": 0,
+      "ADC": 1,
+      "CALIBRATION": 2
+    },
+    "maxBanks": 4,
+    "maxChannels": 24
   }
 }

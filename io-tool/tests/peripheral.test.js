@@ -5,6 +5,7 @@ const { GPIOController, DemoTransport } = require('../gpio.js');
 const { SPIHost, PWMHost, RPCI2CHost } = require('../peripheral.js');
 const { AcceleratedTransport, rpcEncode, rpcDecode } = require('../accelerated.js');
 const ESPFlasher = require('../../flasher.js');
+const protocol = require('../../stub/protocol.js');
 
 async function fixture(chip) {
     const model = new DemoTransport(chip), controller = new GPIOController(model, chip), calls = [];
@@ -18,8 +19,8 @@ async function fixture(chip) {
     };
     return { model, controller, ids, calls };
 }
-test('all ten chips share I2C, SPI and PWM leases and restore inherited GPIO register fields', async () => {
-    for (const chip of Object.values(chips)) {
+test('writable chips share I2C, SPI and PWM leases and restore inherited GPIO register fields', async () => {
+    for (const chip of Object.values(chips).filter(chip => !chip.readOnlyGPIO)) {
         const { model, controller: c, ids, calls } = await fixture(chip);
         await c.configure(ids[0], 'output', 'none'); await c.setLevel(ids[0], 1);
         const before = new Map(model.registers);
@@ -55,4 +56,14 @@ test('typed peripheral packets preserve u32 arrays, serialize transfers and dete
     const t = new AcceleratedTransport(device); t.identity = { capabilities: 4, max_packet_length: 1024 };
     const r = await t.peripheral('SPI', 2, 1, [1], Uint8Array.of(12)); assert.equal(r.values[0], 0xffffffff); assert.deepEqual([...r.data], [12]);
     wrong = true; await assert.rejects(t.peripheral('SPI', 2, 1, [1], Uint8Array.of(12)), /correlation/); assert.equal(t.closed, true);
+});
+test('I2C argument errors show operation and configuration rather than NONE', async () => {
+    const device = new ESPFlasher({ logMessage() {}, logWarning() {}, logError() {} }), decoder = new device.slipLayer.constructor(); device.port = { writable: true };
+    let error = protocol.peripheralErrors.BAD_CLOCK;
+    device._writeFrame = async frame => { for (const raw of decoder.decode(frame)) { const q = rpcDecode(raw, 'peripheral_command', 'I2CC'); await device.processPacket(rpcEncode('peripheral_response', { status: 3, error, operation: q.operation, port: q.port }, 'I2CR')); } };
+    const t = new AcceleratedTransport(device); t.identity = { capabilities: 2, max_packet_length: 1024 };
+    await assert.rejects(t.peripheral('I2C', 1, 0, [100000]), e => /BAD_CLOCK/.test(e.message) && /CONFIGURE, port 0, args 100000/.test(e.message) && !/NONE/.test(e.message));
+    error = 0;
+    await assert.rejects(t.peripheral('I2C', 1, 0, [100000]), e => /BAD_ARGUMENT/.test(e.message) && !/NONE/.test(e.message));
+    assert.equal(t.closed, false);
 });

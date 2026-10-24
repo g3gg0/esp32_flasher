@@ -7,6 +7,7 @@
     class PeripheralHost {
         constructor(controller, kind) {
             this.controller = controller; this.transport = controller.transport; this.kind = kind;
+            this.backend = this.transport;
             this.saved = new Map(); this.pinStates = new Map(); this.ready = false; this.rpcReady = false;
         }
         async remember(address, mask) {
@@ -15,12 +16,12 @@
             if (fresh) { const old = await this.transport.read(address); saved.value = ((saved.value & ~fresh) | (old & fresh)) >>> 0; saved.mask = (saved.mask | mask) >>> 0; this.saved.set(address, saved); }
         }
         async set(address, value, mask) { await this.remember(address, mask); await this.transport.write(address, value, mask); }
-        call(operation, args = [], data = new Uint8Array()) { return this.transport.peripheral(this.kind, operation, this.config.port, args, data); }
+        call(operation, args = [], data = new Uint8Array()) { return this.backend.peripheral(this.kind, operation, this.config.port, args, data); }
         open(config, signal) {
             const c = this.controller;
             return c.queue.run(async () => {
                 abort(signal);
-                if (!c.active || c.fault || c.scanning || this.ready || !this.transport.supports?.(this.kind)) throw new Error(`${this.kind}: aktuellen beschleunigten Stub laden.`);
+                if (!c.active || c.fault || c.scanning || this.ready || !this.backend.supports?.(this.kind) || typeof this.backend.peripheral !== 'function') throw new Error(`${this.kind}: beschleunigten Stub laden.`);
                 this.config = { ...config }; this.config.port ??= this.kind === 'SPI' ? 1 : 0;
                 const roles = this.kind === 'I2C' ? ['sda', 'scl'] : this.kind === 'SPI' ? ['clk', 'mosi', 'miso', 'cs'] : ['pin'];
                 const used = new Set();
