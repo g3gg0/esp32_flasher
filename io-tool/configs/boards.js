@@ -9,12 +9,14 @@
         {
             id: 's3-supermini', sourceId: 'esp32-s3-super-mini', chip: 'esp32s3', name: 'S3 SuperMini', subtitle: '35 GPIOs inkl. 20 Rückseitenpads · USB-C', file: 'esp32-s3-super-mini-pinout.png', height: 1087,
             front: { crop: { x: 690, y: 157, width: 220, height: 305 }, left: [43, 44, 1, 2, 3, 4, 5, 6, 7], right: ['5V', 'GND', '3V3', 13, 12, 11, 10, 9, 8], xLeft: 707, xRight: 891, y: 197, step: 30 },
-            back: { crop: { x: 690, y: 620, width: 220, height: 300 }, pads: [
-                [38, 768, 713, 'left'], [37, 768, 734, 'left'],
-                ...[34, 33, 21, 18, 17, 16, 15, 14].map((gpio, index) => [gpio, 737, 713 + index * 21, 'left']),
-                [36, 768, 755, 'right'], [35, 768, 776, 'right'],
-                ...[48, 47, 46, 45, 42, 41, 40, 39].map((gpio, index) => [gpio, 863, 713 + index * 21, 'right'])
-            ] },
+            back: {
+                crop: { x: 690, y: 620, width: 220, height: 300 }, pads: [
+                    [38, 768, 713, 'left'], [37, 768, 734, 'left'],
+                    ...[34, 33, 21, 18, 17, 16, 15, 14].map((gpio, index) => [gpio, 737, 713 + index * 21, 'left']),
+                    [36, 768, 755, 'right'], [35, 768, 776, 'right'],
+                    ...[48, 47, 46, 45, 42, 41, 40, 39].map((gpio, index) => [gpio, 863, 713 + index * 21, 'right'])
+                ]
+            },
             extra: [0, 19, 20], extraLabel: 'INTERN VERBUNDENE GPIOs',
             notes: { 0: 'BOOT-Taster, nicht an den Stiftleisten', 48: 'RGB-LED und Rückseitenpad', 19: 'Natives USB D−, nicht an den Stiftleisten', 20: 'Natives USB D+, nicht an den Stiftleisten' },
             description: 'ESP32-S3 Super Mini mit USB-C und 2 × 9 Seitenpads. Die Rückseite bietet 20 weitere GPIO-Lötpads; GPIO48 ist mit der RGB-LED verbunden. Pinbelegung und Bestückung am eigenen Board vergleichen.'
@@ -56,10 +58,12 @@
         {
             id: 'esp32-c6-touch-lcd-1-47', chip: 'esp32c6', name: 'ESP32-C6-Touch-LCD-1.47', subtitle: 'Waveshare · 15 Header-GPIOs · LCD, Touch, IMU, TF',
             file: 'esp32-c6-touch-lcd-1-47.webp', width: 960, height: 1067,
-            front: { crop: { x: 340, y: 58, width: 270, height: 510 },
+            front: {
+                crop: { x: 340, y: 58, width: 270, height: 510 },
                 left: ['VBUS', 'GND', 16, 17, 'RST', 1, 2, 3, 4, 5, 6],
                 right: ['VBAT', 'GND', 'GND', '3V3', 19, 18, 13, 12, 9, 8, 7],
-                xLeft: 374, xRight: 572, y: 205, step: 28.5 },
+                xLeft: 374, xRight: 572, y: 205, step: 28.5
+            },
             extra: [0, 14, 15, 20, 21, 22, 23],
             extraLabel: 'INTERN BELEGTE GPIOs',
             notes: {
@@ -102,8 +106,10 @@
         {
             id: 'xiao-esp32c3', chip: 'esp32c3', name: 'XIAO ESP32C3', subtitle: 'Seeed Studio · 11 GPIOs · 2 × 7 Pins', file: 'esp32c3-pinout.png', height: 841,
             front: { crop: { x: 695, y: 130, width: 210, height: 260 }, left: [2, 3, 4, 5, 6, 7, 21], right: ['5V', 'GND', '3V3', 10, 9, 8, 20], xLeft: 718, xRight: 885, y: 185, step: 28 },
-            back: { crop: { x: 695, y: 450, width: 210, height: 245 }, xLeft: 718, xRight: 885, y: 486, step: 28,
-                pads: [[7, 783, 485, 'left'], [6, 783, 541, 'left'], [5, 818, 485, 'right'], [4, 818, 541, 'right']] },
+            back: {
+                crop: { x: 695, y: 450, width: 210, height: 245 }, xLeft: 718, xRight: 885, y: 486, step: 28,
+                pads: [[7, 783, 485, 'left'], [6, 783, 541, 'left'], [5, 818, 485, 'right'], [4, 818, 541, 'right']]
+            },
             notes: { 18: 'Natives USB D-', 19: 'Natives USB D+' },
             description: 'Kleines C3-Board mit USB-C und LiPo-Lader. Die rückseitigen GPIO-Kontakte sind bereits an den Stiftleisten auf der Vorderseite zugänglich.'
         },
@@ -144,9 +150,11 @@
             image, imageSize: { width, height }, crop: back.crop, maskBackground: true,
             pins: backPins
         } : null;
-        return { ...spec, image, diagram: image, imageSize: { width, height }, crop: front.crop, maskBackground: true, pins, back: backView,
+        return {
+            ...spec, image, diagram: image, imageSize: { width, height }, crop: front.crop, maskBackground: true, pins, back: backView,
             source: `https://www.espboards.dev/esp32/${sourceId || spec.id}/`,
-            attribution: spec.attribution || 'Pinout-Diagramm: ESPboards · CC BY-NC 4.0' };
+            attribution: spec.attribution || 'Pinout-Diagramm: ESPboards · CC BY-NC 4.0'
+        };
     });
     // Photo crops are rendered using SVG viewBox, without changing the images.
     // Coordinates use the original source pixels. Power pads remain visible but
@@ -162,14 +170,16 @@
                 ...[['D0', 16], ['D1', 5], ['D2', 4], ['D3', 0], ['D4', 2], ['3V3', null], ['GND', null], ['D5', 14], ['D6', 12], ['D7', 13], ['D8', 15], ['RX', 3], ['TX', 1], ['GND', null], ['3V3', null]]
                     .map(([label, gpio], index) => ({ label, gpio, x: 670, y: 390 + index * 67.5, side: 'right' }))
             ],
-            notes: { 0: 'D3 / FLASH-Taster; Boot-Strapping, beim Start HIGH.', 1: 'TX / UART0 TX zur CH340-USB-Seriell-Brücke.',
+            notes: {
+                0: 'D3 / FLASH-Taster; Boot-Strapping, beim Start HIGH.', 1: 'TX / UART0 TX zur CH340-USB-Seriell-Brücke.',
                 2: 'D4; Boot-Strapping, beim Start HIGH; blaue Onboard-LED (aktiv LOW).', 3: 'RX / UART0 RX zur CH340-USB-Seriell-Brücke.',
                 4: 'D2 / I²C SDA.', 5: 'D1 / I²C SCL.', 6: 'SK / SPI-Flash-Takt; nicht frei nutzbar.',
                 7: 'S0 / SPI-Flash-Daten; nicht frei nutzbar.', 8: 'S1 / SPI-Flash-Daten; nicht frei nutzbar.',
                 9: 'S2 / SPI-Flash-Daten; nicht frei nutzbar.', 10: 'S3 / SPI-Flash-Daten; nicht frei nutzbar.',
                 11: 'SC / SPI-Flash-Chip-Select; nicht frei nutzbar.', 12: 'D6 / HSPI MISO.',
                 13: 'D7 / HSPI MOSI.', 14: 'D5 / HSPI SCLK.', 15: 'D8 / HSPI CS; Boot-Strapping, beim Start LOW.',
-                16: 'D0 / RTC-GPIO16; eigener Eingangsregisterpfad (RTC_GPIO_IN_DATA), Wake-Funktion.' },
+                16: 'D0 / RTC-GPIO16; eigener Eingangsregisterpfad (RTC_GPIO_IN_DATA), Wake-Funktion.'
+            },
             source: 'https://commons.wikimedia.org/wiki/File:NodeMCU_Lua_Lol1n_V3.jpg',
             attribution: 'Boardfoto: Popolon / Wikimedia Commons · CC BY-SA 4.0; um 90° gedreht und verkleinert',
             description: 'LoLin NodeMCU V3 mit ESP-12E, CH340-USB-UART und Micro-USB. D0–D8 entsprechen GPIO16, 5, 4, 0, 2, 14, 12, 13, 15; RX/TX sind GPIO3/1. SK und S0–S3/SC sind mit dem SPI-Flash verbunden. A0 ist ein analoger Eingang und gehört nicht zum digitalen GPIO-Register. Live-Zugriff liest nur GPIO-Eingangsregister; Pin-Konfiguration und Ausgänge bleiben deaktiviert.'
@@ -196,26 +206,46 @@
         },
         {
             id: 'toniebox-esp32', chip: 'esp32s3', name: 'Toniebox ESP32', subtitle: 'Toniebox V1/V2 - ESP32-S3 - Debug- und Peripherie-Pins',
-            image: 'assets/toniebox-pcb.jpg', imageSize: { width: 800, height: 600 }, crop: { x: 130, y: 65, width: 550, height: 470 }, maskBackground: true,
-            pins: columns([...Array(22).keys()], [...Array(23)].map((_, index) => index + 26), 130, 680, 90, 19),
+            image: 'assets/toniebox-pcb.jpg', imageSize: { width: 800, height: 600 }, crop: { x: 130, y: 65, width: 550, height: 470 }, maskBackground: true, maskBackgroundTolerance: 3,
+            pins: columns([...Array(22).keys()], [...Array(23)].map((_, index) => index + 26), 130, 680, 90, 40),
             notes: {
-                0: 'BOOT; Jumper J100.',
-                1: 'TRF7962A SPI Chip Select.', 2: 'TRF7962A SPI MOSI.', 3: 'TRF7962A SPI MISO.', 4: 'TRF7962A SPI Clock.',
-                5: 'I2C SDA zum LIS3DH-Beschleunigungssensor und DAC3100.', 
-                6: 'I2C SCL zum LIS3DH-Beschleunigungssensor und DAC3100.',
-                7: 'Wake-Eingang: Tasten-/Ladezustand; HIGH = keine Taste gedrueckt / kein Ladegeraet. Steuert auch NFC-Einschalten und DAC-Reset.',
-                8: 'Ladezustandsmessung ueber Spannungsteiler (ADC).', 9: 'Batteriespannungsmessung ueber Spannungsteiler (ADC).',
-                10: 'DAC3100 DIN.', 11: 'DAC3100 BCLK.', 12: 'DAC3100 WCLK.',
-                13: 'TRF7962A IRQ.', 14: 'LIS3DH IRQ.',
-                17: 'Blaue Status-LED.', 18: 'Gruene Status-LED.', 19: 'Rote Status-LED.',
-                20: 'Grosses Ohr, LOW = active.', 21: 'Kleines Ohr, LOW = active.',
-                26: 'DAC3100 Reset, aktiv HIGH.',
-                33: 'MicroSD: DAT2.', 34: 'MicroSD: DAT3.', 35: 'MicroSD: CLK.', 36: 'MicroSD: DAT0.', 37: 'MicroSD: DAT1.',
-                38: 'MicroSD: CMD; J102.', 39: 'JTAG TCK; J102.', 40: 'JTAG TDO; J102.', 41: 'JTAG TDI; J102.', 42: 'JTAG TMS; J102.',
-                43: 'UART TX; J103.', 44: 'UART RX; J103.',
-                45: 'Supply LIS3DH, DAC und blaue LED; HIGH = active.',
-                46: 'J101; GPIO am Debug/Test-Anschluss.', 47: 'Supply SD-/NFC; LOW = active.',
-                48: 'DAC3100: GPIO1-Leitung.'
+                0: 'BOOT; Jumper J100',
+                1: 'TRF7962A SPI CS', 
+                2: 'TRF7962A SPI MOSI', 
+                3: 'TRF7962A SPI MISO', 
+                4: 'TRF7962A SPI Clock',
+                5: 'I2C SDA LIS3DH/DAC3100',
+                6: 'I2C SCL LIS3DH/DAC3100',
+                7: 'Wake input: Button/Charge status; HIGH = no button pressed / no charger. Also controls NFC enable and DAC reset',
+                8: 'Charge status measurement via voltage divider (ADC)', 
+                9: 'Battery voltage measurement via voltage divider (ADC)',
+                10: 'DAC3100 DIN', 
+                11: 'DAC3100 BCLK', 
+                12: 'DAC3100 WCLK',
+                13: 'TRF7962A IRQ', 
+                14: 'LIS3DH IRQ',
+                17: 'Blue LED', 
+                18: 'Green LED', 
+                19: 'Red LED',
+                20: 'Big Ear, LOW = active', 
+                21: 'Small Ear, LOW = active',
+                26: 'DAC3100 Reset, HIGH = active',
+                33: 'MicroSD: DAT2', 
+                34: 'MicroSD: DAT3', 
+                35: 'MicroSD: CLK', 
+                36: 'MicroSD: DAT0', 
+                37: 'MicroSD: DAT1',
+                38: 'MicroSD: CMD; J102', 
+                39: 'JTAG TCK; J102', 
+                40: 'JTAG TDO; J102', 
+                41: 'JTAG TDI; J102', 
+                42: 'JTAG TMS; J102',
+                43: 'UART TX; J103', 
+                44: 'UART RX; J103',
+                45: 'Supply LIS3DH/DAC/blue LED; HIGH = active',
+                46: 'J101; GPIO at Debug/Test connector', 
+                47: 'Supply SD-/NFC; LOW = active',
+                48: 'DAC3100: GPIO1'
             },
             source: 'https://tonies-wiki.revvox.de/docs/wiki/esp32/pinout/',
             attribution: 'PCB-Foto: Gambrius Tech Blog; Pinbelegung: Toniebox Hacking Wiki',
@@ -236,9 +266,11 @@
             image: 'assets/h2-supermini-pinout.png', imageSize: { width: 1254, height: 1254 }, crop: { x: 490, y: 329, width: 292, height: 480 },
             pins: columns([24, 23, 0, 1, 2, 3, 4, 5, 8], ['5V', 'GND', '3V3', 14, 13, 12, 11, 10, 9], 507, 760, 395, 47.2),
             extra: [22, 25, 26, 27],
-            notes: { 8: 'WS2812 RGB-LED', 9: 'BOOT-Taster', 13: 'Blaue Onboard-LED; die Beschriftung „15“ neben der LED ist kein GPIO15-Pad.',
+            notes: {
+                8: 'WS2812 RGB-LED', 9: 'BOOT-Taster', 13: 'Blaue Onboard-LED; die Beschriftung „15“ neben der LED ist kein GPIO15-Pad.',
                 22: 'Innere Bohrung', 25: 'Innere Bohrung / Strapping-Pin', 26: 'Innere Bohrung, auf manchen Boards fälschlich „28“ beschriftet; natives USB D−', 27: 'Innere Bohrung / natives USB D+',
-                23: 'RX / UART0', 24: 'TX / UART0' },
+                23: 'RX / UART0', 24: 'TX / UART0'
+            },
             source: 'https://www.nznelectronics.co.nz/products/esp32-h2-supermini-dev-board',
             attribution: 'Boardabbildung und korrigierte Pinbelegung: NZN Electronics',
             description: 'H2 SuperMini mit Ladeelektronik, USB-C oben / 2 × 9 Seitenpads. Die vier inneren Bohrungen sind unter dem Foto schematisch dargestellt. Aufdruck „28“ = GPIO26; „15“ und „BAT“ neben LEDs sind keine zusätzlichen GPIO-Pads. Layout am eigenen Board vergleichen.'
@@ -248,7 +280,8 @@
             image: 'assets/p4-pinout.jpg', imageSize: { width: 960, height: 969 }, crop: { x: 239, y: 85, width: 223, height: 849 },
             pins: columns([54, 19, 'GND', 18, 17, 16, 15, 'GND', 14, 6, 5, 4, 'GND', 3, 2, 8, 7, 'GND', 24, 25],
                 ['VBUS', 'VSYS', 'GND', 'EN', '3V3', 20, 21, 'GND', 22, 23, 'RUN', 26, 'GND', 27, 32, 33, 46, 'GND', 47, 48], 254, 446, 153, 27),
-            notes: { 7: 'I2C SDA zum Codec und Zubehoerbus', 8: 'I2C SCL zum Codec und Zubehoerbus',
+            notes: {
+                7: 'I2C SDA zum Codec und Zubehoerbus', 8: 'I2C SCL zum Codec und Zubehoerbus',
                 9: 'I2S Daten zum Lautsprecher-Codec', 10: 'I2S Word Select (LRCK)', 11: 'I2S Mikrofon-Daten', 12: 'I2S Bit Clock', 13: 'I2S Master Clock',
                 28: 'Ethernet RMII RXDV', 29: 'Ethernet RMII RXD0', 30: 'Ethernet RMII RXD1', 31: 'Ethernet MDC', 34: 'Ethernet RMII TXD0', 35: 'Ethernet RMII TXD1',
                 49: 'Ethernet RMII TX_EN', 50: 'Ethernet RMII REF_CLK', 51: 'Ethernet PHY Reset', 52: 'Ethernet MDIO', 53: 'Audioverstaerker Enable',
@@ -261,12 +294,15 @@
                 45: 'SD /EN (aktiv LOW) · LDO4-Domäne, separate Stromversorgung',
                 46: 'LDO4-Domäne, separate Stromversorgung',
                 47: 'LDO4-Domäne, separate Stromversorgung',
-                48: 'LDO4-Domäne, separate Stromversorgung' },
+                48: 'LDO4-Domäne, separate Stromversorgung'
+            },
             extra: [9, 10, 11, 12, 13, 28, 29, 30, 31, 34, 35, 39, 40, 41, 42, 43, 44, 45, 49, 50, 51, 52, 53], extraLabel: 'INTERN VERBUNDENE GPIOs',
             i2c: { sda: 7, scl: 8 },
-            sd: { pins: { d0: 39, d1: 40, d2: 41, d3: 42, clk: 43, cmd: 44 },
+            sd: {
+                pins: { d0: 39, d1: 40, d2: 41, d3: 42, clk: 43, cmd: 44 },
                 note: 'Onboard-Slot: LDO4-Domäne separat mit 3,3 V versorgen und GPIO45 manuell als Output LOW setzen.',
-                source: 'https://files.waveshare.com/wiki/ESP32-P4-ETH/ESP32-P4-ETH-datasheet.pdf' },
+                source: 'https://files.waveshare.com/wiki/ESP32-P4-ETH/ESP32-P4-ETH-datasheet.pdf'
+            },
             source: 'https://docs.waveshare.com/ESP32-P4-ETH', attribution: 'Boardfoto und Pinbelegung: Waveshare',
             description: 'Waveshare ESP32-P4-ETH, USB-C oben / RJ45 unten. Onboard-Peripherie bleibt elektrisch an den jeweiligen Pins angeschlossen. GPIO39–48 liegen in der LDO4-Domäne und benötigen eine separate Stromversorgung; GPIO-Konfiguration allein versorgt sie nicht.'
         }
@@ -283,11 +319,15 @@
     const tonieboxIndex = boards.findIndex(board => board.id === 'toniebox-esp32');
     if (tonieboxIndex >= 0) boards.push(boards.splice(tonieboxIndex, 1)[0]);
     function raw(chip) {
-        return { id: `raw-${chip.id}`, chip: chip.id, name: `${chip.name} · roher Chip`, subtitle: 'Alle logischen GPIOs',
+        return {
+            id: `raw-${chip.id}`, chip: chip.id, name: `${chip.name} · roher Chip`, subtitle: 'Alle logischen GPIOs',
             description: 'Logische GPIO-Ansicht, keine Gehäuse-Padnummern. Verfügbarkeit hängt von Package, Modul und Speicherbestückung ab. Speicher- und Transportpins bleiben reserviert.',
             source: chip.source, attribution: 'Registerprofil: Espressif ESP-IDF', notes: {},
-            pins: chip.pins.map((pin, index) => ({ gpio: pin.id, label: String(pin.id), side: index < Math.ceil(chip.pins.length / 2) ? 'left' : 'right',
-                x: index < Math.ceil(chip.pins.length / 2) ? 0 : 100, y: index % Math.ceil(chip.pins.length / 2) * 12 })) };
+            pins: chip.pins.map((pin, index) => ({
+                gpio: pin.id, label: String(pin.id), side: index < Math.ceil(chip.pins.length / 2) ? 'left' : 'right',
+                x: index < Math.ceil(chip.pins.length / 2) ? 0 : 100, y: index % Math.ceil(chip.pins.length / 2) * 12
+            }))
+        };
     }
     const api = { boards, raw };
     if (typeof module === 'object' && module.exports) module.exports = api;
