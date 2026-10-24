@@ -68,10 +68,9 @@ static unsigned i2c(const rpc_peripheral_command_t *q, const uint8_t *data, unsi
         if (error == RPC_PERIPHERALERRORS_NACK) {
             hw_i2c_stop_begin(port);
             io_deadline_t recovery = deadline(25000);
-            int stopped;
-            do { stopped = hw_i2c_stop_poll(port); if (stopped) break; } while (!expired(recovery));
-            packet.reply.values[1] = (uint32_t)(platform_cycles()-recovery.start)/platform_ticks_per_us();
-            if (stopped != 1) error = RPC_PERIPHERALERRORS_BUS;
+            /* IDF waits for BUS_BUSY after NACK, not a new completion IRQ.
+             * The NACK can stay latched and STOP need not raise TRANS_COMPLETE. */
+            while (!hw_i2c_idle(port)) if (expired(recovery)) { error = RPC_PERIPHERALERRORS_BUS; break; }
         }
         hw_i2c_config(port, i2c_state[port].hz);
         return io_fail(error);

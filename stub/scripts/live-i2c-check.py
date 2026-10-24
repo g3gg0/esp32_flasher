@@ -57,6 +57,7 @@ class Link:
             else:buf.append(b)
         raise TimeoutError('No response; serial tail='+repr(bytes(self.raw[-350:])))
     def rom(self,op,data=b'',checksum=0):
+        if op not in (5,6,7,8,10,0x14):raise ValueError('Only ROM sync/security/read and RAM-download commands are allowed')
         self.send(struct.pack('<BBHI',0,op,len(data),checksum)+data);deadline=time.monotonic()+3
         while True:
             r=self.frame(deadline)
@@ -129,12 +130,14 @@ def main():
             elif r['error']!=1:raise RuntimeError(f'{address:#04x}: '+str(r))
         print('SCAN:',[hex(x) for x in found],flush=True)
         if 0x18 in found:
-            r=link.peripheral(2,[0x18,1,1]) if False else link.rpc('peripheral_command',{'operation':2,'port':0,'timeout_us':100000,'args':[0x18,1,1]},b'\0',magic='I2CC',response='peripheral_response')
+            r=link.rpc('peripheral_command',{'operation':2,'port':0,'timeout_us':100000,'args':[0x18,1,1]},b'\0',magic='I2CC',response='peripheral_response')
             assert not r['status'];print('0x18 register 0:',r['data'].hex(),flush=True)
     finally:
         if a.scan and saved:
             try:
                 link.peripheral(3)
+                for pin in p['pins']:
+                    n=pin['id'];b=g['banks'][n//32];link.write(b['enableClear'],1<<(n%32));link.write(g['matrix']+n*4,g['matrixGPIO'],g['matrixMask'])
                 for addr,(value,mask) in reversed(list(saved.items())):link.write(addr,value,mask)
             except Exception as e:print('Restore failed:',e,flush=True)
         link.s.close()

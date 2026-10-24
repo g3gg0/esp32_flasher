@@ -138,14 +138,6 @@ void hw_i2c_stop_begin(unsigned port) {
     i2c_ll_master_write_cmd_reg(hw, stop, 0);
     i2c_ll_update(hw); i2c_ll_start_trans(hw);
 }
-int hw_i2c_stop_poll(unsigned port) {
-    (void)port; i2c_dev_t *hw = I2C_LL_GET_HW(port);
-    /* Following a NACK, IDF waits for BUS_BUSY to clear. This continuation
-     * need not produce a new TRANS_COMPLETE/command-DONE event, and the
-     * original NACK can remain latched. It must not be polled like a new
-     * successful transfer. A bus that stays busy is bounded by the caller. */
-    return !i2c_ll_is_bus_busy(hw);
-}
 unsigned hw_i2c_read(unsigned port, uint8_t *data, unsigned size) {
     (void)port; i2c_dev_t *hw = I2C_LL_GET_HW(port); uint32_t count;
     i2c_ll_get_rxfifo_cnt(hw, &count);
