@@ -47,9 +47,41 @@
             description: 'Offizielles C6-Board mit Wi-Fi 6, BLE und Thread/Zigbee. GPIO8 steuert die RGB-LED, GPIO9 den BOOT-Taster; GPIO12/13 tragen natives USB.'
         },
         {
+            id: 'esp32-c6-touch-lcd-1-47', chip: 'esp32c6', name: 'ESP32-C6-Touch-LCD-1.47', subtitle: 'Waveshare · 15 Header-GPIOs · LCD, Touch, IMU, TF',
+            file: 'esp32-c6-touch-lcd-1-47.webp', width: 960, height: 1067,
+            front: { crop: { x: 340, y: 58, width: 270, height: 510 },
+                left: ['VBUS', 'GND', 16, 17, 'RST', 1, 2, 3, 4, 5, 6],
+                right: ['VBAT', 'GND', 'GND', '3V3', 19, 18, 13, 12, 9, 8, 7],
+                xLeft: 376, xRight: 572, y: 205, step: 28.5 },
+            notes: {
+                0: 'BAT_ADC: Batteriespannung über 200-kΩ/100-kΩ-Teiler (VBAT = ADC-Spannung × 3); nicht am Header.',
+                1: 'LCD SPI SCK und TF-Karte SPI SCK: gemeinsamer Takt.',
+                2: 'LCD SPI MOSI (LCD_SDA) und TF-Karte SPI MOSI (CMD): gemeinsame Datenleitung.',
+                3: 'TF-Karte SPI MISO (D0).', 4: 'TF-Karte SPI CS (D3).',
+                5: 'QMI8658A IMU INT1.', 6: 'QMI8658A IMU INT2.',
+                7: 'Header-GPIO ohne große Onboard-Peripherie.',
+                8: 'BOOT-Taster und Boot-Strapping-Pin.',
+                9: 'Header-GPIO; keine große Onboard-Peripherie laut Waveshare-Pinout.',
+                12: 'Natives USB D− (USB_N); bei USB-Nutzung belegt.',
+                13: 'Natives USB D+ (USB_P); bei USB-Nutzung belegt.',
+                14: 'LCD SPI Chip Select; intern verbunden, nicht am Header.',
+                15: 'LCD Data/Command; intern verbunden, nicht am Header.',
+                16: 'UART0 TX (ESP_TXD).', 17: 'UART0 RX (ESP_RXD).',
+                18: 'Gemeinsamer I²C SDA für Touch-Controller AXS5106L und IMU QMI8658A.',
+                19: 'Gemeinsamer I²C SCL für Touch-Controller AXS5106L und IMU QMI8658A.',
+                20: 'Touch-Controller AXS5106L Reset; intern verbunden, nicht am Header.',
+                21: 'Touch-Controller AXS5106L Interrupt; intern verbunden, nicht am Header.',
+                22: 'LCD Reset; intern verbunden, nicht am Header.',
+                23: 'LCD-Hintergrundbeleuchtung (LCD_BL/LEDK); intern verbunden, nicht am Header.'
+            },
+            source: 'https://docs.waveshare.com/ESP32-C6-Touch-LCD-1.47',
+            attribution: 'Pinout-Abbildung und Pinbelegung: Waveshare',
+            description: 'ESP32-C6FH8 mit 1,47-Zoll-JD9853-Touch-LCD, AXS5106L-Touch, QMI8658A-IMU, TF-Kartenslot und LiPo-Ladeschaltung. LCD und TF teilen GPIO1/2 (SPI); Touch und IMU teilen GPIO18/19 (I²C). Intern belegt und nicht am Header: GPIO0 (Batterie-ADC), 14/15/22/23 (LCD), 20/21 (Touch). GPIO5/6 führen IMU-Interrupts; GPIO8 ist BOOT, GPIO12/13 sind natives USB. VBAT ist der Batterieanschluss, kein 3,3-V-Eingang.'
+        },
+        {
             id: 'esp32-c6-super-mini', chip: 'esp32c6', name: 'ESP32-C6 Super Mini', subtitle: 'Generic · 22 GPIOs inkl. Rückseitenpads', file: 'esp32-c6-super-mini-pinout.png', height: 1005,
             front: { crop: { x: 690, y: 170, width: 220, height: 305 }, left: [16, 17, 0, 1, 2, 3, 4, 5, 6, 7], right: ['5V', 'GND', '3V3', 20, 19, 18, 15, 14, 9, 8], xLeft: 710, xRight: 890, y: 187, step: 29.5 },
-            back: { crop: { x: 690, y: 555, width: 220, height: 305 }, xLeft: 710, xRight: 890, y: 575, step: 29.5, pads: [[21, 768, 777, 'left'], [22, 792, 805, 'left'], [23, 855, 785, 'right'], [12, 770, 810, 'left'], [13, 770, 838, 'left']] },
+            back: { crop: { x: 690, y: 555, width: 220, height: 305 }, pads: [[21, 768, 778, 'left'], [22, 778, 801, 'left'], [23, 858, 789, 'right'], [12, 739, 812, 'left'], [13, 739, 840, 'left']] },
             description: 'Kompaktes C6-Board mit Wi-Fi 6, BLE und Thread/Zigbee. Fünf weitere GPIO-Pads liegen auf der Rückseite; GPIO8 und GPIO15 sind mit LEDs verbunden.'
         },
         {
