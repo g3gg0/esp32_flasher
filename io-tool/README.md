@@ -108,6 +108,10 @@ GPIO-Konfigurations- und Pegelwechsel erzeugen keine Erfolgsmeldung im
 Statusbanner; Pegel und Modus stehen im Pin-Panel. Fehler werden weiterhin
 angezeigt. Die Board-Karten bleiben beim kurzfristigen Sperren/Freigeben der
 Bedienung erhalten, statt bei jedem GPIO-Klick neu aufgebaut zu werden.
+Bei GPIO-Änderungen greift die Befehlssperre sofort, die sichtbare Deaktivierung
+der Controls aber erst nach 150 ms. Schnell bestätigte Änderungen verursachen
+dadurch kein Disabled-Flackern; bei langsamen Befehlen bleibt das Busy-Feedback
+erhalten. Fehler werden weiterhin unmittelbar gemeldet.
 
 ## Signale und Grenzen
 

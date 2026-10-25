@@ -25,6 +25,7 @@
         flasher.setPacketLogging(enabled);
     };
     let session = 'offline', busy = false, operation = false, disconnecting = false;
+    let gpioFeedbackPending = false;
     let planned = null, peripheral = 'gpio', layout = [], mapHeight = 560;
     let catalog = null, catalogRequest = 0, boardRequest = 0, renderedFrame = 0;
     let sampleTimes = [], lastPoll = null, lastUI = 0, lastPerfClear = 0, logs = [];
@@ -310,7 +311,7 @@
             if (label && label.textContent !== labelText) label.textContent = labelText;
             const pressed = String(selectedPin === pin.id);
             if (pin.g.getAttribute('aria-pressed') !== pressed) pin.g.setAttribute('aria-pressed', pressed);
-            pin.toggle.hidden = state?.mode !== 'output'; pin.toggle.disabled = busy || operation || !controller?.running || controller?.pinOwners.has(pin.id);
+            pin.toggle.hidden = state?.mode !== 'output'; pin.toggle.disabled = controlsLocked() || !controller?.running || controller?.pinOwners.has(pin.id);
             const levelText = state?.level ? '1' : '0';
             if (pin.toggle.textContent !== levelText) pin.toggle.textContent = levelText;
         }
@@ -344,7 +345,7 @@
         $('pin-pull').value = state?.pull || 'none';
         $('pin-drive').value = state?.driveStrength == null ? '' : String(state.driveStrength);
         $('pin-note').textContent = [reason, pin.strap ? 'Strapping-Pin: Pegel wird beim Reset ausgewertet.' : '', board.notes?.[selectedPin] || '', !pin.pulls ? 'Keine internen Pull-Widerstände.' : '', adcChannel(selectedPin) ? `ADC${adcChannel(selectedPin).unit}, Kanal ${adcChannel(selectedPin).channel}.` : isAnalog() ? 'Kein unterstützter ADC-Kanal; keine Analogmessung.' : ''].filter(Boolean).map(t).join(' ');
-        const disabled = !accelerated() || busy || operation || !!owner || !controller || !controller.running;
+        const disabled = !accelerated() || controlsLocked() || !!owner || !controller || !controller.running;
         $('pin-function').disabled = disabled;
         $('pin-pull').disabled = disabled || !pin.pulls || !!planned;
         $('pin-drive').disabled = disabled || !pin.output || !!planned;
@@ -447,6 +448,7 @@
     }
 
     function updateControls() {
+        if (gpioFeedbackPending) return;
         $('load-accelerated').hidden = session !== 'hardware';
         $('load-accelerated').disabled = busy || operation || accelerated() || !ESPIO.acceleratedTargets[chip.id] || !!controller?.fault;
         $('load-accelerated').textContent = accelerated() ? 'Accelerated stub active' : 'Load accelerated stub';
@@ -666,23 +668,34 @@
         await current?.close();
         status('Verbindung verloren. Messung gestoppt; erneut verbinden.', 'error'); updateControls();
     }
+    function controlsLocked() { return busy || (operation && !gpioFeedbackPending); }
+    async function runGPIOOperation(action) {
+        operation = true;
+        gpioFeedbackPending = true;
+        // Keep the command lock immediate, but avoid flashing disabled controls
+        // for ordinary GPIO round trips. Slow commands still show busy feedback.
+        const feedbackTimer = setTimeout(() => {
+            gpioFeedbackPending = false;
+            updateControls();
+        }, 150);
+        try {
+            await action();
+        } catch (error) { await failure(error); }
+        finally {
+            clearTimeout(feedbackTimer);
+            gpioFeedbackPending = false;
+            operation = false;
+            updateControls();
+        }
+    }
     async function changePin(mode, pull, driveStrength) {
         if (!controller || operation || busy || !controller.running) return;
         const current = controller, id = selectedPin, old = current.pins.get(id);
-        operation = true; updateControls();
-        try {
-            await current.configure(id, mode, pull, old?.level ?? 0, driveStrength);
-        } catch (error) { await failure(error); }
-        finally { operation = false; updateControls(); }
+        await runGPIOOperation(() => current.configure(id, mode, pull, old?.level ?? 0, driveStrength));
     }
     async function changeLevel(id, level) {
         if (!controller || operation || busy || !controller.running) return;
-        operation = true; updateControls();
-        try {
-            await controller.setLevel(id, level);
-        }
-        catch (error) { await failure(error); }
-        finally { operation = false; updateControls(); }
+        await runGPIOOperation(() => controller.setLevel(id, level));
     }
 
     function updateLDO4Controls() {
