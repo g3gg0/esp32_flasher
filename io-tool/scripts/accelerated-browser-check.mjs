@@ -79,17 +79,19 @@ try {
         window.failStubFetch = false;
         window.fetch = (url, options) => window.failStubFetch && String(url).endsWith('/stub.json') ? Promise.resolve(new Response('', {status:404})) : nativeFetch(url, options);
         ESPFlasher = class extends Native {
-            constructor(options) { super(options); this.model = new ESPIO.DemoTransport(ESPIO.chips[window.peerChip]); this.mockDecoder = new this.slipLayer.constructor(); this.sectorReads = 0; window.serialPeer = this; }
+            constructor(options) { super(options); this.model = new ESPIO.DemoTransport(ESPIO.chips[window.peerChip]); this.mockDecoder = new this.slipLayer.constructor(); this.sectorReads = 0; this.acceleratedRunning = !!window.acceleratedRunningAtOpen; this.romCommands = []; window.serialPeer = this; }
             async openPort() { this.port = { writable: true }; }
-            async hardReset() { this.stubLoaded = false; }
-            async sync() { this.current_chip = window.peerChip; this.stubLoaded = false; }
+            async hardReset(bootloader = true) { (this.resetCalls ||= []).push(bootloader); this.stubLoaded = false; this.acceleratedRunning = false; }
+            async sync() { this.syncCalls = (this.syncCalls || 0) + 1; this.current_chip = window.peerChip; this.stubLoaded = false; }
             async isStubLoader() { return false; }
-            async downloadStub() { this.stubLoaded = true; return true; }
+            async downloadStub() { this.classicUploads = (this.classicUploads || 0) + 1; this.stubLoaded = true; return true; }
             async disconnect() { this.port = null; }
             async _writeFrame(frame) {
                 for (const packet of this.mockDecoder.decode(frame)) {
                     const view = new DataView(packet.buffer, packet.byteOffset), word = offset => view.getUint32(offset, true);
                     if (packet[0] === 0) {
+                        this.romCommands.push(packet[1]);
+                        if (packet[1] === 6) this.acceleratedRunning = true;
                         let value = 0;
                         if (packet[1] === 10) value = await this.model.read(word(8));
                         if (packet[1] === 9) await this.model.write(word(8), word(12), word(16), word(20));
@@ -97,6 +99,7 @@ try {
                         response.set([1, packet[1], size, 0]); new DataView(response.buffer).setUint32(4, value, true);
                         await this.processPacket(response);
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SYNC') {
+                        if (!this.acceleratedRunning) continue;
                         const target = ESPIO.acceleratedTargets[window.peerChip];
                         await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:8, max_packet_length:1024, capabilities:1536 | (target.sdmmc ? 303 : 295) | (["esp32c2","esp32c61"].includes(window.peerChip)?0:16), chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'IOCC') {
@@ -191,6 +194,34 @@ try {
     await evaluate(`document.querySelector('[name="connection-baud"][value="115200"]').click();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));`);
     assert.equal(await evaluate(`${$('connection-menu')}.hidden`), true);
     assert.equal(await evaluate(`${$('session-badge')}.textContent`), 'OFFLINE');
+    for (const classic of [true, false]) {
+        await evaluate(`window.acceleratedRunningAtOpen=true;window.failStubFetch=true;${$('no-bootloader')}.checked=true;${$('no-bootloader')}.dispatchEvent(new Event('change'));${$('classic-stub')}.checked=${classic};${$('connect')}.click()`);
+        await wait(`!${$('disconnect')}.disabled && ${$('load-accelerated')}.disabled && !${$('accelerated-info')}.hidden`);
+        assert.deepEqual(await evaluate(`serialPeer.resetCalls || []`), []);
+        assert.equal(await evaluate(`serialPeer.syncCalls || 0`), 0, 'running stub must not receive ROM SYNC');
+        assert.equal(await evaluate(`serialPeer.classicUploads || 0`), 0);
+        assert.deepEqual(await evaluate(`serialPeer.romCommands`), [], 'reuse must not send ROM commands or RAM upload');
+        assert.ok((await evaluate(`${$('log')}.textContent`)).includes('Reusing the running accelerated stub'));
+        await evaluate(`${$('disconnect')}.click()`);
+        await wait(`${$('session-badge')}.textContent === 'OFFLINE' && !${$('connect')}.disabled`);
+    }
+    await evaluate(`window.acceleratedRunningAtOpen=false;window.failStubFetch=false;`);
+    console.log(`PASS: ${chip} running accelerated stub reused without ROM commands, reset, manifest fetch or either stub upload.`);
+    for (const classic of [true, false]) {
+        await evaluate(`${$('no-bootloader')}.checked=true;${$('no-bootloader')}.dispatchEvent(new Event('change'));${$('classic-stub')}.checked=${classic};${$('connect')}.click()`);
+        await wait(`!${$('disconnect')}.disabled && ${$('connect')}.textContent === ESPIO.i18n.t('Disconnect') && !${$('load-accelerated')}.hidden`);
+        assert.equal(await evaluate(`serialPeer.skipBootloaderReset`), true);
+        assert.deepEqual(await evaluate(`serialPeer.resetCalls || []`), [], 'manual bootloader connection must not call hardReset');
+        assert.ok(await evaluate(`serialPeer.syncCalls > 0`), 'ROM synchronization still runs');
+        assert.equal(await evaluate(`serialPeer.classicUploads || 0`), classic ? 1 : 0);
+        assert.equal(await evaluate(`${$('no-bootloader')}.disabled`), true, 'connection mode is fixed for the session');
+        assert.equal(await evaluate(`${$('load-accelerated')}.disabled`), !classic, 'accelerated stub loads directly from ROM in automatic mode');
+        await evaluate(`${$('disconnect')}.click()`);
+        await wait(`${$('session-badge')}.textContent === 'OFFLINE' && !${$('connect')}.disabled`);
+        assert.deepEqual(await evaluate(`serialPeer.resetCalls`), [false], 'normal disconnect reset remains available');
+    }
+    console.log(`PASS: ${chip} manual bootloader entry preserves SYNC and classic/accelerated uploads, skips bootloader resets and retains normal disconnect reset.`);
+    await evaluate(`${$('no-bootloader')}.checked=false;${$('no-bootloader')}.dispatchEvent(new Event('change'));`);
     await evaluate(`${$('classic-stub')}.checked=true;${$('baud')}.value='115200';${$('connect')}.click()`);
     await wait(`!${$('load-accelerated')}.hidden && !${$('load-accelerated')}.disabled`);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);

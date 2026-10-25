@@ -717,6 +717,16 @@ class ESPFlasher {
         this.logWarning = options.logWarning || ((...args) => { });
         this.logMessage = options.logMessage || ((...args) => { });
         this.logPackets = options.logPackets || false;
+        // Assume ROM download mode was entered externally; skip only bootloader reset.
+        this.skipBootloaderReset = options.skipBootloaderReset === true;
+        // Smaller ROM blocks help USB-to-UART gateways with limited buffering.
+        this.ramBlockSize = options.ramBlockSize ?? 0x1800;
+        this.ramCommandTimeout = options.ramCommandTimeout ?? 2000;
+        this.writeChunkSize = options.writeChunkSize ?? 0;
+        this.writePacingBaudRate = options.writePacingBaudRate ?? 0;
+        if (!Number.isInteger(this.ramBlockSize) || this.ramBlockSize < 1 || this.ramBlockSize > 0x1800) throw new Error('Invalid RAM upload block size.');
+        if (!Number.isInteger(this.ramCommandTimeout) || this.ramCommandTimeout < 1) throw new Error('Invalid RAM upload timeout.');
+        if (!Number.isInteger(this.writeChunkSize) || this.writeChunkSize < 0 || !Number.isInteger(this.writePacingBaudRate) || this.writePacingBaudRate < 0) throw new Error('Invalid serial write pacing.');
 
         /*
         Technical Limitation:
@@ -787,7 +797,16 @@ class ESPFlasher {
         this._writeChain = this._writeChain.then(async () => {
             const writer = await this._ensureWriter();
             this.logSerialData(frame, true);
-            await writer.write(frame);
+            const size = this.writeChunkSize || frame.length;
+            for (let offset = 0; offset < frame.length; offset += size) {
+                const chunk = frame.subarray(offset, offset + size);
+                await writer.write(chunk);
+                if (this.writePacingBaudRate && offset + chunk.length < frame.length) {
+                    // Web Serial write completion need not mean that a USB/UART
+                    // gateway has drained its UART. Budget 8N1 wire time + 1 ms.
+                    await new Promise(resolve => setTimeout(resolve, Math.ceil(chunk.length * 10000 / this.writePacingBaudRate) + 1));
+                }
+            }
         });
         return this._writeChain;
     }
@@ -1333,7 +1352,12 @@ class ESPFlasher {
         }
 
         if (this.devMode) {
-            this.dumpPacket(this.parsePacket(packet.payload));
+            const parsed = this.parsePacket(packet.payload);
+            if (parsed) {
+                this.dumpPacket(parsed);
+            } else {
+                this.logDebug('[CMD] Raw SLIP payload', packet);
+            }
         }
 
         return new Promise(async (resolve, reject) => {
@@ -1529,9 +1553,10 @@ class ESPFlasher {
     /**
      * Attempts to put the ESP device into bootloader mode using RTS/DTR signals.
      * Relies on the common DTR=EN, RTS=GPIO0 circuit. May not work on all boards.
-     * @returns {Promise<boolean>} True if the sequence was sent, false if an error occurred (e.g., signals not supported).
+     * @returns {Promise<boolean>} True if the sequence completed or bootloader reset was explicitly skipped; false on error.
      */
     async hardReset(bootloader = true) {
+        if (bootloader && this.skipBootloaderReset) return true;
         if (!this.port) {
             this.logError("Port is not open. Cannot set signals.");
             return false;
@@ -1623,34 +1648,56 @@ class ESPFlasher {
         return byteArray;
     }
 
+    /** Validate RAM upload status bytes from ROM or a running legacy stub. */
+    checkRAMResponse(response, opcode, statusSize = this.stubLoaded === true || this.current_chip === 'esp8266' ? 2 : 4) {
+        const data = response?.data;
+        const raw = data ? Array.from(data, byte => byte.toString(16).padStart(2, '0')).join(' ') : 'none';
+        if (!data || data.length < statusSize) throw new Error(`ROM RAM download failed (opcode ${opcode}): incomplete ACK (${raw}).`);
+        const status = data[data.length - statusSize], error = data[data.length - statusSize + 1];
+        if (!status && !error) return;
+        const names = { 0: 'undefined error', 1: 'invalid parameter', 2: 'out of memory', 3: 'send failed', 4: 'receive failed',
+            5: 'invalid message format', 6: 'execution failed', 7: 'checksum error', 8: 'flash write error', 9: 'flash read error',
+            10: 'invalid flash read length', 11: 'deflate failed', 12: 'deflate checksum error', 13: 'invalid deflate parameter',
+            14: 'invalid RAM binary size', 15: 'invalid RAM binary address' };
+        throw Object.assign(new Error(`ROM RAM download failed (opcode ${opcode}): status 0x${status.toString(16).padStart(2, '0')}, error 0x${error.toString(16).padStart(2, '0')} (${names[error] || 'unknown error'}); ACK ${raw}.`), { romStatus: status, romError: error });
+    }
+
+    async sendRAMCommand(opcode, words, statusSize) {
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await this.executeCommand(this.buildCommandPacketU32(opcode, ...words), (resolve, reject, response) => {
+                    try { this.checkRAMResponse(response, opcode, statusSize); resolve(); }
+                    catch (error) { reject(error); }
+                }, null, this.ramCommandTimeout);
+            } catch (error) {
+                // A checksum rejection did not accept this block. Repeat the
+                // identical sequence, but never replay a block after a timeout.
+                if (opcode !== MEM_DATA || error.romStatus !== 1 || error.romError !== 7 || attempt >= 2) throw error;
+                this.logWarning(`RAM block ${words[1]}: checksum rejected; retry ${attempt + 1}/2.`);
+            }
+        }
+    }
+
     /**
-     * Download binary payload to device RAM
-     * @async
+     * Download a base64 binary to device RAM using checked, sequential blocks.
      * @param {number} address - Target RAM address
      * @param {string} payload - Base64-encoded binary data
      * @returns {Promise<void>}
-     * @throws {Error} If download fails
-     * @description Used for downloading stub loader and other code to RAM
      */
     async downloadMem(address, payload) {
         var binary = this.base64ToByteArray(payload);
-        const MAX_PACKET_SIZE = 0x1800; // as limited in https://github.com/espressif/esptool/blob/master/esptool/loader.py#L265 
+        const MAX_PACKET_SIZE = this.ramBlockSize;
         const packets = Math.ceil(binary.length / MAX_PACKET_SIZE);
-
-        await this.executeCommand(this.buildCommandPacketU32(MEM_BEGIN, binary.length, packets, MAX_PACKET_SIZE, address),
-            async (resolve, reject, responsePacket) => {
-                resolve();
-            }, null, 1000);
+        await this.sendRAMCommand(MEM_BEGIN, [binary.length, packets, MAX_PACKET_SIZE, address]);
 
         /* Send data in chunks */
         for (let seq = 0; seq < packets; seq++) {
             const offset = seq * MAX_PACKET_SIZE;
             const chunk = binary.slice(offset, offset + MAX_PACKET_SIZE);
 
-            await this.executeCommand(this.buildCommandPacketU32(MEM_DATA, chunk.length, seq, 0, 0, chunk),
-                async (resolve, reject, responsePacket) => {
-                    resolve();
-                }, null, 1000);
+            await this.sendRAMCommand(MEM_DATA, [chunk.length, seq, 0, 0, chunk]).catch(error => {
+                throw new Error(`MEM_DATA at 0x${(address + offset).toString(16)}, block ${seq}, ${chunk.length} bytes: ${error.message || error}`, { cause: error });
+            });
         }
     }
 
@@ -2618,7 +2665,8 @@ class ESPFlasher {
         const size = data.length;
         let checksum = 0;
 
-        if (size > 32) {
+        // Data commands require a checksum even for a short final block.
+        if ([MEM_DATA, FLASH_DATA, FLASH_DEFL_DATA].includes(command)) {
             checksum = 0xEF;
             for (let index = 16; index < size; index++) {
                 checksum ^= data[index];

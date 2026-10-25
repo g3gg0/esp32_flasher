@@ -2,6 +2,8 @@
     'use strict';
     const now = () => performance.now();
     const bit = pin => (2 ** (pin % 32)) >>> 0;
+    // ESP-IDF v5.5.1 esp32s3: DR_REG_USB_SERIAL_JTAG_BASE + 0x18.
+    const S3_USB_CONF0 = 0x60038018;
     const adcAPI = typeof module === 'object' && module.exports ? require('./adc.js') : root.ESPIO;
     const sdAPI = typeof module === 'object' && module.exports ? require('./sd.js') : root.ESPIO;
     const i2cAPI = typeof module === 'object' && module.exports ? require('./i2c.js') : root.ESPIO;
@@ -73,7 +75,8 @@
         }
         descriptor(id) {
             const pin = this.chip.pins.find(item => item.id === id);
-            if (!pin || pin.reserved) throw new Error(`GPIO${id}: ${pin?.reserved || 'nicht verfügbar'}`);
+            // Reserved pins stay explicitly configurable; only bulk operations skip them.
+            if (!pin || pin.mux == null) throw new Error(`GPIO${id}: ${pin?.reserved || 'nicht verfügbar'}`);
             return pin;
         }
         analogRoute(id) { return (this.readMode === 'adc' || this.adcScanRouting) && this.adc?.channel(id) ? this.adc.profile.padRoute : null; }
@@ -149,7 +152,8 @@
             return this.queue.run(async () => {
                 for (const id of ids) {
                     if (!this.active) break;
-                    if (this.readOnly) this.pins.set(id, { id, mode: 'observe', pull: null, level: null, read: null, history: new History() });
+                    // Reserved pins (flash, USB, console) are only read until the user explicitly configures them.
+                    if (this.readOnly || this.descriptor(id).reserved) this.pins.set(id, { id, mode: 'observe', pull: null, level: null, read: null, history: new History() });
                     else await this.configurePin(id, 'input');
                 }
                 if (this.transport.supports?.('CAPTURE')) await this.transport.captureConfigureGPIO(this.chip.gpio.banks.map(b => b.input));
@@ -173,8 +177,35 @@
                 const bank = this.bank(id);
                 await this.transport.write(level ? bank.set : bank.clear, bit(id));
                 state.level = level ? 1 : 0;
+                let outputCheck = null;
+                if (this.chip.id === 'esp32s3') {
+                    const pinBit = id % 32;
+                    const [output, enable, input, usbConf, matrix, mux, pinConfig] = await Promise.all([
+                        this.transport.read(bank.output),
+                        this.transport.read(bank.enable),
+                        this.transport.read(bank.input),
+                        this.transport.read(S3_USB_CONF0),
+                        this.transport.read(this.chip.gpio.matrix + id * 4),
+                        this.transport.read(this.descriptor(id).mux),
+                        this.transport.read(this.chip.gpio.pinConfig + id * 4)
+                    ]);
+                    outputCheck = {
+                        latch: (output >>> pinBit) & 1,
+                        enabled: (enable >>> pinBit) & 1,
+                        pad: (input >>> pinBit) & 1,
+                        usbPadEnabled: (usbConf >>> 14) & 1,
+                        usbPullOverride: (usbConf >>> 8) & 1,
+                        usbDmPulls: (usbConf >>> 11) & 3,
+                        usbDpPulls: (usbConf >>> 9) & 3,
+                        matrix: matrix & this.chip.gpio.matrixMask,
+                        mux: mux & this.chip.gpio.muxMask,
+                        pinConfig: pinConfig & this.chip.gpio.pinConfigMask
+                    };
+                }
                 // Record the command ACK time; don't fabricate a new input read.
                 state.history.push(this.clock(), null, state.level);
+                if (outputCheck) state.outputCheck = outputCheck;
+                return outputCheck;
             });
         }
         async sample() {
@@ -258,7 +289,7 @@
             if (this.scanning || this.fault || !this.active) throw new Error('Usage-Scan nicht verfügbar.');
             if (!['pull', 'drive', 'compare', 'sweep'].includes(method) || !Number.isFinite(settleMs) || settleMs < 1 || settleMs > 200 || typeof loadProfile !== 'boolean' || (maxDrive !== null && (!Number.isInteger(maxDrive) || maxDrive < 0))) throw new Error('Ungültige Scanparameter.');
             const targets = [...new Set(ids)];
-            if (!targets.length || targets.some(id => !this.pins.has(id) || this.descriptor(id).reserved || this.pinOwners.has(id))) throw new Error('Nur verwaltete, verfügbare GPIO-Pins ohne Peripheriezuordnung können gescannt werden.');
+            if (!targets.length || targets.some(id => !this.pins.has(id) || !this.descriptor(id) || this.pinOwners.has(id))) throw new Error('Nur verwaltete, verfügbare GPIO-Pins ohne Peripheriezuordnung können gescannt werden.');
             this.scanning = true; const resume = this.running;
             await this.pause();
             try {
@@ -314,7 +345,8 @@
                 for (const peripheral of [...this.peripheralSessions]) {
                     try { await peripheral.closeUnqueued(); } catch (error) { errors.push(error); }
                 }
-                for (const id of this.pins.keys()) {
+                for (const [id, state] of this.pins) {
+                    if (state.mode === 'observe') continue;
                     try { await this.transport.write(this.bank(id).enableClear, bit(id)); } catch (error) { errors.push(error); }
                 }
                 try { await this.adc?.close(); } catch (error) { errors.push(error); }

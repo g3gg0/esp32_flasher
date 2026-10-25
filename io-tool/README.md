@@ -91,6 +91,13 @@ RESET drücken und erneut verbinden. Schließen/Neuladen des Browser-Tabs bietet
 keine zuverlässige Gelegenheit für asynchrone Registerzugriffe; deshalb zum
 Beenden den Trennen-Button verwenden oder das Board selbst zurücksetzen.
 
+Zur Transportdiagnose `?debug=1` an die URL anhängen (bei vorhandenen Parametern
+`&debug=1`) und neu verbinden. Die DevTools-Konsole zeigt dann rohe TX-/RX-Bytes
+und ROM-Befehle; beschleunigte RPC-Anfragen werden als `Raw SLIP payload`
+protokolliert. In DevTools auch die Stufe **Verbose/Debug** einblenden.
+Alternativ aktiviert `localStorage['espio.debug']='1'` das Logging dauerhaft;
+`localStorage.removeItem('espio.debug')` deaktiviert diese Einstellung wieder.
+
 ## Signale und Grenzen
 
 - **Grün im Digitalmodus:** digitaler Wert aus `GPIO_IN` / `GPIO_IN1`. Auch bei Outputs bleibt

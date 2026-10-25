@@ -58,9 +58,9 @@
         // Separate text nodes let the locale switch translate the board note
         // independently, while keeping the pin number and separator unchanged.
         if (note) option.append(' – ', document.createTextNode(note));
-        if (reason || !pin.output) option.append(' · ', document.createTextNode(reason ? 'belegt' : 'Input'));
+        if (reason || !pin.output) option.append(' · ', document.createTextNode(reason ? 'reserviert' : 'Input'));
         option.title = [`IO${id}`, note, reason || (!pin.output ? 'nur Input' : '')].filter(Boolean).join(' · ');
-        option.disabled = !!reason || !pin.output;
+        option.disabled = !pin.output || pin.mux == null;
         return option;
     }
     function peripheralRole(id) { return controller?.pinOwners.get(id)?.startsWith('I²C') ? i2cPanel.role(id) : rmtPanel.role(id) || peripheralPanels.role(id) || sdRole(id) || i2cPanel.role(id); }
@@ -192,13 +192,7 @@
             svg('text', { x: 500, y: by + bh / 2 - 7, 'text-anchor': 'middle', fill: '#b6c6d2', 'font-size': 20, 'font-family': 'Consolas, monospace' }, drawing, chip.name);
             svg('text', { x: 500, y: by + bh / 2 + 18, 'text-anchor': 'middle', fill: '#718494', 'font-size': 11 }, drawing, 'LOGISCHE GPIO-ANSICHT');
         }
-        drawing.setAttribute('viewBox', `0 0 1000 ${mapHeight}`);
-        $('pinmap').style.aspectRatio = `1000 / ${mapHeight}`;
-        for (const placement of placements) {
-            const { view, label } = placement;
-            if (label) svg('text', { x: 500, y: placement.by - 14, fill: '#8e9ba8', 'text-anchor': 'middle', 'font-size': 13 }, drawing, label);
-            photo(drawing, view, bx, placement.by, bw, placement.bh);
-        }
+        const pinLayouts = [];
         for (const placement of placements.length ? placements : [{ view: board, by, bh }]) {
             const { view } = placement;
             const points = view.pins.map(pad => ({
@@ -214,6 +208,22 @@
                     previous = point.traceY;
                 }
             }
+            pinLayouts.push({ placement, points });
+        }
+        const lowestPin = Math.max(0, ...pinLayouts.flatMap(({ points }) => points
+            .filter(point => Number.isFinite(point.traceY)).map(point => point.traceY)));
+        const lowestExtra = board.extra?.length
+            ? (board.image ? bottom : by + bh) + 34 + 22 + (Math.ceil(board.extra.length / 2) - 1) * 34
+            : 0;
+        mapHeight = Math.max(mapHeight, lowestPin + 30, lowestExtra + 30);
+        drawing.setAttribute('viewBox', `0 0 1000 ${mapHeight}`);
+        $('pinmap').style.aspectRatio = `1000 / ${mapHeight}`;
+        for (const placement of placements) {
+            const { view, label } = placement;
+            if (label) svg('text', { x: 500, y: placement.by - 14, fill: '#8e9ba8', 'text-anchor': 'middle', 'font-size': 13 }, drawing, label);
+            photo(drawing, view, bx, placement.by, bw, placement.bh);
+        }
+        for (const { placement, points } of pinLayouts) {
             for (const { pad, x, y, traceY } of points) {
                 addPin(drawing, pad, x, y, traceY);
             }
@@ -284,13 +294,14 @@
             pin.g.classList.toggle('sd-pin', !!sdRole(pin.id)); pin.g.classList.toggle('i2c-pin', !!i2cPanel.role(pin.id));
             const label = pin.g.querySelector('text'); if (label) label.textContent = `IO${pin.id}${role ? ` · ${role.toUpperCase()}` : ''}`;
             pin.g.setAttribute('aria-pressed', String(selectedPin === pin.id));
-            pin.toggle.hidden = state?.mode !== 'output'; pin.toggle.disabled = busy || operation || !!pinReason(pin.id) || !controller?.running || controller?.pinOwners.has(pin.id);
+            pin.toggle.hidden = state?.mode !== 'output'; pin.toggle.disabled = busy || operation || !controller?.running || controller?.pinOwners.has(pin.id);
             pin.toggle.textContent = state?.level ? '1' : '0';
         }
     }
     function renderFunctions() {
         const select = $('pin-function'); select.replaceChildren();
         const pin = chip.pins.find(item => item.id === selectedPin);
+        if (controller?.pins.get(selectedPin)?.mode === 'observe') { const option = new Option('Unverändert · nur beobachten', 'observe'); option.disabled = true; select.add(option); }
         for (const [id, name] of [['input', 'GPIO · Input'], ['output', 'GPIO · Output']]) {
             const option = new Option(name, id); option.disabled = id === 'output' && !pin?.output; select.add(option);
         }
@@ -306,17 +317,17 @@
         if (!pin) return;
         const state = controller?.pins.get(selectedPin), reason = pinReason(selectedPin), owner = controller?.pinOwners.get(selectedPin);
         $('pin-name').textContent = `GPIO ${selectedPin}`;
-        $('pin-subtitle').textContent = owner ? `${owner}-Port · ${peripheralRole(selectedPin)?.toUpperCase() || ''}` : reason ? 'Nicht verfügbar · keine Konfiguration' : pin.output ? 'Digitaler Ein- / Ausgang' : 'Nur digitaler Eingang';
-        $('pin-state').textContent = reason ? pin.reserved ? 'RESERVIERT' : 'NICHT VERFÜGBAR' : state ? labels[state.mode] : 'VORSCHAU';
+        $('pin-subtitle').textContent = owner ? `${owner}-Port · ${peripheralRole(selectedPin)?.toUpperCase() || ''}` : reason ? 'Reserviert · Änderung nur explizit, auf eigenes Risiko' : pin.output ? 'Digitaler Ein- / Ausgang' : 'Nur digitaler Eingang';
+        $('pin-state').textContent = state ? labels[state.mode] : reason ? 'RESERVIERT' : 'VORSCHAU';
         const stale = !controller?.running || state?.read == null || performance.now() - (state?.lastRead || 0) > Math.max(250, (state?.samplePeriod || Number($('interval').value)) * 4);
         $('read-label').textContent = isAnalog() ? 'ADC · ROHWERT / 4095' : 'GELESEN';
         $('read-level').textContent = isAnalog() && !adcChannel(selectedPin) ? 'kein ADC' : stale ? '—' : isAnalog() ? String(state.adcRaw) : state.read ? '1 / HIGH' : '0 / LOW';
         $('drive-level').textContent = state?.mode === 'output' ? state.level ? '1 / HIGH' : '0 / LOW' : '—';
-        $('pin-function').value = planned || (state?.mode === 'output' ? 'output' : 'input');
+        $('pin-function').value = planned || (state?.mode === 'output' ? 'output' : state?.mode === 'observe' ? 'observe' : 'input');
         $('pin-pull').value = state?.pull || 'none';
         $('pin-drive').value = state?.driveStrength == null ? '' : String(state.driveStrength);
         $('pin-note').textContent = [reason, pin.strap ? 'Strapping-Pin: Pegel wird beim Reset ausgewertet.' : '', board.notes?.[selectedPin] || '', !pin.pulls ? 'Keine internen Pull-Widerstände.' : '', adcChannel(selectedPin) ? `ADC${adcChannel(selectedPin).unit}, Kanal ${adcChannel(selectedPin).channel}.` : isAnalog() ? 'Kein unterstützter ADC-Kanal; keine Analogmessung.' : ''].filter(Boolean).map(t).join(' ');
-        const disabled = !accelerated() || busy || operation || !!reason || !!owner || !controller || !controller.running;
+        const disabled = !accelerated() || busy || operation || !!owner || !controller || !controller.running;
         $('pin-function').disabled = disabled;
         $('pin-pull').disabled = disabled || !pin.pulls || !!planned;
         $('pin-drive').disabled = disabled || !pin.output || !!planned;
@@ -327,7 +338,7 @@
             $(id).disabled = disabled || state?.mode !== 'output';
             $(id).classList.toggle('active', state?.mode === 'output' && state.level === level);
         }
-        $('inspector-help').textContent = owner ? `${owner} steuert diesen Pin. Zum Umkonfigurieren zuerst den Port freigeben.` : reason ? 'Dieser Pin wird vom Tool nicht umkonfiguriert.' : !controller ? 'Zum Steuern mit Hardware verbinden oder die Demo starten.' : controller.scanning ? 'Usage-Scan läuft. Die vorherige Konfiguration wird anschließend wiederhergestellt.' : !controller.running ? 'Messung angehalten. Fortsetzen, um Pins zu bedienen.' : isAnalog() ? 'Grün: ADC-Rohwert. Rot: Output-Sollwert 0/1 als Skalenenden, keine kalibrierte Spannung.' : 'Änderungen werden sofort angewendet. Grün liest immer den tatsächlichen digitalen Pinpegel zurück.';
+        $('inspector-help').textContent = owner ? `${owner} steuert diesen Pin. Zum Umkonfigurieren zuerst den Port freigeben.` : reason && state?.mode === 'observe' ? 'Reservierter Pin: wird nur gelesen und beim Scan aller GPIOs übersprungen. Eine explizite Änderung kann Flash/USB/Konsole stören.' : !controller ? 'Zum Steuern mit Hardware verbinden oder die Demo starten.' : controller.scanning ? 'Usage-Scan läuft. Die vorherige Konfiguration wird anschließend wiederhergestellt.' : !controller.running ? 'Messung angehalten. Fortsetzen, um Pins zu bedienen.' : isAnalog() ? 'Grün: ADC-Rohwert. Rot: Output-Sollwert 0/1 als Skalenenden, keine kalibrierte Spannung.' : 'Änderungen werden sofort angewendet. Grün liest immer den tatsächlichen digitalen Pinpegel zurück.';
         const bank = chip.gpio.banks[Math.floor(selectedPin / 32)];
         $('pin-registers').replaceChildren();
         const input = chip.gpio.inputOverrides?.[selectedPin]?.address ?? bank.input;
@@ -428,7 +439,7 @@
         $('demo').hidden = session !== 'offline'; $('demo').disabled = busy;
         $('baud').disabled = session !== 'offline' || busy;
         $('connection-options').disabled = busy || operation;
-        for (const input of document.querySelectorAll('[name="connection-baud"], #classic-stub')) input.disabled = session !== 'offline' || busy;
+        for (const input of document.querySelectorAll('[name="connection-baud"], #classic-stub, #no-bootloader')) input.disabled = session !== 'offline' || busy;
         for (const input of document.querySelectorAll('[name="connection-baud"]')) input.checked = input.value === $('baud').value;
         $('session-badge').className = `session-badge ${session === 'hardware' ? 'live' : session === 'demo' ? 'demo' : ''}`;
         $('session-badge').textContent = session === 'hardware' ? '● LIVE / RAM' : session === 'demo' ? '● DEMO / SIMULATION' : 'OFFLINE';
@@ -474,7 +485,7 @@
             }
         });
         controller = current;
-        await current.initialize(exposedPins().filter(id => !chip.pins.find(pin => pin.id === id)?.reserved));
+        await current.initialize(exposedPins());
         if (token !== boardRequest || !transport || session === 'offline') { await current.close(); return; }
         renderSD(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral); fusesPanel.render(peripheral);
         current.start(Number($('interval').value));
@@ -504,17 +515,43 @@
         let device, autoAccelerate = false;
         try {
             status('Seriellen Port auswählen …');
-            device = new ESPFlasher({ initialBaudRate: Number($('baud').value), logMessage: log, logWarning: log, logError: log });
+            const skipBootloaderReset = $('no-bootloader').checked;
+            // Raw TX/RX hex dumps in the DevTools console: ?debug=1 or localStorage['espio.debug']='1'.
+            const debugPackets = new URLSearchParams(location.search).has('debug') || localStorage.getItem('espio.debug') === '1';
+            device = new ESPFlasher({ initialBaudRate: Number($('baud').value), skipBootloaderReset, logMessage: log, logWarning: log, logError: log,
+                ramBlockSize: 0x1800, ramCommandTimeout: 2000,
+                writeChunkSize: 0,
+                logPackets: debugPackets, devMode: debugPackets, logDebug: debugPackets ? (...args) => console.debug('[ESPFlasher]', ...args) : undefined });
+            device.slipLayer.logPackets = debugPackets;
             flasher = device;
             // Invoke the port chooser within the original click's user activation.
             await device.openPort();
+            if (skipBootloaderReset) log('Manual bootloader: ', device.initialBaudRate, 'baud, 5000 ms response timeout.');
             device.disconnected = () => { if (!disconnecting && flasher === device) unexpectedDisconnect(); };
-            status('ESP in den Bootloader starten und Chip erkennen …');
-            await device.hardReset(true); await device.sync();
+            if (skipBootloaderReset) {
+                status('Checking for a running accelerated stub…');
+                transport = await ESPIO.probeAccelerated(device);
+                if (transport) {
+                    device.current_chip = transport.identity.chip;
+                    device.synced = true;
+                    log('Reusing the running accelerated stub; ROM synchronization and RAM upload skipped.');
+                }
+            }
+            if (!transport) {
+                status(!skipBootloaderReset ? 'ESP in den Bootloader starten und Chip erkennen …' : 'Synchronizing with the chip already in bootloader mode (DTR/RTS untouched)…');
+                if (!skipBootloaderReset) await device.hardReset(true);
+                await device.sync();
+            }
             if (!chips[device.current_chip]) throw new Error(`${device.current_chip}: Noch kein geprüftes GPIO-Registerprofil vorhanden. Es werden keine GPIO-Register geschrieben.`);
             log(`Erkannt: ${device.current_chip}`);
             const readOnlyChip = !!chips[device.current_chip].readOnlyGPIO;
-            if (!readOnlyChip) {
+            // With manual bootloader entry, load the accelerated stub directly from ROM.
+            // Starting the classic stub first would require returning to ROM.
+            if (!transport && skipBootloaderReset && !readOnlyChip && !$('classic-stub').checked) {
+                status('Loading accelerated RAM stub from the existing bootloader session…');
+                const manifest = await ESPIO.prepareAccelerated(device.current_chip);
+                transport = await ESPIO.startAccelerated(device, manifest);
+            } else if (!transport && !readOnlyChip) {
                 if (!device.chip_descriptions[device.current_chip]?.stub) throw new Error(`Für ${device.current_chip} ist kein RAM-Stub vorhanden.`);
                 status(`${device.current_chip}: RAM-Stub wird geladen …`);
                 if (device.stubLoaded !== true && !await device.isStubLoader()) {
@@ -523,7 +560,12 @@
                 // isStubLoader in the existing flasher stores a Promise on some chips.
                 device.stubLoaded = true;
             }
-            transport = new RegisterTransport(device); session = 'hardware';
+            transport ||= new RegisterTransport(device); session = 'hardware';
+            if (accelerated()) {
+                $('interval').value = '1';
+                const id = transport.identity;
+                log(`SYNC → IDEN: ${id.chip}, stub ${id.build}, protocol ${id.protocol_major}.${id.protocol_minor}, capabilities 0x${id.capabilities.toString(16)}`);
+            }
             const changed = chip.id !== device.current_chip;
             chip = chips[device.current_chip];
             clearScan();
@@ -535,7 +577,7 @@
             status(readOnlyChip ? `${chip.name} erkannt · ROM-Registerzugriff · ${board.name} · ${controller.pins.size} GPIOs beobachten. Polling läuft.` :
                 `${chip.name} erkannt · RAM-Stub aktiv · ${board.name} · ${controller.pins.size} GPIOs als Input. Polling läuft.`);
             log(readOnlyChip ? 'ESP8266: GPIO_IN und RTC_GPIO_IN_DATA werden nur gelesen.' : 'Stub aktiv. Beim Verbinden wird Flash weder beschrieben noch gelöscht.');
-            autoAccelerate = !readOnlyChip && !$('classic-stub').checked;
+            autoAccelerate = !readOnlyChip && !$('classic-stub').checked && !accelerated();
         } catch (error) {
             const cancelled = error?.name === 'NotFoundError';
             await shutdown(false);
@@ -607,14 +649,19 @@
         operation = true; updateControls();
         try {
             await current.configure(id, mode, pull, old?.level ?? 0, driveStrength);
-            status(`GPIO${id} · ${labels[mode]} · ${pull === 'none' ? 'Floating' : pull === 'up' ? 'Pull-up' : 'Pull-down'}${mode === 'output' ? ` · ${current.pins.get(id).level ? 'HIGH' : 'LOW'}` : ''}`);
+            const usbPadOverride = chip.id === 'esp32s3' && (id === 19 || id === 20);
+            status(`${usbPadOverride ? 'Native USB-PHY freigegeben · ' : ''}GPIO${id} · ${labels[mode]} · ${pull === 'none' ? 'Floating' : pull === 'up' ? 'Pull-up' : 'Pull-down'}${mode === 'output' ? ` · ${current.pins.get(id).level ? 'HIGH' : 'LOW'}` : ''}`);
         } catch (error) { await failure(error); }
         finally { operation = false; updateControls(); }
     }
     async function changeLevel(id, level) {
         if (!controller || operation || busy || !controller.running) return;
         operation = true; updateControls();
-        try { await controller.setLevel(id, level); status(`${session === 'demo' ? 'DEMO / SIMULATION · ' : ''}GPIO${id} · OUTPUT · ${level ? 'HIGH' : 'LOW'} geschrieben. Grün zeigt den rückgelesenen Pinpegel.`); }
+        try {
+            const check = await controller.setLevel(id, level);
+            const observed = check ? ` · OUT=${check.latch} OE=${check.enabled} PAD=${check.pad} USB_PAD=${check.usbPadEnabled} USB_PULL_OVR=${check.usbPullOverride} USB_DM_PULLS=${check.usbDmPulls} USB_DP_PULLS=${check.usbDpPulls} MAT=${hex(check.matrix)} MUX=${hex(check.mux)} PIN=${hex(check.pinConfig)}` : '';
+            status(`${session === 'demo' ? 'SIMULATION ' : ''}GPIO${id} OUTPUT ${level ? 'HIGH' : 'LOW'} requested${observed}.`);
+        }
         catch (error) { await failure(error); }
         finally { operation = false; updateControls(); }
     }
@@ -678,7 +725,6 @@
         let invalid = '';
         try {
             ESPIO.validateSDConfig(chip, new Set(exposedPins()), sdDraft());
-            invalid = Object.values(sdDraft().pins).filter(id => id !== null).map(pinReason).find(Boolean) || '';
         } catch (error) { invalid = error.message; }
         for (const role of sdRoles) $(`sd-${role}`).disabled = ready || busy || operation || !accelerated();
         $('sd-width').disabled = ready || busy || operation || !accelerated();
@@ -834,8 +880,9 @@
         const p = document.createElement('p'); p.textContent = ''; $('scan-results').append(p);
     }
     function scanTargets() {
-        const ids = $('scan-target').value === 'all' ? [...(controller?.pins.keys() || [])] : [selectedPin];
-        return ids.filter(id => controller?.pins.has(id) && !pinReason(id) && !controller.pinOwners.has(id));
+        const all = $('scan-target').value === 'all', ids = all ? [...(controller?.pins.keys() || [])] : [selectedPin];
+        // Bulk scans skip reserved pins; a single, explicitly selected pin may be scanned.
+        return ids.filter(id => controller?.pins.has(id) && !(all && pinReason(id)) && !controller.pinOwners.has(id));
     }
     function updateScanControls() {
         const active = !!scanAbort, targets = scanTargets();
@@ -1040,6 +1087,7 @@
     for (const input of document.querySelectorAll('[name="connection-baud"]')) input.addEventListener('change', () => { if (input.checked && session === 'offline') { $('baud').value = input.value; updateControls(); } });
     $('connect').addEventListener('click', () => { closeConnectionMenu(); if (session === 'offline') connect(); else $('disconnect').click(); });
     $('load-accelerated').addEventListener('click', loadAccelerated);
+    $('no-bootloader').addEventListener('change', updateControls);
     $('demo').addEventListener('click', demo);
     $('disconnect').addEventListener('click', async () => {
         if (busy) return; busy = true; updateControls();
@@ -1061,8 +1109,9 @@
         if (value === 'input' || value === 'output') { planned = null; changePin(value, controller?.pins.get(selectedPin)?.pull || 'none'); }
         else { planned = value; updateInspector(); }
     });
-    $('pin-pull').addEventListener('change', () => changePin(controller?.pins.get(selectedPin)?.mode || 'input', $('pin-pull').value));
-    $('pin-drive').addEventListener('change', () => changePin(controller?.pins.get(selectedPin)?.mode || 'input', controller?.pins.get(selectedPin)?.pull || 'none', Number($('pin-drive').value)));
+    const pinMode = () => controller?.pins.get(selectedPin)?.mode === 'output' ? 'output' : 'input';
+    $('pin-pull').addEventListener('change', () => changePin(pinMode(), $('pin-pull').value));
+    $('pin-drive').addEventListener('change', () => changePin(pinMode(), controller?.pins.get(selectedPin)?.pull || 'none', Number($('pin-drive').value)));
     $('set-low').addEventListener('click', () => changeLevel(selectedPin, 0));
     $('set-high').addEventListener('click', () => changeLevel(selectedPin, 1));
     $('pause').addEventListener('click', async () => {

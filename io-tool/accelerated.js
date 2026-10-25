@@ -90,7 +90,10 @@
         }
         async sync(expectedChip) {
             const id = await this.request('sync', {}, 'identity');
-            if (id.protocol_major !== protocol.version.major || id.chip !== expectedChip || id.max_packet_length < protocol.packets.register_command.size || id.max_packet_length > protocol.maxPacketLength || !(id.capabilities & (1 << protocol.capabilities.REGISTERS))) {
+            return this.acceptIdentity(id, expectedChip);
+        }
+        acceptIdentity(id, expectedChip) {
+            if (id.protocol_major !== protocol.version.major || !acceleratedTargets[id.chip] || (expectedChip !== undefined && id.chip !== expectedChip) || id.max_packet_length < protocol.packets.register_command.size || id.max_packet_length > protocol.maxPacketLength || !(id.capabilities & (1 << protocol.capabilities.REGISTERS))) {
                 this.closed = true; throw new Error('Accelerated stub identity/protocol mismatch.');
             }
             this.identity = id; return id;
@@ -212,25 +215,51 @@
         if (!entryFound) throw new Error('Stub entry is outside executable RAM.');
         return manifest;
     }
+    async function probeAccelerated(device, { timeoutMs = 1000 } = {}) {
+        const transport = new AcceleratedTransport(device);
+        let timedOut = false;
+        try {
+            const id = await device.executeCommand({ command: 'rpc', payload: encode('sync') }, null, (resolve, reject, raw) => {
+                const magic = decoder.decode(raw.subarray(0, 4));
+                // Boot messages and ROM replies do not identify our RAM stub.
+                if (magic !== layout('identity').magic && magic !== layout('error').magic) return;
+                try {
+                    if (magic === layout('error').magic) {
+                        const error = decode(raw, 'error');
+                        if (error.request_magic !== layout('sync').magic) return;
+                        throw new RPCError(error.status, error.request_magic);
+                    }
+                    resolve(decode(raw, 'identity'));
+                } catch (error) { reject(error); }
+            }, timeoutMs, () => { timedOut = true; return true; });
+            transport.acceptIdentity(id);
+            return transport;
+        } catch (error) {
+            transport.close();
+            // Only silence means "try ROM". A responding incompatible stub or
+            // a serial write failure must not trigger a new RAM upload.
+            if (!timedOut) throw error;
+            return null;
+        }
+    }
     function romCommand(device, opcode, ...words) {
-        return device.executeCommand(device.buildCommandPacketU32(opcode, ...words), (resolve, reject, response) => {
-            const data = response?.data;
-            if (!data || data.length < 4 || data[data.length - 4] || data[data.length - 3]) return reject(new Error(`ROM RAM download failed (opcode ${opcode}).`));
-            resolve();
-        }, null, 2000);
+        return device.sendRAMCommand(opcode, words, 4);
     }
     async function startAccelerated(device, manifest) {
-        if (await device.hardReset(true) === false) throw new Error('Could not reset into ROM download mode. Check BOOT/EN and reconnect.');
+        if (!device.skipBootloaderReset && await device.hardReset(true) === false) throw new Error('Could not reset into ROM download mode. Check BOOT/EN and reconnect.');
         await device.sync();
         if (device.current_chip !== manifest.chip) throw new Error(`ROM chip mismatch: detected ${device.current_chip}, expected ${manifest.chip}.`);
         if (device.stubLoaded === true) throw new Error(`SYNC still reports a legacy stub on ${device.current_chip}; ROM download mode is required. Check BOOT/EN reset before retrying.`);
         // Explicitly check every ROM ACK: the generic downloadMem helper does not.
         for (const segment of manifest.segments) {
-            const bytes = device.base64ToByteArray(segment.data), block = 0x1800;
+            const bytes = device.base64ToByteArray(segment.data), block = device.ramBlockSize ?? 0x1800;
             await romCommand(device, 0x05, bytes.length, Math.ceil(bytes.length / block), block, segment.address);
             for (let offset = 0, sequence = 0; offset < bytes.length; offset += block, sequence++) {
                 const chunk = bytes.slice(offset, offset + block);
-                await romCommand(device, 0x07, chunk.length, sequence, 0, 0, chunk);
+                try { await romCommand(device, 0x07, chunk.length, sequence, 0, 0, chunk); }
+                catch (error) {
+                    throw new Error(`MEM_DATA ${manifest.chip} at 0x${(segment.address + offset).toString(16)}, block ${sequence}, ${chunk.length} bytes: ${error.message || error}`, { cause: error });
+                }
             }
         }
         await romCommand(device, 0x06, 0, manifest.entry);
@@ -240,7 +269,7 @@
             return transport;
         } catch (error) { transport.close(); throw error; }
     }
-    const api = { AcceleratedTransport, RPCError, acceleratedTargets, prepareAccelerated, startAccelerated, rpcEncode: encode, rpcDecode: decode };
+    const api = { AcceleratedTransport, RPCError, acceleratedTargets, prepareAccelerated, probeAccelerated, startAccelerated, rpcEncode: encode, rpcDecode: decode };
     if (typeof module === 'object' && module.exports) module.exports = api;
     else Object.assign(root.ESPIO ||= {}, api);
 })(globalThis);

@@ -183,13 +183,30 @@ test('invalid drive levels, input-only pins and classic mode issue no drive writ
     }
 });
 
-test('reserved, input-only, and invalid pin requests do not issue writes', async () => {
+test('input-only and invalid pin requests do not issue writes', async () => {
     const chip = chips.esp32, transport = new RecordingTransport(chip), controller = new GPIOController(transport, chip);
-    for (const [id, mode, pull] of [[6, 'input', 'none'], [1, 'input', 'none'], [34, 'output', 'none'], [34, 'input', 'up'], [99, 'input', 'none'], [0, 'spi', 'none']]) {
+    for (const [id, mode, pull] of [[34, 'output', 'none'], [34, 'input', 'up'], [99, 'input', 'none'], [0, 'spi', 'none']]) {
         await assert.rejects(controller.configure(id, mode, pull));
     }
     assert.equal(transport.writes.length, 0);
     await controller.close();
+});
+
+test('reserved pins are only observed on initialize/release but can be configured explicitly', async () => {
+    const chip = chips.esp32, transport = new RecordingTransport(chip), controller = new GPIOController(transport, chip);
+    assert.ok(chip.pins.find(pin => pin.id === 6).reserved);
+    await controller.initialize([6]);
+    assert.equal(controller.pins.get(6).mode, 'observe');
+    assert.equal(transport.writes.length, 0);
+    await controller.sample();
+    assert.notEqual(controller.pins.get(6).read, null);
+    await controller.release();
+    assert.equal(transport.writes.length, 0);
+    await controller.initialize([6]);
+    await controller.configure(6, 'output', 'none', 1);
+    assert.equal(controller.pins.get(6).mode, 'output');
+    assert.ok(transport.writes.length > 0);
+    await controller.release(); await controller.close();
 });
 
 test('input readback is independent of the requested output, with one read per bank', async () => {

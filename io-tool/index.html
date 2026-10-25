@@ -32,7 +32,7 @@
     <script src="i2c-registers.js?v=0.8.0-ui4" defer></script>
     <script src="i2c-ui.js?v=0.8.0-ui4" defer></script>
     <script src="ldo4.js?v=0.8.0-ui4" defer></script>
-    <script src="gpio.js?v=0.8.0-ui4" defer></script>
+    <script src="gpio.js?v=0.8.0-ui9" defer></script>
     <script src="peripheral.js?v=0.8.0-ui4" defer></script>
     <script src="fuses.js?v=0.8.0-ui4" defer></script>
     <script src="fuses-ui.js?v=0.8.0-ui4" defer></script>
@@ -42,7 +42,7 @@
     <script src="flash.js?v=0.8.0-ui4" defer></script>
     <script src="flash-ui.js?v=0.8.0-ui4" defer></script>
 
-    <script src="app.js?v=0.8.0-ui4" defer></script>
+    <script src="app.js?v=0.8.0-ui8" defer></script>
 </head>
 <body>
     <header class="topbar">
@@ -58,6 +58,7 @@
                     <label><input type="radio" name="connection-baud" value="921600">921600 Baud</label>
                     <div class="menu-separator"></div>
                     <label><input id="classic-stub" type="checkbox">Classic stub</label>
+                    <label translate="no" title="Skip the automatic bootloader reset. The chip must already be in bootloader mode; SYNC and stub loading still run."><input id="no-bootloader" type="checkbox">Don't enter bootloader mode</label>
                 </div>
             </div>
             <button id="disconnect" hidden>Trennen &amp; Reset</button>

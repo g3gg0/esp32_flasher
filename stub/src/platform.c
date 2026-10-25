@@ -6,6 +6,10 @@
 #include "soc/efuse_reg.h"
 #include "soc/soc_caps.h"
 #include "soc/uart_reg.h"
+#if CONFIG_IDF_TARGET_ESP32S3
+#include "soc/io_mux_reg.h"
+#include "soc/usb_serial_jtag_reg.h"
+#endif
 #if defined(__riscv)
 #include "riscv/rv_utils.h"
 #endif
@@ -81,6 +85,26 @@ int platform_register_allowed(uint32_t address, int write) {
     /* Same peripheral register surface needed by the existing GPIO/ADC layer.
        RAM, code, flash and unaligned addresses are deliberately excluded. */
     return !(address & 3) && address >= STUB_REG_START && address < STUB_REG_END;
+}
+
+void platform_prepare_register_write(uint32_t address, uint32_t value, uint32_t mask) {
+#if CONFIG_IDF_TARGET_ESP32S3
+    /* Only an explicit GPIO function selection takes ownership of the USB
+       pads. Startup and unrelated register writes preserve USB transport.
+       Use the target SDK symbols: the S3 USB block is NOT at the C3 address. */
+    if ((address == IO_MUX_GPIO19_REG || address == IO_MUX_GPIO20_REG) &&
+        (mask & MCU_SEL_M) == MCU_SEL_M &&
+        ((value & MCU_SEL_M) >> MCU_SEL_S) == PIN_FUNC_GPIO) {
+        uint32_t pulls = address == IO_MUX_GPIO19_REG
+            ? USB_SERIAL_JTAG_DM_PULLUP | USB_SERIAL_JTAG_DM_PULLDOWN
+            : USB_SERIAL_JTAG_DP_PULLUP | USB_SERIAL_JTAG_DP_PULLDOWN;
+        REG_CLR_BIT(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_USB_PAD_ENABLE);
+        REG_SET_BIT(USB_SERIAL_JTAG_CONF0_REG, USB_SERIAL_JTAG_PAD_PULL_OVERRIDE);
+        REG_CLR_BIT(USB_SERIAL_JTAG_CONF0_REG, pulls);
+    }
+#else
+    (void)address; (void)value; (void)mask;
+#endif
 }
 
 void platform_identity(void *packet) {

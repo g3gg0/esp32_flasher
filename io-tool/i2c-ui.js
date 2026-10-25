@@ -21,7 +21,7 @@
             if (d.sda === d.scl) return 'SDA und SCL benötigen verschiedene GPIOs.';
             for (const id of [d.sda, d.scl]) {
                 const pin = chip.pins.find(p => p.id === id), owner = ctx.controller()?.pinOwners.get(id);
-                if (!pins.includes(id) || !pin?.output || pin.reserved || (owner && !(live() && host.pinStates.has(id)))) return `GPIO${id} ist nicht frei verfügbar${owner ? ` (${owner})` : ''}.`;
+                if (!pins.includes(id) || !pin?.output || pin.mux == null || (owner && !(live() && host.pinStates.has(id)))) return `GPIO${id} ist nicht frei verfügbar${owner ? ` (${owner})` : ''}.`;
             }
             return '';
         }

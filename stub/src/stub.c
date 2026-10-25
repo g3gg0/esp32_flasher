@@ -81,6 +81,7 @@ static void dispatch(uint32_t size, int malformed) {
         } else {
             volatile uint32_t *reg = (void *)(uintptr_t) cmd->address;
             if (cmd->operation == RPC_REGISTEROPERATIONS_WRITE) {
+                platform_prepare_register_write(cmd->address, cmd->value, cmd->mask);
                 *reg = cmd->mask == UINT32_MAX ? cmd->value : (*reg & ~cmd->mask) | (cmd->value & cmd->mask);
                 if (cmd->delay_us) platform_delay(cmd->delay_us);
             } else response.value = *reg;

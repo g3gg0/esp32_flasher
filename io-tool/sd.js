@@ -54,7 +54,7 @@
                 continue;
             }
             const pin = chip.pins.find(pin => pin.id === id);
-            if (!Number.isInteger(id) || !pin || pin.reserved || !pin.output || !pins.has(id)) throw new Error(`${role.toUpperCase()}: GPIO${id} ist nicht verfügbar.`);
+            if (!Number.isInteger(id) || !pin || pin.mux == null || !pin.output || !pins.has(id)) throw new Error(`${role.toUpperCase()}: GPIO${id} ist nicht verfügbar.`);
             if (used.has(id)) throw new Error(`GPIO${id} ist mehrfach zugewiesen.`);
             used.add(id); mapped[role] = id;
         }

@@ -137,6 +137,13 @@ aligned addresses in the target register window are accepted; the post-write
 delay is bounded to 100000 µs. This supports the existing GPIO/ADC code. It
 does not itself accelerate their polling.
 
+On ESP32-S3, an explicit REGC GPIO-function selection for GPIO19/20 also
+releases the shared USB PHY pads in the embedded platform layer. It uses
+the SDK's USB register definitions, disables USB pad ownership and overrides
+the selected line's USB pulls with disabled pulls. Startup and observation
+preserve USB transport; explicitly taking these pins can disconnect native USB.
+The browser does not configure the USB registers.
+
 All targets advertise I2C, SPI and PWM/LEDC in addition to registers. P4/S3
 also advertise SDMMC. RMT is implemented except on C2/C61; UART/I2S
 return UNSUPPORTED. The browser checks capability bits before selecting an

@@ -8,6 +8,9 @@ int platform_rx(uint8_t *byte) { (void)byte; return 1; }
 void platform_tx(uint8_t byte) { putchar(byte); }
 void platform_flush(void) {}
 void platform_delay(uint32_t us) { (void)us; }
+void platform_prepare_register_write(uint32_t address, uint32_t value, uint32_t mask) {
+    (void)address; (void)value; (void)mask;
+}
 uint32_t platform_cycles(void) {
 #ifdef RPC_RMT_TEST
     extern uint32_t rmt_test_cycles(void);return rmt_test_cycles();

@@ -28,7 +28,7 @@
                 const used = new Set();
                 for (const role of roles) {
                     const id = config[role], pin = c.chip.pins.find(p => p.id === id);
-                    if (!Number.isInteger(id) || !c.pins.has(id) || !pin || pin.reserved || (role !== 'miso' && !pin.output) || used.has(id) || c.pinOwners.has(id)) throw new Error(`${role.toUpperCase()}: GPIO nicht verfügbar oder bereits belegt.`);
+                    if (!Number.isInteger(id) || !c.pins.has(id) || !pin || pin.mux == null || (role !== 'miso' && !pin.output) || used.has(id) || c.pinOwners.has(id)) throw new Error(`${role.toUpperCase()}: GPIO nicht verfügbar oder bereits belegt.`);
                     used.add(id);
                 }
                 for (const session of c.peripheralSessions) if (session.kind === this.kind && session.config.port === this.config.port) throw new Error(`${this.kind}: Controller/Kanal bereits belegt.`);
