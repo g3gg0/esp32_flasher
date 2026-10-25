@@ -137,12 +137,31 @@ aligned addresses in the target register window are accepted; the post-write
 delay is bounded to 100000 µs. This supports the existing GPIO/ADC code. It
 does not itself accelerate their polling.
 
-On ESP32-S3, an explicit REGC GPIO-function selection for GPIO19/20 also
-releases the shared USB PHY pads in the embedded platform layer. It uses
-the SDK's USB register definitions, disables USB pad ownership and overrides
-the selected line's USB pulls with disabled pulls. Startup and observation
-preserve USB transport; explicitly taking these pins can disconnect native USB.
+An explicit REGC GPIO-function selection also releases USB pad ownership in
+`src/gpio_pad.c`, using each target's SDK pin and register definitions:
+
+| Target | USB D- / D+ GPIOs |
+| --- | --- |
+| ESP32-C3 | 18 / 19 |
+| ESP32-C5 | 13 / 14 |
+| ESP32-C6, C61 | 12 / 13 |
+| ESP32-H2 | 26 / 27 |
+| ESP32-S3 | 19 / 20 |
+| ESP32-S2 | 19 / 20 (OTG, RTC controller pad override) |
+| ESP32-P4 | 24 / 25 (Serial/JTAG), 26 / 27 (OTG) |
+
+The hook disables the shared PHY pad function and overrides the selected
+line's USB pulls with disabled pulls. P4 follows IDF's default PHY routing
+(PHY0 to Serial/JTAG, PHY1 to OTG); exchanged PHY routing is not handled.
+Startup and observation preserve USB transport; explicitly taking these pins
+can disconnect native USB. ESP32 and C2 have no native USB pads to release.
 The browser does not configure the USB registers.
+
+`python3 -m unittest discover -s tests -p test_gpio_pad.py` executes the actual
+hook with all ten targets' SDK headers against mapped register memory. It
+checks explicit ownership, preservation of unrelated fields and addresses
+from the independently generated register inventory. This is a host test,
+not an electrical test of the target hardware.
 
 All targets advertise I2C, SPI and PWM/LEDC in addition to registers. P4/S3
 also advertise SDMMC. RMT is implemented except on C2/C61; UART/I2S
