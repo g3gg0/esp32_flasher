@@ -44,6 +44,9 @@ dieselbe Tabelle für englische Locales aufgelöst. Bei zusammengesetzten Texten
 und Bestätigungsdialogen `ESPIO.i18n.t(text)` verwenden. Eingabewerte, Code und
 mit `translate="no"` markierte Daten werden nicht verändert. Weitere Sprachen
 können als `ESPIO.locales.<Sprachcode>` vor `i18n.js` geladen werden.
+Scan-Fortschritt wird als vollständiger Satz übersetzt, einschließlich
+Treiberstufe und Versuchszähler (z. B. „GPIO19: Treiberstufe D2 messen
+(Versuch 4 von 4)...“), nicht als nachträglich zusammengesetzte Textfragmente.
 
 Gezielte Prüfungen:
 

@@ -3,6 +3,10 @@
     // English source text -> German translation; {0}, {1}, ... preserve dynamic values.
     const messages = {
     "Drive strength": "Treiberstufe",
+    "Drive strength D{0}": "Treiberstufe D{0}",
+    "Internal pulls": "Interne Pull-Widerstände",
+    "Observe only": "Nur beobachten",
+    "Measuring GPIO{0}: {1} (attempt {2} of {3})...": "GPIO{0}: {1} messen (Versuch {2} von {3})...",
     "D0 · Weak": "D0 · Schwach",
     "D3 · Strong": "D3 · Stark",
     "Drive strength requires an output-capable pin and a level from 0 to 3.": "Die Treiberstufe benötigt einen ausgangsfähigen Pin und eine Stufe von 0 bis 3.",

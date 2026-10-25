@@ -986,12 +986,12 @@
         try {
             await current.scanUsage(ids, { method, settleMs: Number($('scan-settle').value), loadProfile: scanMetadata.loadProfile, signal: scanAbort.signal,
                 onPhase: (id, phase, { attempt = 1, maxAttempts = 4 } = {}) => {
-                    const stage = phase.replace(/ (low|high|return-low|idle|observe)$/, '').replace(/^pull$/, 'Pulls').replace(/^idle$/, 'High-Z').replace(/^drive /, 'Treiber ');
-                    const message = `GPIO${id} · ${stage} · Versuch ${attempt}/${maxAttempts}`;
+                    const stage = phase.replace(/ (low|high|return-low|idle|observe)$/, '').replace(/^pull$/, 'Internal pulls').replace(/^idle$/, 'High-Z').replace(/^observe$/, 'Observe only').replace(/^drive /, 'Drive strength ');
+                    const message = t(`Measuring GPIO${id}: ${stage} (attempt ${attempt} of ${maxAttempts})...`);
                     if (message === lastStage) return;
                     lastStage = message;
-                    $('scan-state').textContent = `GPIO${id} · ${stage}`;
-                    $('scan-progress').textContent = `${message} messen …`;
+                    $('scan-state').textContent = `GPIO${id} · ${t(stage)}`;
+                    $('scan-progress').textContent = message;
                 },
                 onResult: result => { scanResults.push(result); }
             });

@@ -26,6 +26,26 @@ test('joined tooltips, newlines and source data survive round trips', () => {
     assert.equal(i18n.locale, 'en');
 });
 
+test('scan progress translates the whole sentence without consuming the attempt denominator', () => {
+    for (const [stage, german] of [
+        ['Drive strength D2', 'Treiberstufe D2'],
+        ['Internal pulls', 'Interne Pull-Widerstände'],
+        ['High-Z', 'High-Z'],
+        ['Observe only', 'Nur beobachten']
+    ]) {
+        const english = `Measuring GPIO19: ${stage} (attempt 4 of 4)...`;
+        const translated = `GPIO19: ${german} messen (Versuch 4 von 4)...`;
+        i18n.setLocale('en', false);
+        assert.equal(i18n.t(english), english);
+        i18n.setLocale('de', false);
+        assert.equal(i18n.t(english), translated);
+        assert.equal(i18n.t(translated), translated, 'DOM observer must not reinterpret translated output');
+        i18n.setLocale('en', false);
+        assert.equal(i18n.t(translated), english);
+        assert.equal(i18n.t(i18n.t(translated)), english);
+    }
+});
+
 test('all board descriptions and human pin notes have German translations', () => {
     i18n.setLocale('de', false);
     for (const board of require('../configs/boards.js').boards) {
