@@ -104,6 +104,10 @@ In einer bestehenden Verbindung schaltet `ESPIO.setPacketLogging(false)` die
 Paketlogs ohne Reset oder Neuverbinden aus; `ESPIO.setPacketLogging(true)`
 aktiviert sie wieder. Das ist eine begrenzte Diagnoseausgabe, kein vollständiger
 Paketmitschnitt.
+GPIO-Konfigurations- und Pegelwechsel erzeugen keine Erfolgsmeldung im
+Statusbanner; Pegel und Modus stehen im Pin-Panel. Fehler werden weiterhin
+angezeigt. Die Board-Karten bleiben beim kurzfristigen Sperren/Freigeben der
+Bedienung erhalten, statt bei jedem GPIO-Klick neu aufgebaut zu werden.
 
 ## Signale und Grenzen
 

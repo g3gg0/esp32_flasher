@@ -133,10 +133,17 @@
     function exposedPins() { return [...new Set([...board.pins.map(pin => pin.gpio), ...(board.back?.pins || []).map(pin => pin.gpio), ...(board.extra || [])].filter(id => id !== null))]; }
     function supported(fn) { if (['flash','fuses'].includes(fn.id)) return !chip.readOnlyGPIO; return chip.peripherals.some(block => fn.blocks.includes(block.id)); }
 
+    let devicesKey = '';
     function renderDevices() {
         $('preview-chip').value = chip.id;
         $('preview-chip').disabled = session !== 'offline' || busy;
         $('chip-badge').textContent = `${chip.name} · ${session === 'offline' ? 'Vorschau' : session === 'demo' ? 'Simulation' : 'RAM-Stub'}`;
+        const key = `${chip.id}:${board.id}:${ESPIO.i18n.locale}`;
+        if (devicesKey === key) {
+            for (const button of $('board-cards').children) button.disabled = busy || operation;
+            return;
+        }
+        devicesKey = key;
         $('board-cards').replaceChildren();
         for (const config of availableBoards()) {
             const button = document.createElement('button');
@@ -665,8 +672,6 @@
         operation = true; updateControls();
         try {
             await current.configure(id, mode, pull, old?.level ?? 0, driveStrength);
-            const usbPadOverride = chip.id === 'esp32s3' && (id === 19 || id === 20);
-            status(`${usbPadOverride ? 'Native USB-PHY freigegeben · ' : ''}GPIO${id} · ${labels[mode]} · ${pull === 'none' ? 'Floating' : pull === 'up' ? 'Pull-up' : 'Pull-down'}${mode === 'output' ? ` · ${current.pins.get(id).level ? 'HIGH' : 'LOW'}` : ''}`);
         } catch (error) { await failure(error); }
         finally { operation = false; updateControls(); }
     }
@@ -674,9 +679,7 @@
         if (!controller || operation || busy || !controller.running) return;
         operation = true; updateControls();
         try {
-            const check = await controller.setLevel(id, level);
-            const observed = check ? ` · OUT=${check.latch} OE=${check.enabled} PAD=${check.pad} USB_PAD=${check.usbPadEnabled} USB_PULL_OVR=${check.usbPullOverride} USB_DM_PULLS=${check.usbDmPulls} USB_DP_PULLS=${check.usbDpPulls} MAT=${hex(check.matrix)} MUX=${hex(check.mux)} PIN=${hex(check.pinConfig)}` : '';
-            status(`${session === 'demo' ? 'SIMULATION ' : ''}GPIO${id} OUTPUT ${level ? 'HIGH' : 'LOW'} requested${observed}.`);
+            await controller.setLevel(id, level);
         }
         catch (error) { await failure(error); }
         finally { operation = false; updateControls(); }
