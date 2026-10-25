@@ -36,7 +36,6 @@ async function wait(expression) {
 }
 const $ = id => `document.getElementById('${id}')`;
 async function exercisePeripherals(backend) {
-    await evaluate(`document.querySelector('[data-peripheral=\"gpio\"]').click()`);
     await evaluate(`window.busPins=ESPIO.chips[window.peerChip].pins.filter(p=>!p.reserved&&p.output).slice(0,4).map(p=>p.id);`);
     await evaluate(`document.querySelector('[data-peripheral="i2c"]').click();for(const [i,role] of ['sda','scl'].entries()){const s=document.getElementById('i2c-'+role);s.value=String(busPins[i]);s.dispatchEvent(new Event('change'));}document.getElementById('i2c-apply').click();`);
     await wait(`${$('i2c-state')}.textContent.startsWith('AKTIV') && !${$('i2c-release')}.disabled`);
@@ -207,6 +206,7 @@ try {
     await wait(`${$('load-accelerated')}.textContent === ESPIO.i18n.t('Accelerated stub active') && ${$('status')}.textContent.includes('SYNC')`);
     await wait(`document.querySelector('[data-peripheral="fuses"]') && !document.querySelector('[data-peripheral="fuses"]').disabled`);
     assert.equal(await evaluate(`!!document.querySelector('[data-peripheral="uart"], [data-peripheral="i2s"]')`),false);
+    assert.equal(await evaluate(`!!document.querySelector('[data-peripheral="gpio"], [data-peripheral="adc"]')`), false, 'GPIO and ADC use the pin inspector and measurement selector');
     await evaluate(`document.querySelector('[data-peripheral="fuses"]').click()`);
     assert.equal(await evaluate(`${$('fuses-panel')}.hidden || ${$('fuses-read')}.disabled`),false,'FUSES must open directly after accelerated handoff without GPIO or board clicks');
     assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('1.8'));
@@ -258,7 +258,7 @@ try {
     await evaluate(`window.nativeObjectURL=URL.createObjectURL;URL.createObjectURL=blob=>{window.fuseExport=blob;return nativeObjectURL(blob);};window.nativeAnchorClick=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){};${$('fuses-export')}.click();URL.createObjectURL=nativeObjectURL;HTMLAnchorElement.prototype.click=nativeAnchorClick;`);
     assert.equal(await evaluate(`fuseExport.text().then(s=>JSON.parse(s).records.length)`),5);
     console.log(`PASS: ${chip} FUSES renders device-defined TLVs, exact MAC/128-bit ID, an unknown chip-specific field, filtering and JSON export.`);
-    await evaluate(`document.querySelector('[data-peripheral="gpio"]').click();window.loadPin=ESPIO.chips[window.peerChip].pins.find(p=>!p.reserved&&p.output&&ESPIO.adcProfiles[window.peerChip]?.channels[p.id]&&p.id%3===1)||ESPIO.chips[window.peerChip].pins.find(p=>p.id===4&&!p.reserved&&p.output)||ESPIO.chips[window.peerChip].pins.find(p=>!p.reserved&&p.output);document.querySelector('[data-pin="'+loadPin.id+'"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));${$('scan-target')}.value='selected';${$('scan-settle')}.value='50';${$('scan-load-profile')}.checked=true;${$('scan-start')}.click();`);
+    await evaluate(`window.loadPin=ESPIO.chips[window.peerChip].pins.find(p=>!p.reserved&&p.output&&ESPIO.adcProfiles[window.peerChip]?.channels[p.id]&&p.id%3===1)||ESPIO.chips[window.peerChip].pins.find(p=>p.id===4&&!p.reserved&&p.output)||ESPIO.chips[window.peerChip].pins.find(p=>!p.reserved&&p.output);document.querySelector('[data-pin="'+loadPin.id+'"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));${$('scan-target')}.value='selected';${$('scan-settle')}.value='50';${$('scan-load-profile')}.checked=true;${$('scan-start')}.click();`);
     await wait(`${$('scan-state')}.textContent === 'FERTIG' && !${$('scan-start')}.disabled`);
     assert.equal(await evaluate(`${$('scan-results')}.querySelectorAll('.load-xy [data-level="1"]').length`),5);
     assert.equal(await evaluate(`${$('scan-results')}.querySelectorAll('.load-xy [data-level="0"]').length`),5);

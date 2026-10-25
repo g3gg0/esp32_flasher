@@ -338,13 +338,13 @@
         }
     }
     function availablePeripheralFunctions() {
-        const all=[{ id:'gpio',name:'GPIO' },...(ESPIO.ldo4Profiles[chip.id]?[{id:'ldo4',name:'LDO4',blocks:['pmu']}]:[]),...functions];
-        const modules={ldo4:'REGISTERS',flash:'FLASH',fuses:'FUSES',i2c:'I2C',spi:'SPI',sd:'SDMMC',rmt:'RMT',pwm:'PWM',adc:'CAPTURE'};
-        return all.filter(fn=>fn.id==='gpio'||accelerated()&&!!modules[fn.id]&&transport.supports(modules[fn.id])&&(fn.id!=='adc'||!!adcProfiles[chip.id])&&(fn.id!=='sd'||!!sdProfiles[chip.id]));
+        const all=[...(ESPIO.ldo4Profiles[chip.id]?[{id:'ldo4',name:'LDO4',blocks:['pmu']}]:[]),...functions];
+        const modules={ldo4:'REGISTERS',flash:'FLASH',fuses:'FUSES',i2c:'I2C',spi:'SPI',sd:'SDMMC',rmt:'RMT',pwm:'PWM'};
+        return all.filter(fn=>accelerated()&&!!modules[fn.id]&&transport.supports(modules[fn.id])&&(fn.id!=='sd'||!!sdProfiles[chip.id]));
     }
     let peripheralButtonsKey='';
     function renderPeripheralButtons() {
-        const available=availablePeripheralFunctions(),selectionChanged=!available.some(fn=>fn.id===peripheral);
+        const available=availablePeripheralFunctions(),selectionChanged=peripheral!=='gpio'&&!available.some(fn=>fn.id===peripheral);
         if(selectionChanged)peripheral='gpio';
         const key=[chip.id,available.map(fn=>fn.id).join(','),peripheral,busy,operation].join(':');
         if(key===peripheralButtonsKey)return false;
