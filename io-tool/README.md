@@ -97,6 +97,13 @@ und ROM-Befehle; beschleunigte RPC-Anfragen werden als `Raw SLIP payload`
 protokolliert. In DevTools auch die Stufe **Verbose/Debug** einblenden.
 Alternativ aktiviert `localStorage['espio.debug']='1'` das Logging dauerhaft;
 `localStorage.removeItem('espio.debug')` deaktiviert diese Einstellung wieder.
+Im I/O-Tool sind Debug-Ausgaben auf 20 Meldungen pro Sekunde plus einer
+Zusammenfassung ausgelassener Meldungen begrenzt: unbegrenzte Paketlogs bei
+Live-Polling können die DevTools-Konsole überlasten und lange UI-Aussetzer erzeugen.
+In einer bestehenden Verbindung schaltet `ESPIO.setPacketLogging(false)` die
+Paketlogs ohne Reset oder Neuverbinden aus; `ESPIO.setPacketLogging(true)`
+aktiviert sie wieder. Das ist eine begrenzte Diagnoseausgabe, kein vollständiger
+Paketmitschnitt.
 
 ## Signale und Grenzen
 

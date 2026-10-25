@@ -712,7 +712,20 @@ class ESPFlasher {
      */
     constructor(options = {}) {
         this.devMode = options.devMode || false;
-        this.logDebug = options.logDebug || ((...args) => { });
+        const debugLogger = options.logDebug || ((...args) => { });
+        const debugLimit = options.maxDebugLogsPerSecond ?? 0;
+        if (!Number.isInteger(debugLimit) || debugLimit < 0) throw new Error('Invalid debug log rate limit.');
+        let debugWindow = 0, debugCount = 0, debugSkipped = 0;
+        this.logDebug = debugLimit ? (...args) => {
+            const now = performance.now();
+            if (now - debugWindow >= 1000) {
+                debugWindow = now; debugCount = 0;
+                if (debugSkipped) debugLogger(`[Debug] ${debugSkipped} messages suppressed (rate limit).`);
+                debugSkipped = 0;
+            }
+            if (debugCount++ < debugLimit) debugLogger(...args);
+            else debugSkipped++;
+        } : debugLogger;
         this.logError = options.logError || ((...args) => { });
         this.logWarning = options.logWarning || ((...args) => { });
         this.logMessage = options.logMessage || ((...args) => { });
@@ -773,6 +786,13 @@ class ESPFlasher {
         /* Persistent writer + queued writes to avoid WritableStream lock contention */
         this._activeWriter = null;
         this._writeChain = Promise.resolve();
+    }
+
+    setPacketLogging(enabled) {
+        if (typeof enabled !== 'boolean') throw new Error('Packet logging requires a boolean.');
+        this.logPackets = enabled;
+        this.devMode = enabled;
+        this.slipLayer.logPackets = enabled;
     }
 
     /**

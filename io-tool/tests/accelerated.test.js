@@ -27,6 +27,48 @@ function fixture(handler, options = {}) {
 const manifest = chip => JSON.parse(fs.readFileSync(path.join(__dirname, '../../stub', chip, 'stub.json'), 'utf8'));
 const fetchManifest = value => async () => ({ ok: true, json: async () => structuredClone(value) });
 
+test('debug log budget bounds polling bursts and reports dropped logs each second', t => {
+    let now = 0;
+    t.mock.method(performance, 'now', () => now);
+    const logs = [], errors = [];
+    const device = new ESPFlasher({
+        maxDebugLogsPerSecond: 20, logDebug: (...args) => logs.push(args),
+        logError: error => errors.push(error)
+    });
+    for (let i = 0; i < 10000; i++) device.logDebug('packet', i);
+    assert.equal(logs.length, 20);
+    now = 999; device.logDebug('still limited');
+    assert.equal(logs.length, 20);
+    now = 1000; device.logDebug('next window');
+    assert.equal(logs.length, 22);
+    assert.match(logs[20][0], /9981 messages suppressed/);
+    assert.deepEqual(logs[21], ['next window']);
+    device.logError('not rate limited');
+    assert.deepEqual(errors, ['not rate limited']);
+    for (const limit of [-1, 0.5, NaN]) assert.throws(() => new ESPFlasher({ maxDebugLogsPerSecond: limit }), /rate limit/);
+    const unlimited = new ESPFlasher({ logDebug: (...args) => logs.push(args) });
+    for (let i = 0; i < 30; i++) unlimited.logDebug('unlimited');
+    assert.equal(logs.length, 52);
+});
+
+test('packet logging can be switched during an RPC session without reopening or resetting', async () => {
+    const { device, transport, sent } = fixture(packet =>
+        Buffer.from(packet.slice(0, 4)).toString() === 'SYNC'
+            ? identity() : rpcEncode('register_response', { value: 42 }));
+    device.openPort = device.hardReset = async () => assert.fail('logging must not reconnect/reset');
+    await transport.sync('esp32c3');
+    for (const enabled of [true, false, true]) {
+        device.setPacketLogging(enabled);
+        assert.equal(device.logPackets, enabled);
+        assert.equal(device.devMode, enabled);
+        assert.equal(device.slipLayer.logPackets, enabled);
+        assert.equal(await transport.read(0x60004000), 42);
+        assert.equal(transport.closed, false);
+    }
+    assert.equal(sent.length, 4);
+    assert.throws(() => device.setPacketLogging('false'), /boolean/);
+});
+
 test('running stub probe identifies the target and reuses RPC without ROM commands or upload', async () => {
     const { device, sent } = fixture(packet => Buffer.from(packet.slice(0, 4)).toString() === 'SYNC' ? identity('esp32s3') : rpcEncode('register_response', { value: 123 }));
     device.sync = device.hardReset = device.downloadStub = async () => assert.fail('probe must not call ROM/flasher setup');

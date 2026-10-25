@@ -20,6 +20,10 @@
     ];
     let chip = chips.esp32c3, board = boardConfigs.boards.find(item => item.chip === chip.id), selectedPin = 0;
     let flasher = null, transport = null, controller = null;
+    ESPIO.setPacketLogging = enabled => {
+        if (!flasher) throw new Error('No active serial connection.');
+        flasher.setPacketLogging(enabled);
+    };
     let session = 'offline', busy = false, operation = false, disconnecting = false;
     let planned = null, peripheral = 'gpio', layout = [], mapHeight = 560;
     let catalog = null, catalogRequest = 0, boardRequest = 0, renderedFrame = 0;
@@ -290,13 +294,18 @@
             pin.g.classList.toggle('selected', selectedPin === pin.id);
             pin.g.classList.toggle('high', state?.read != null && state.read >= .5);
             pin.g.classList.toggle('reserved-pin', !!pinReason(pin.id));
-            pin.g.querySelector('title').textContent = [`GPIO${pin.id}`, board.notes?.[pin.id], pinReason(pin.id)].filter(Boolean).join(' · ');
+            const title = pin.g.querySelector('title');
+            const titleText = [`GPIO${pin.id}`, board.notes?.[pin.id], pinReason(pin.id)].filter(Boolean).map(t).join(' · ');
+            if (title.textContent !== titleText) title.textContent = titleText;
             const role = peripheralRole(pin.id);
             pin.g.classList.toggle('sd-pin', !!sdRole(pin.id)); pin.g.classList.toggle('i2c-pin', !!i2cPanel.role(pin.id));
-            const label = pin.g.querySelector('text'); if (label) label.textContent = `IO${pin.id}${role ? ` · ${role.toUpperCase()}` : ''}`;
-            pin.g.setAttribute('aria-pressed', String(selectedPin === pin.id));
+            const label = pin.g.querySelector('text'), labelText = `IO${pin.id}${role ? ` · ${role.toUpperCase()}` : ''}`;
+            if (label && label.textContent !== labelText) label.textContent = labelText;
+            const pressed = String(selectedPin === pin.id);
+            if (pin.g.getAttribute('aria-pressed') !== pressed) pin.g.setAttribute('aria-pressed', pressed);
             pin.toggle.hidden = state?.mode !== 'output'; pin.toggle.disabled = busy || operation || !controller?.running || controller?.pinOwners.has(pin.id);
-            pin.toggle.textContent = state?.level ? '1' : '0';
+            const levelText = state?.level ? '1' : '0';
+            if (pin.toggle.textContent !== levelText) pin.toggle.textContent = levelText;
         }
     }
     function renderFunctions() {
@@ -341,12 +350,17 @@
         }
         $('inspector-help').textContent = owner ? `${owner} steuert diesen Pin. Zum Umkonfigurieren zuerst den Port freigeben.` : reason && state?.mode === 'observe' ? 'Reservierter Pin: wird nur gelesen und beim Scan aller GPIOs übersprungen. Eine explizite Änderung kann Flash/USB/Konsole stören.' : !controller ? 'Zum Steuern mit Hardware verbinden oder die Demo starten.' : controller.scanning ? 'Usage-Scan läuft. Die vorherige Konfiguration wird anschließend wiederhergestellt.' : !controller.running ? 'Messung angehalten. Fortsetzen, um Pins zu bedienen.' : isAnalog() ? 'Grün: ADC-Rohwert. Rot: Output-Sollwert 0/1 als Skalenenden, keine kalibrierte Spannung.' : 'Änderungen werden sofort angewendet. Grün liest immer den tatsächlichen digitalen Pinpegel zurück.';
         const bank = chip.gpio.banks[Math.floor(selectedPin / 32)];
-        $('pin-registers').replaceChildren();
         const input = chip.gpio.inputOverrides?.[selectedPin]?.address ?? bank.input;
-        for (const [name, value] of [['IO MUX', pin.mux], ['MATRIX OUT', chip.gpio.matrix == null ? null : chip.gpio.matrix + selectedPin * 4],
+        const registers = [['IO MUX', pin.mux], ['MATRIX OUT', chip.gpio.matrix == null ? null : chip.gpio.matrix + selectedPin * 4],
             ['GPIO PIN', selectedPin === 16 && chip.id === 'esp8266' ? 0x60000790 : chip.gpio.pinConfig + selectedPin * 4],
-            ['INPUT BANK', input], ['OUT SET', chip.readOnlyGPIO ? null : bank.set], ['OUT CLEAR', chip.readOnlyGPIO ? null : bank.clear]]) {
-            const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = name; dd.textContent = value == null ? '—' : hex(value); $('pin-registers').append(dt, dd);
+            ['INPUT BANK', input], ['OUT SET', chip.readOnlyGPIO ? null : bank.set], ['OUT CLEAR', chip.readOnlyGPIO ? null : bank.clear]];
+        const registerKey = JSON.stringify(registers), registerList = $('pin-registers');
+        if (registerList.dataset.registerKey !== registerKey) {
+            registerList.dataset.registerKey = registerKey;
+            registerList.replaceChildren();
+            for (const [name, value] of registers) {
+                const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = name; dd.textContent = value == null ? '—' : hex(value); registerList.append(dt, dd);
+            }
         }
     }
     function availablePeripheralFunctions() {
@@ -522,7 +536,8 @@
             device = new ESPFlasher({ initialBaudRate: Number($('baud').value), skipBootloaderReset, logMessage: log, logWarning: log, logError: log,
                 ramBlockSize: 0x1800, ramCommandTimeout: 2000,
                 writeChunkSize: 0,
-                logPackets: debugPackets, devMode: debugPackets, logDebug: debugPackets ? (...args) => console.debug('[ESPFlasher]', ...args) : undefined });
+                logPackets: debugPackets, devMode: debugPackets, maxDebugLogsPerSecond: 20,
+                logDebug: (...args) => console.debug('[ESPFlasher]', ...args) });
             device.slipLayer.logPackets = debugPackets;
             flasher = device;
             // Invoke the port chooser within the original click's user activation.
