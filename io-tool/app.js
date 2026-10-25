@@ -143,7 +143,8 @@
             if (config.image) {
                 const drawing = svg('svg', { viewBox: '0 0 64 72', 'aria-hidden': 'true' }, thumb);
                 const ratio = config.crop.width / config.crop.height;
-                photo(drawing, config, (64 - 66 * ratio) / 2, 3, 66 * ratio, 66);
+                const height = Math.min(66, 58 / ratio), width = height * ratio;
+                photo(drawing, config, (64 - width) / 2, (72 - height) / 2, width, height);
             } else {
                 const icon = document.createElement('span'); icon.className = 'raw-icon'; icon.textContent = 'IC'; thumb.append(icon);
             }
@@ -173,7 +174,7 @@
         const placements = [];
         let bx, by, bw, bh, bottom;
         if (board.image) {
-            bw = board.id === 'p4-eth' ? 190 : 300;
+            bw = board.displayWidth ?? 300;
             bx = (1000 - bw) / 2;
             bottom = 45;
             for (const [index, view] of [board, ...(board.back ? [board.back] : [])].entries()) {

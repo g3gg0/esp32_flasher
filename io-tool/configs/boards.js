@@ -205,12 +205,12 @@
         },
         {
             id: 'toniebox-esp32', chip: 'esp32s3', name: 'Toniebox ESP32', subtitle: "ESP32-S3 - debug and peripheral pins",
-            image: 'assets/toniebox-pcb.jpg', imageSize: { width: 800, height: 600 }, crop: { x: 130, y: 65, width: 550, height: 470 }, maskBackground: true, maskBackgroundTolerance: 3,
-            pins: columns([...Array(22).keys()], [...Array(23)].map((_, index) => index + 26), 130, 680, 90, 40),
+            image: 'assets/toniebox-pcb.jpg', imageSize: { width: 1272, height: 1040 }, crop: { x: 0, y: 0, width: 1272, height: 1040 }, displayWidth: 500, maskBackground: true, maskBackgroundTolerance: 3,
+            pins: columns([...Array(22).keys()], [...Array(23)].map((_, index) => index + 26), 0, 1272, 14, 46),
             notes: {"0":"BOOT; Jumper J100","1":"TRF7962A SPI CS","2":"TRF7962A SPI MOSI","3":"TRF7962A SPI MISO","4":"TRF7962A SPI Clock","5":"I2C SDA LIS3DH/DAC3100","6":"I2C SCL LIS3DH/DAC3100","7":"Wake input: button or charger present; HIGH = neither present","8":"Charger voltage ADC; 100k/100k divider (voltage = reading x 2)","9":"Battery voltage ADC; 100k/33k divider (approximately reading x 4)","10":"DAC3100 DIN","11":"DAC3100 BCLK","12":"DAC3100 WCLK","13":"TRF7962A IRQ","14":"LIS3DH IRQ","17":"Blue LED","18":"Green LED","19":"Red LED","20":"Big Ear, LOW = active","21":"Small Ear, LOW = active","26":"DAC3100 Reset, HIGH = active","33":"MicroSD: DAT2","34":"MicroSD: DAT3","35":"MicroSD: CLK","36":"MicroSD: DAT0","37":"MicroSD: DAT1","38":"MicroSD: CMD; J102","39":"JTAG TCK; J102","40":"JTAG TDO; J102","41":"JTAG TDI; J102","42":"JTAG TMS; J102","43":"UART TX; J103","44":"UART RX; J103","45":"Supply LIS3DH/DAC/blue LED; HIGH = active","46":"J101; GPIO at Debug/Test connector","47":"Supply SD-/NFC; LOW = active","48":"DAC3100: GPIO1"},
             source: "https://tonies-wiki.revvox.de/docs/wiki/esp32/pinout/",
             attribution: 'PCB photo: Gambrius Tech Blog; pin assignment: Toniebox Hacking Wiki',
-            description: "Toniebox ESP32 variant with ESP32-S3. GPIO markers use a generic package layout. The photo shows an earlier CC3200 board and is not a pad reference. Pin notes document the ESP32 variant: NFC, audio, LEDs, ear buttons, battery monitoring and microSD."
+            description: "Toniebox ESP32 variant with ESP32-S3. GPIO markers use a generic package layout."
         },
         {
             id: 'ai-s3', chip: 'esp32s3', name: 'AI-S3', subtitle: '36 GPIOs - 2 x 22 pins - USB + UART',
@@ -235,7 +235,7 @@
         },
         {
             id: 'p4-eth', chip: 'esp32p4', name: 'ESP32-P4-ETH', subtitle: 'Waveshare - 40-pin header - Ethernet',
-            image: 'assets/p4-pinout.jpg', imageSize: { width: 960, height: 969 }, crop: { x: 239, y: 85, width: 223, height: 849 },
+            image: 'assets/p4-pinout.jpg', imageSize: { width: 960, height: 969 }, crop: { x: 239, y: 85, width: 223, height: 849 }, displayWidth: 190,
             pins: columns([54, 19, 'GND', 18, 17, 16, 15, 'GND', 14, 6, 5, 4, 'GND', 3, 2, 8, 7, 'GND', 24, 25],
                 ['VBUS', 'VSYS', 'GND', 'EN', '3V3', 20, 21, 'GND', 22, 23, 'RUN', 26, 'GND', 27, 32, 33, 46, 'GND', 47, 48], 254, 446, 153, 27),
             notes: {"7":"I2C SDA to the codec and accessory bus","8":"I2C SCL to the codec and accessory bus","9":"I2S data to the speaker codec","10":"I2S word select (LRCK)","11":"I2S microphone data","12":"I2S bit clock","13":"I2S master clock","28":"Ethernet RMII RXDV","29":"Ethernet RMII RXD0","30":"Ethernet RMII RXD1","31":"Ethernet MDC","34":"Ethernet RMII TXD0","35":"Ethernet RMII TXD1; BOOT button","37":"UART0 TX / CH343P bridge","38":"UART0 RX / CH343P bridge","39":"SD Data 0; LDO4 power domain, separate supply required","40":"SD Data 1; LDO4 power domain, separate supply required","41":"SD Data 2; LDO4 power domain, separate supply required","42":"SD Data 3; LDO4 power domain, separate supply required","43":"SD CLK; LDO4 power domain, separate supply required","44":"SD CMD; LDO4 power domain, separate supply required","45":"SD enable (active LOW); LDO4 power domain, separate supply required","46":"LDO4 power domain, separate supply required","47":"LDO4 power domain, separate supply required","48":"LDO4 power domain, separate supply required","49":"Ethernet RMII TX_EN","50":"Ethernet RMII REF_CLK","51":"Ethernet PHY reset","52":"Ethernet MDIO","53":"Audio amplifier enable"},
