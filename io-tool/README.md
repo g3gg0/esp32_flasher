@@ -25,6 +25,37 @@ Validierung steht für den neuen RPC-DMA-Pfad noch aus.
 
 ## Starten
 
+Die Boardliste und der Quellenabgleich vom 25.10.2026 stehen in
+[BOARD_AUDIT.md](BOARD_AUDIT.md). Jedes Board enthält seine vollständige
+Beschreibungs-URL als `source`; ergänzende Herstellerunterlagen stehen in
+`documentation`. Pinnotizen sind englisch und enden ohne Punkt.
+
+Die Oberfläche wählt anhand der Browser-Locale Deutsch oder Englisch. Die
+Sprachauswahl oben schaltet ohne Verbindungsabbruch um; `?lang=de` beziehungsweise
+`?lang=en` überschreibt die Auswahl für den Seitenaufruf. Ohne passende
+Übersetzung wird Englisch verwendet. Eine ausdrücklich gewählte Sprache wird
+unter `esp-io-language` lokal gespeichert; „Automatisch“ folgt wieder dem Browser.
+
+Übersetzungen stehen zentral in [locales/de.js](locales/de.js) als
+`englischer Ausgangstext: deutsche Übersetzung`. `{0}`, `{1}` usw. erhalten
+dynamische Werte. [i18n.js](i18n.js) übersetzt Text und beschreibende Attribute
+auch nach dynamischen DOM-Änderungen. Bestehende deutsche UI-Texte werden über
+dieselbe Tabelle für englische Locales aufgelöst. Bei zusammengesetzten Texten
+und Bestätigungsdialogen `ESPIO.i18n.t(text)` verwenden. Eingabewerte, Code und
+mit `translate="no"` markierte Daten werden nicht verändert. Weitere Sprachen
+können als `ESPIO.locales.<Sprachcode>` vor `i18n.js` geladen werden.
+
+Gezielte Prüfungen:
+
+```powershell
+node --test --test-isolation=none io-tool/tests/board-sources.test.js io-tool/tests/i18n.test.js
+node io-tool/scripts/i18n-browser-check.mjs
+```
+
+Die Browserprüfung nutzt den lokalen Server auf Port 8088 und eine eigene
+Edge-Testinstanz mit DevTools-Port 9235. Sie prüft alle 19 Boards, automatische
+Locale-Erkennung, beide Sprachen und den Erhalt der Demo-Sitzung und Eingaben.
+
 Im **Repository-Stammverzeichnis**:
 
 ```powershell

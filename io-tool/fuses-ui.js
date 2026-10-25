@@ -18,7 +18,7 @@
         }
         $('fuses-read').addEventListener('click',async()=>{
             if(ctx.blocked())return;cancel=new AbortController();ctx.setOperation(true);$('fuses-progress').textContent='Fuses werden gelesen …';
-            try{const host=new root.ESPIO.FusesHost(ctx.controller()),records=await host.read({signal:cancel.signal,onProgress:(n,total)=>{$('fuses-progress').textContent=`${n} / ${total} Felder`;}});snapshot={time:new Date().toISOString(),records};draw();$('fuses-state').textContent=`${records.length} FELDER`;$('fuses-progress').textContent=`Gelesen · ${new Date().toLocaleTimeString('de-DE')} · ${records.length} vom Chip gelieferte Felder.`;}
+            try{const host=new root.ESPIO.FusesHost(ctx.controller()),records=await host.read({signal:cancel.signal,onProgress:(n,total)=>{$('fuses-progress').textContent=`${n} / ${total} Felder`;}});snapshot={time:new Date().toISOString(),records};draw();$('fuses-state').textContent=`${records.length} FELDER`;$('fuses-progress').textContent=`Gelesen · ${new Date().toLocaleTimeString(globalThis.ESPIO?.i18n?.locale)} · ${records.length} vom Chip gelieferte Felder.`;}
             catch(e){$('fuses-progress').textContent=e.message;ctx.log('FUSES:',e.message);}finally{cancel=null;ctx.setOperation(false);update();}
         });
         $('fuses-filter').addEventListener('input',draw);$('fuses-cancel').addEventListener('click',()=>{cancel?.abort();update();});

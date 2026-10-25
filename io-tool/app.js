@@ -2,6 +2,7 @@
     'use strict';
     const { chips, boardConfigs, GPIOController, RegisterTransport, DemoTransport, adcProfiles, SDHost, sdProfiles, sdCommands, sdRoles } = ESPIO;
     const $ = id => document.getElementById(id);
+    const t = text => ESPIO.i18n.t(text);
     const NS = 'http://www.w3.org/2000/svg';
     const hex = value => `0x${(value >>> 0).toString(16).padStart(8, '0')}`;
     const labels = { observe: 'BEOBACHTEN', input: 'INPUT', output: 'OUTPUT', unknown: 'FEHLER', sd: 'SD', i2c: 'I²C', spi: 'SPI', pwm: 'PWM', rmt: 'RMT' };
@@ -59,7 +60,7 @@
 
     function log(...parts) {
         const message = parts.map(part => typeof part === 'string' ? part : JSON.stringify(part)).join(' ');
-        logs.push(`${new Date().toLocaleTimeString('de-DE')}  ${message}`);
+        logs.push(`${new Date().toLocaleTimeString(globalThis.ESPIO?.i18n?.locale)}  ${message}`);
         if (logs.length > 250) logs.shift();
         $('log').textContent = logs.join('\n');
         $('log-count').textContent = String(logs.length);
@@ -155,7 +156,7 @@
             $('board-diagram-image').alt = `${board.name} Pinout-Diagramm mit vollständiger Pin-Tabelle`;
             $('board-diagram-credit').textContent = `${board.name} · ${board.attribution}`;
         }
-        $('board-source').textContent = `${board.attribution} ↗`;
+        $('board-source').textContent = `${t(board.attribution)} ↗`;
         $('pin-count').textContent = `${exposedPins().length} GPIOs`;
     }
 
@@ -306,7 +307,7 @@
         $('drive-level').textContent = state?.mode === 'output' ? state.level ? '1 / HIGH' : '0 / LOW' : '—';
         $('pin-function').value = planned || (state?.mode === 'output' ? 'output' : 'input');
         $('pin-pull').value = state?.pull || 'none';
-        $('pin-note').textContent = [reason, pin.strap ? 'Strapping-Pin: Pegel wird beim Reset ausgewertet.' : '', board.notes?.[selectedPin] || '', !pin.pulls ? 'Keine internen Pull-Widerstände.' : '', adcChannel(selectedPin) ? `ADC${adcChannel(selectedPin).unit}, Kanal ${adcChannel(selectedPin).channel}.` : isAnalog() ? 'Kein unterstützter ADC-Kanal; keine Analogmessung.' : ''].filter(Boolean).join(' ');
+        $('pin-note').textContent = [reason, pin.strap ? 'Strapping-Pin: Pegel wird beim Reset ausgewertet.' : '', board.notes?.[selectedPin] || '', !pin.pulls ? 'Keine internen Pull-Widerstände.' : '', adcChannel(selectedPin) ? `ADC${adcChannel(selectedPin).unit}, Kanal ${adcChannel(selectedPin).channel}.` : isAnalog() ? 'Kein unterstützter ADC-Kanal; keine Analogmessung.' : ''].filter(Boolean).map(t).join(' ');
         const disabled = !accelerated() || busy || operation || !!reason || !!owner || !controller || !controller.running;
         $('pin-function').disabled = disabled;
         $('pin-pull').disabled = disabled || !pin.pulls || !!planned;
@@ -691,7 +692,7 @@
         try { range = ESPIO.sectorRange(sdHost?.card, $('sd-download-start').value, $('sd-download-end').value); }
         catch (error) { rangeError = error.message; }
         if (range && !window.showSaveFilePicker && range.bytes > 64 * 1024 * 1024) rangeError = 'Für große Abbilder Chrome/Edge mit direkter Dateiausgabe verwenden; dieser Browser kann bis 64 MiB puffern.';
-        $('sd-download-range').textContent = rangeError || `LBA ${range.start.toLocaleString('de-DE')}–${range.end.toLocaleString('de-DE')} · ${range.sectors.toLocaleString('de-DE')} Sektoren · ${range.bytes.toLocaleString('de-DE')} Bytes · Rohabbild${!window.showSaveFilePicker ? ' · Browserpuffer bis 64 MiB' : ' · direkte Dateiausgabe'}`;
+        $('sd-download-range').textContent = rangeError || `LBA ${range.start.toLocaleString(globalThis.ESPIO?.i18n?.locale)}–${range.end.toLocaleString(globalThis.ESPIO?.i18n?.locale)} · ${range.sectors.toLocaleString(globalThis.ESPIO?.i18n?.locale)} Sektoren · ${range.bytes.toLocaleString(globalThis.ESPIO?.i18n?.locale)} Bytes · Rohabbild${!window.showSaveFilePicker ? ' · Browserpuffer bis 64 MiB' : ' · direkte Dateiausgabe'}`;
         $('sd-download').disabled = blocked || !ready || !!rangeError;
         for (const id of ['sd-download-start', 'sd-download-end', 'sd-download-all', 'sd-download-mib', 'sd-download-size']) $(id).disabled = busy || operation;
         $('sd-download-cancel').hidden = !sdDownloadActive;
@@ -708,12 +709,15 @@
         const target = $('sd-card'); target.replaceChildren(); target.hidden = !sdCardResult;
         if (!sdCardResult) return;
         const card = sdCardResult, heading = document.createElement('strong');
-        heading.textContent = `${card.simulation ? 'SIMULIERTE KARTE · ' : ''}${card.cid.product} · ${card.type}`;
+        heading.setAttribute('translate', 'no');
+        heading.textContent = `${card.simulation ? t('SIMULATED CARD - ') : ''}${card.cid.product} · ${card.type}`;
         if (card.simulation) heading.className = 'simulation'; target.append(heading);
         const dl = document.createElement('dl');
-        const capacity = card.csd.capacityBytes === null ? `CSD-Struktur ${card.csd.version} noch nicht dekodiert` : `${(card.csd.capacityBytes / 2 ** 30).toFixed(2)} GiB · ${card.csd.capacityBytes.toLocaleString('de-DE')} Bytes`;
+        const capacity = card.csd.capacityBytes === null ? `CSD-Struktur ${card.csd.version} noch nicht dekodiert` : `${(card.csd.capacityBytes / 2 ** 30).toFixed(2)} GiB · ${card.csd.capacityBytes.toLocaleString(globalThis.ESPIO?.i18n?.locale)} Bytes`;
         for (const [label, value] of [['Hersteller-ID', hex(card.cid.manufacturer)], ['OEM', card.cid.oem], ['Produkt / Revision', `${card.cid.product} / ${card.cid.revision}`], ['Seriennummer', card.cid.serial], ['Herstellung', `${String(card.cid.month).padStart(2, '0')}/${card.cid.year}`], ['Kapazität', capacity], ['RCA / OCR', `${hex(card.rca)} / ${hex(card.ocr)}`], ['Bus', `${card.width} Bit · ${card.clockHz / 1000} kHz`], ['Status', hex(card.status)]]) {
-            const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = value; dl.append(dt, dd);
+            const dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = value;
+            if (['OEM', 'Produkt / Revision', 'Seriennummer'].includes(label)) dd.setAttribute('translate', 'no');
+            dl.append(dt, dd);
         }
         target.append(dl);
     }
@@ -790,7 +794,7 @@
                 onProgress: p => {
                     const now = performance.now(); if (now - lastUI < 100 && p.completed !== p.sectors) return; lastUI = now;
                     $('sd-download-progress').value = p.bytesWritten;
-                    $('sd-download-status').textContent = `${prefix}${(p.bytesWritten / p.bytes * 100).toFixed(2)} % · ${p.completed.toLocaleString('de-DE')} / ${p.sectors.toLocaleString('de-DE')} Sektoren · ${(p.bytesPerSecond / 1024).toFixed(1)} KiB/s · ETA ${eta(p.etaSeconds)}`;
+                    $('sd-download-status').textContent = `${prefix}${(p.bytesWritten / p.bytes * 100).toFixed(2)} % · ${p.completed.toLocaleString(globalThis.ESPIO?.i18n?.locale)} / ${p.sectors.toLocaleString(globalThis.ESPIO?.i18n?.locale)} Sektoren · ${(p.bytesPerSecond / 1024).toFixed(1)} KiB/s · ETA ${eta(p.etaSeconds)}`;
                 }
             });
             finished = true;
@@ -807,7 +811,7 @@
             } catch (error) { failure = new Error(`Datei konnte nicht abgeschlossen werden: ${error.message}`); finished = false; }
             const count = saved / 512;
             $('sd-download-progress').value = saved;
-            $('sd-download-status').textContent = `${prefix}${finished ? 'Fertig' : failure?.name === 'AbortError' ? 'Abgebrochen' : 'Fehler'} · ${committed ? `${finished ? 'Abbild' : 'Teilabbild'} gespeichert: ${saved.toLocaleString('de-DE')} Bytes${count ? ` · LBA ${range.start}–${range.start + count - 1}` : ''}` : 'kein vollständiger Sektor gespeichert'}${failure && failure.name !== 'AbortError' ? ` · ${failure.message}` : ''}`;
+            $('sd-download-status').textContent = `${prefix}${finished ? 'Fertig' : failure?.name === 'AbortError' ? 'Abgebrochen' : 'Fehler'} · ${committed ? `${finished ? 'Abbild' : 'Teilabbild'} gespeichert: ${saved.toLocaleString(globalThis.ESPIO?.i18n?.locale)} Bytes${count ? ` · LBA ${range.start}–${range.start + count - 1}` : ''}` : 'kein vollständiger Sektor gespeichert'}${failure && failure.name !== 'AbortError' ? ` · ${failure.message}` : ''}`;
             sdAbort = null; sdDownloadActive = false; operation = false; renderSDLog(); renderSD(); updateControls();
         }
     }
@@ -1120,6 +1124,7 @@
         i2cPanel.abort();
         if (controller) { controller.running = false; clearTimeout(controller.timer); }
     });
+    window.addEventListener('esp-i18n-change', () => { renderDevices(); updateInspector(); updateMapState(); renderSDCard(); });
     renderDevices(); renderMap(); renderFunctions(); renderPeripherals(); updateControls();
     if (!navigator.serial) status('Hardwarezugriff benötigt Chrome/Edge mit Web Serial. Die Vorschau und Demo sind verfügbar.');
     requestAnimationFrame(frame);
