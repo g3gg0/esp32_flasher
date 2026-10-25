@@ -93,7 +93,10 @@
                 <p id="pin-note" class="pin-note"></p>
                 <label class="field">Funktion<select id="pin-function"><option value="input">GPIO · Input</option><option value="output">GPIO · Output</option></select></label>
                 <div id="planned-function" class="planned" hidden></div>
-                <label class="field" id="pull-field">Pull-Widerstand<select id="pin-pull"><option value="none">None / floating</option><option value="up">Pull-up</option><option value="down">Pull-down</option></select></label>
+                <div class="pin-electrical">
+                    <label class="field" id="pull-field">Pull-Widerstand<select id="pin-pull"><option value="none">None / floating</option><option value="up">Pull-up</option><option value="down">Pull-down</option></select></label>
+                    <label class="field" id="drive-field">Drive strength<select id="pin-drive"><option value="0">D0 · Weak</option><option value="1">D1</option><option value="2">D2</option><option value="3">D3 · Strong</option></select></label>
+                </div>
                 <div id="output-controls" hidden><p class="field-label">Ausgang setzen</p><div class="level-buttons"><button id="set-low">0 <small>LOW</small></button><button id="set-high">1 <small>HIGH</small></button></div></div>
                 <p class="inspector-help" id="inspector-help">Zum Steuern mit Hardware verbinden oder die Demo starten.</p>
                 <details class="register-details"><summary>GPIO-Register dieses Pins</summary><dl id="pin-registers"></dl></details>

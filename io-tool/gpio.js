@@ -78,7 +78,7 @@
         }
         analogRoute(id) { return (this.readMode === 'adc' || this.adcScanRouting) && this.adc?.channel(id) ? this.adc.profile.padRoute : null; }
         bank(id) { return this.analogRoute(id)?.bank || this.chip.gpio.banks[Math.floor(id / 32)]; }
-        async configurePin(id, mode = 'input', pull = 'none', level = 0) {
+        async configurePin(id, mode = 'input', pull = 'none', level = 0, driveStrength) {
             if (this.readOnly) throw new Error('Load the accelerated stub to configure GPIO.');
             const pin = this.descriptor(id);
             if (this.pinOwners.has(id)) throw new Error(`GPIO${id} wird von ${this.pinOwners.get(id)} verwendet; zuerst den Port freigeben.`);
@@ -86,46 +86,55 @@
             if (!['none', 'up', 'down'].includes(pull)) throw new Error('Unbekannter Pull-Widerstand.');
             if (mode === 'output' && !pin.output) throw new Error(`GPIO${id} ist nur als Eingang verfügbar.`);
             if (pull !== 'none' && !pin.pulls) throw new Error(`GPIO${id} hat keine internen Pull-Widerstände.`);
+            if (driveStrength !== undefined && (!Number.isInteger(driveStrength) || driveStrength < 0 || driveStrength > 3 || !pin.output)) throw new Error('Drive strength requires an output-capable pin and a level from 0 to 3.');
             level = level ? 1 : 0;
             const registers = this.chip.gpio, bank = this.bank(id), mask = bit(id);
             const route = this.analogRoute(id);
+            // ESP32 HP and LP IO MUX use FUN_DRV[11:10]. Read the current
+            // setting when omitted, so ordinary configuration preserves it.
+            const driveMask = 3 << 10, muxAddress = route ? route.mux + id * 4 : pin.mux;
+            // Release output before any read/configuration that could fail.
+            if (route) {
+                await this.transport.write(registers.banks[Math.floor(id / 32)].enableClear, mask);
+                await this.adc.set(bank.enable, 0, mask);
+            } else {
+                if (this.adc?.ready && this.adc.profile.padRoute && this.adc.channel(id)) await this.transport.write(this.adc.profile.padRoute.bank.enableClear, mask);
+                await this.transport.write(bank.enableClear, mask);
+            }
+            const strength = driveStrength ?? ((await this.transport.read(muxAddress) & driveMask) >>> 10);
+            const driveValue = strength << 10, writeDriveMask = driveStrength === undefined ? 0 : driveMask;
             if (route) {
                 // C6 analog pads belong to LP IO MUX (TRM 7.7.3). Use the
                 // LP driver/pulls/readback too, so ADC observes the same pad.
-                await this.transport.write(registers.banks[Math.floor(id / 32)].enableClear, mask);
-                await this.adc.set(bank.enable, 0, mask);
                 const output = mode === 'output' ? (level ? mask : 0) : await this.transport.read(bank.output);
                 await this.adc.set(bank.output, output, mask);
                 await this.adc.set(route.pinConfig + id * 4, 0, route.pinConfigMask);
                 const pullValue = pull === 'up' ? route.pullUp : pull === 'down' ? route.pullDown : 0;
-                await this.adc.set(route.mux + id * 4, route.muxGPIO | pullValue, route.muxMask);
+                await this.adc.set(muxAddress, route.muxGPIO | pullValue | driveValue, route.muxMask | writeDriveMask);
                 await this.adc.set(route.select, mask, mask);
                 if (mode === 'output') await this.transport.write(bank.enableSet, mask);
                 const old = this.pins.get(id);
-                this.pins.set(id, { id, mode, pull, level: mode === 'output' ? level : null, read: null,
+                this.pins.set(id, { id, mode, pull, driveStrength: strength, level: mode === 'output' ? level : null, read: null,
                     configuredAt: this.clock(), history: old?.history || new History() });
                 return;
             }
-            // Leave a high-impedance pin if any later operation fails.
-            if (this.adc?.ready && this.adc.profile.padRoute && this.adc.channel(id)) await this.transport.write(this.adc.profile.padRoute.bank.enableClear, mask);
-            await this.transport.write(bank.enableClear, mask);
             for (const route of pin.digitalRoute) await this.transport.write(route.address, 0, route.mask);
             await this.transport.write(registers.pinConfig + id * 4, 0, registers.pinConfigMask);
             await this.transport.write(registers.matrix + id * 4, registers.matrixGPIO, registers.matrixMask);
             const pullValue = pull === 'up' ? registers.pullUp : pull === 'down' ? registers.pullDown : 0;
-            await this.transport.write(pin.mux, registers.muxGPIO | pullValue, registers.muxMask);
+            await this.transport.write(muxAddress, registers.muxGPIO | pullValue | driveValue, registers.muxMask | writeDriveMask);
             if (mode === 'output') {
                 await this.transport.write(level ? bank.set : bank.clear, mask);
                 await this.transport.write(bank.enableSet, mask);
             }
             const old = this.pins.get(id);
-            this.pins.set(id, { id, mode, pull, level: mode === 'output' ? level : null, read: null,
+            this.pins.set(id, { id, mode, pull, driveStrength: strength, level: mode === 'output' ? level : null, read: null,
                 configuredAt: this.clock(), history: old?.history || new History() });
         }
-        configure(id, mode, pull = 'none', level = 0) {
+        configure(id, mode, pull = 'none', level = 0, driveStrength) {
             return this.queue.run(async () => {
                 if (this.pinOwners.has(id)) throw new Error(`GPIO${id} wird von ${this.pinOwners.get(id)} verwendet; zuerst den Port freigeben.`);
-                try { await this.configurePin(id, mode, pull, level); }
+                try { await this.configurePin(id, mode, pull, level, driveStrength); }
                 catch (error) {
                     // The old mode cannot be asserted after a partial transaction.
                     const state = this.pins.get(id);
@@ -235,7 +244,7 @@
                 if (mode !== this.readMode) {
                     this.readMode = mode;
                     if (this.adc?.profile.padRoute) {
-                        for (const state of [...this.pins.values()]) if (this.adc.channel(state.id)) await this.configurePin(state.id, state.mode, state.pull, state.level);
+                        for (const state of [...this.pins.values()]) if (this.adc.channel(state.id)) await this.configurePin(state.id, state.mode, state.pull, state.level, state.driveStrength);
                     }
                 }
                 if (mode === 'digital') await this.adc?.close();

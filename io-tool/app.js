@@ -53,8 +53,15 @@
 
     function gpioOption(id) {
         const pin = chip.pins.find(pin => pin.id === id);
-        const text = [`GPIO ${id}`, board.notes?.[id], pinReason(id) || (!pin.output ? 'nur Input' : '')].filter(Boolean).join(' · ');
-        const option = new Option(`GPIO ${id}${pinReason(id) ? ' · belegt' : !pin.output ? ' · Input' : ''}`, String(id)); option.title = text; option.disabled = !!pinReason(id) || !pin.output; return option;
+        const reason = pinReason(id), note = board.notes?.[id];
+        const option = new Option(`IO${id}`, String(id));
+        // Separate text nodes let the locale switch translate the board note
+        // independently, while keeping the pin number and separator unchanged.
+        if (note) option.append(' – ', document.createTextNode(note));
+        if (reason || !pin.output) option.append(' · ', document.createTextNode(reason ? 'belegt' : 'Input'));
+        option.title = [`IO${id}`, note, reason || (!pin.output ? 'nur Input' : '')].filter(Boolean).join(' · ');
+        option.disabled = !!reason || !pin.output;
+        return option;
     }
     function peripheralRole(id) { return controller?.pinOwners.get(id)?.startsWith('I²C') ? i2cPanel.role(id) : rmtPanel.role(id) || peripheralPanels.role(id) || sdRole(id) || i2cPanel.role(id); }
 
@@ -307,10 +314,12 @@
         $('drive-level').textContent = state?.mode === 'output' ? state.level ? '1 / HIGH' : '0 / LOW' : '—';
         $('pin-function').value = planned || (state?.mode === 'output' ? 'output' : 'input');
         $('pin-pull').value = state?.pull || 'none';
+        $('pin-drive').value = state?.driveStrength == null ? '' : String(state.driveStrength);
         $('pin-note').textContent = [reason, pin.strap ? 'Strapping-Pin: Pegel wird beim Reset ausgewertet.' : '', board.notes?.[selectedPin] || '', !pin.pulls ? 'Keine internen Pull-Widerstände.' : '', adcChannel(selectedPin) ? `ADC${adcChannel(selectedPin).unit}, Kanal ${adcChannel(selectedPin).channel}.` : isAnalog() ? 'Kein unterstützter ADC-Kanal; keine Analogmessung.' : ''].filter(Boolean).map(t).join(' ');
         const disabled = !accelerated() || busy || operation || !!reason || !!owner || !controller || !controller.running;
         $('pin-function').disabled = disabled;
         $('pin-pull').disabled = disabled || !pin.pulls || !!planned;
+        $('pin-drive').disabled = disabled || !pin.output || !!planned;
         $('planned-function').hidden = !planned;
         if (planned) $('planned-function').textContent = `${functions.find(fn => fn.id === planned)?.name}: vorbereitet, noch ohne Steuerung. Die aktuelle GPIO-Konfiguration bleibt aktiv.`;
         $('output-controls').hidden = state?.mode !== 'output';
@@ -592,12 +601,12 @@
         await current?.close();
         status('Verbindung verloren. Messung gestoppt; erneut verbinden.', 'error'); updateControls();
     }
-    async function changePin(mode, pull) {
+    async function changePin(mode, pull, driveStrength) {
         if (!controller || operation || busy || !controller.running) return;
         const current = controller, id = selectedPin, old = current.pins.get(id);
         operation = true; updateControls();
         try {
-            await current.configure(id, mode, pull, old?.level ?? 0);
+            await current.configure(id, mode, pull, old?.level ?? 0, driveStrength);
             status(`GPIO${id} · ${labels[mode]} · ${pull === 'none' ? 'Floating' : pull === 'up' ? 'Pull-up' : 'Pull-down'}${mode === 'output' ? ` · ${current.pins.get(id).level ? 'HIGH' : 'LOW'}` : ''}`);
         } catch (error) { await failure(error); }
         finally { operation = false; updateControls(); }
@@ -1053,6 +1062,7 @@
         else { planned = value; updateInspector(); }
     });
     $('pin-pull').addEventListener('change', () => changePin(controller?.pins.get(selectedPin)?.mode || 'input', $('pin-pull').value));
+    $('pin-drive').addEventListener('change', () => changePin(controller?.pins.get(selectedPin)?.mode || 'input', controller?.pins.get(selectedPin)?.pull || 'none', Number($('pin-drive').value)));
     $('set-low').addEventListener('click', () => changeLevel(selectedPin, 0));
     $('set-high').addEventListener('click', () => changeLevel(selectedPin, 1));
     $('pause').addEventListener('click', async () => {

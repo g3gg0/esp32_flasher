@@ -19,7 +19,7 @@
         }
         function render(selected){
             panel.hidden=selected!=='rmt';const d=draft();
-            $('rmt-pin').replaceChildren(new Option('GPIO auswählen',''));for(const id of ctx.pins().slice().sort((a,b)=>a-b))$('rmt-pin').add(ctx.gpioOption(id));
+            $('rmt-pin').replaceChildren(new Option('Bitte wählen …',''));for(const id of ctx.pins().slice().sort((a,b)=>a-b))$('rmt-pin').add(ctx.gpioOption(id));
             const count=['esp32'].includes(ctx.chip().id)?8:['esp32s2','esp32s3','esp32p4'].includes(ctx.chip().id)?4:2;
             $('rmt-port').replaceChildren();for(let i=0;i<count;i++)$('rmt-port').add(new Option(`TX ${i}`,i));if(d.port>=count)d.port=0;
             for(const key of ['pin','port','resolution','idle'])$('rmt-'+key).value=String(d[key]);update();

@@ -2,6 +2,10 @@
     'use strict';
     // English source text -> German translation; {0}, {1}, ... preserve dynamic values.
     const messages = {
+    "Drive strength": "Treiberstufe",
+    "D0 · Weak": "D0 · Schwach",
+    "D3 · Strong": "D3 · Stark",
+    "Drive strength requires an output-capable pin and a level from 0 to 3.": "Die Treiberstufe benötigt einen ausgangsfähigen Pin und eine Stufe von 0 bis 3.",
     "  IRQ(data)={0}": "  IRQ(Daten)={0}",
     " Completed write/erase steps remain in effect.": " Bereits abgeschlossene Schreib-/Löschschritte bleiben wirksam.",
     " Load profile: idle (High-Z), pulls, then all drive strengths up to the strongest, each LOW and HIGH.": " Lastprofil: Idle (High-Z) → Pulls → alle Treiberstufen bis zur stärksten, je LOW und HIGH.",

@@ -129,6 +129,60 @@ test('masking preserves unrelated IO MUX and RTC bits', async () => {
     await controller.close();
 });
 
+test('drive levels preserve unrelated mux bits, output level and later pull/mode changes on every writable chip', async () => {
+    for (const chip of Object.values(chips).filter(chip => !chip.readOnlyGPIO)) {
+        const pin = chip.pins.find(pin => !pin.reserved && pin.output && pin.pulls);
+        const transport = new RecordingTransport(chip), controller = new GPIOController(transport, chip);
+        const original = 0x80000800;
+        transport.registers.set(pin.mux, original);
+        await controller.initialize([pin.id]);
+        assert.equal(controller.pins.get(pin.id).driveStrength, 2, chip.id);
+        for (const strength of [0, 3, 1, 2]) {
+            transport.writes = [];
+            await controller.configure(pin.id, 'output', 'none', 1, strength);
+            assert.equal((transport.registers.get(pin.mux) >>> 10) & 3, strength, chip.id);
+            assert.equal(transport.registers.get(pin.mux) >>> 31, 1, chip.id);
+            const writes = transport.writes, bank = chip.gpio.banks[Math.floor(pin.id / 32)];
+            assert.equal(writes[0].address, bank.enableClear);
+            assert.equal(writes.at(-1).address, bank.enableSet);
+            await controller.configure(pin.id, 'output', 'up', 1);
+            assert.equal(controller.pins.get(pin.id).level, 1);
+            await controller.configure(pin.id, 'input', 'down');
+            assert.equal(controller.pins.get(pin.id).driveStrength, strength, chip.id);
+            assert.equal((transport.registers.get(pin.mux) >>> 10) & 3, strength, chip.id);
+        }
+        await controller.close();
+    }
+});
+
+test('C6 drive strength follows the ADC LP mux and returns to the digital HP mux', async () => {
+    const chip = chips.esp32c6, transport = new RecordingTransport(chip), controller = new GPIOController(transport, chip);
+    const pin = chip.pins.find(pin => pin.id === 3), route = controller.adc.profile.padRoute;
+    const lpMux = route.mux + pin.id * 4;
+    transport.registers.set(lpMux, 0x80000400);
+    await controller.configure(pin.id, 'output', 'up', 1, 3);
+    await controller.setReadMode('adc');
+    assert.equal((transport.registers.get(lpMux) >>> 10) & 3, 3);
+    await controller.configure(pin.id, 'output', 'down', 1, 0);
+    assert.equal(transport.registers.get(lpMux) >>> 31, 1);
+    assert.equal((transport.registers.get(lpMux) >>> 10) & 3, 0);
+    await controller.setReadMode('digital');
+    assert.equal((transport.registers.get(pin.mux) >>> 10) & 3, 0);
+    assert.equal(controller.pins.get(pin.id).driveStrength, 0);
+    assert.equal(controller.pins.get(pin.id).level, 1);
+    assert.equal(transport.registers.get(lpMux) >>> 0, 0x80000400);
+    await controller.close();
+});
+
+test('invalid drive levels, input-only pins and classic mode issue no drive writes', async () => {
+    for (const [id, strength, readOnly] of [[0, -1], [0, 4], [0, 1.5], [0, '2'], [34, 2], [0, 2, true]]) {
+        const transport = new RecordingTransport(chips.esp32), controller = new GPIOController(transport, chips.esp32, { readOnly });
+        await assert.rejects(controller.configure(id, 'input', 'none', 0, strength));
+        assert.equal(transport.writes.length, 0);
+        await controller.close();
+    }
+});
+
 test('reserved, input-only, and invalid pin requests do not issue writes', async () => {
     const chip = chips.esp32, transport = new RecordingTransport(chip), controller = new GPIOController(transport, chip);
     for (const [id, mode, pull] of [[6, 'input', 'none'], [1, 'input', 'none'], [34, 'output', 'none'], [34, 'input', 'up'], [99, 'input', 'none'], [0, 'spi', 'none']]) {

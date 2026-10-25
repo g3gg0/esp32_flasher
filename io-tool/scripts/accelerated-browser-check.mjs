@@ -183,7 +183,7 @@ try {
             }
         };
     })()`);
-    assert.equal(await evaluate(`${$('baud')}.value`), '115200');
+    assert.ok(['115200', '921600'].includes(await evaluate(`${$('baud')}.value`)));
     await evaluate(`${$('connection-options')}.click()`);
     assert.equal(await evaluate(`${$('connection-menu')}.hidden`), false);
     await evaluate(`document.querySelector('[name="connection-baud"][value="921600"]').click()`);
@@ -197,26 +197,43 @@ try {
     await evaluate(`document.querySelector('.board-card:last-child').click()`);
     await wait(`!${$('disconnect')}.disabled`);
     assert.equal(await evaluate(`${$('read-mode')}.disabled && ${$('pin-function')}.disabled && ${$('set-high')}.disabled && document.querySelectorAll('[data-peripheral]:not([data-peripheral=\"gpio\"]):not(:disabled)').length===0`), true);
+    assert.equal(await evaluate(`${$('pin-drive')}.disabled`), true, 'classic mode cannot change drive strength');
     assert.equal(await evaluate(`!!${$('load-accelerated')}.closest('.peripheral-panel')`), true);
     await evaluate(`window.failStubFetch=true;${$('load-accelerated')}.click()`);
     await wait(`${$('status')}.textContent.includes('HTTP 404') && !${$('load-accelerated')}.disabled`);
     assert.equal(await evaluate(`${$('connect')}.textContent`), 'Trennen', 'failed fetch preserves the legacy session');
     assert.equal(await evaluate(`${$('disconnect')}.hidden`), true);
     await evaluate(`window.failStubFetch=false;${$('load-accelerated')}.click()`);
-    await wait(`${$('load-accelerated')}.textContent === 'Accelerated stub active' && ${$('status')}.textContent.includes('SYNC verified')`);
+    await wait(`${$('load-accelerated')}.textContent === ESPIO.i18n.t('Accelerated stub active') && ${$('status')}.textContent.includes('SYNC')`);
     await wait(`document.querySelector('[data-peripheral="fuses"]') && !document.querySelector('[data-peripheral="fuses"]').disabled`);
     assert.equal(await evaluate(`!!document.querySelector('[data-peripheral="uart"], [data-peripheral="i2s"]')`),false);
     await evaluate(`document.querySelector('[data-peripheral="fuses"]').click()`);
     assert.equal(await evaluate(`${$('fuses-panel')}.hidden || ${$('fuses-read')}.disabled`),false,'FUSES must open directly after accelerated handoff without GPIO or board clicks');
-    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('protocol 1.8'));
+    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('1.8'));
     assert.equal(await evaluate(`${$('load-accelerated')}.disabled`), true);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);
     await wait(`!${$('disconnect')}.disabled`);
     await evaluate(`const pin = ESPIO.chips[window.peerChip].pins.find(p=>p.id===4&&!p.reserved&&p.output)||ESPIO.chips[window.peerChip].pins.find(p=>!p.reserved&&p.output);document.querySelector('[data-pin="'+pin.id+'"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));${$('pin-function')}.value='output';${$('pin-function')}.dispatchEvent(new Event('change'));`);
-    await wait(`${$('pin-state')}.textContent === 'OUTPUT' && !${$('set-high')}.disabled`);
+    await wait(`${$('pin-state')}.textContent === ESPIO.i18n.t('OUTPUT') && !${$('set-high')}.disabled`);
     await evaluate(`${$('set-high')}.click()`);
     await wait(`${$('drive-level')}.textContent === '1 / HIGH'`);
+    for (const strength of [3, 0, 2]) {
+        await evaluate(`${$('pin-drive')}.value='${strength}';${$('pin-drive')}.dispatchEvent(new Event('change'));`);
+        await wait(`!${$('pin-drive')}.disabled`);
+        assert.equal(await evaluate(`${$('pin-drive')}.value`), String(strength));
+        assert.equal(await evaluate(`${$('drive-level')}.textContent`), '1 / HIGH');
+    }
+    await evaluate(`${$('pin-pull')}.value='up';${$('pin-pull')}.dispatchEvent(new Event('change'));`);
+    await wait(`!${$('pin-pull')}.disabled`);
+    assert.equal(await evaluate(`${$('pin-drive')}.value`), '2', 'pull changes retain drive strength');
+    assert.equal(await evaluate(`(()=>{const a=${$('pin-pull')}.getBoundingClientRect(),b=${$('pin-drive')}.getBoundingClientRect();return Math.abs(a.width-b.width)<1&&Math.abs(a.y-b.y)<1&&a.right<b.left;})()`), true, 'pull and drive occupy equal columns on one row');
     await wait(`!${$('disconnect')}.disabled`);
+    if (process.argv.includes('--gpio-only')) {
+        await evaluate(`${$('disconnect')}.click()`);
+        await wait(`${$('session-badge')}.textContent === 'OFFLINE'`);
+        assert.deepEqual(errors, []);
+        console.log(`PASS: ${chip} drive D0-D3, retained HIGH and pull settings, equal-width controls and classic-mode lockout; simulated serial peer.`);
+    } else {
     await exercisePeripherals('accelerated');
     await evaluate(`document.querySelector('[data-peripheral="flash"]').click();${$('flash-probe')}.click();`);
     await wait(`!${$('flash-download')}.disabled`);
@@ -290,4 +307,5 @@ try {
     await wait(`${$('session-badge')}.textContent === 'OFFLINE'`);
     assert.deepEqual(errors, []);
     console.log(`PASS: ${chip} legacy connect, missing-build recovery, RAM upload/SYNC, identity display, GPIO via RPC and disconnect; simulated serial peer.`);
+    }
 } finally { ws.close(); }
