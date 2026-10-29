@@ -38,18 +38,21 @@
     }
     const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     function stepResponseHTML(result){
-        const r=result?.stepResponse;if(!r)return '';if(r.skipped)return `<p>${escape(r.skipped)}</p>`;
-        const width=600,height=270,left=45,right=15,top=22,bottom=42;
+        const r=result?.stepResponse;if(!r)return '';if(r.skipped)return `<section class="load-profile step-response"><h4>Step response</h4><p>${escape(r.skipped)}</p></section>`;
+        // Match the load-profile SVG's plot rectangle and shared typography.
+        const width=560,height=260,left=52,right=22,top=26,bottom=56;
         const minimum=Math.min(r.minDelayNs,...r.curves.flatMap(c=>c.points.map(p=>p.actualDelayNs))),maximum=Math.max(r.maxDelayUs*1000,...r.curves.flatMap(c=>c.points.map(p=>p.actualDelayNs)));
         const x=ns=>left+(Math.log10(Math.max(ns,minimum))-Math.log10(minimum))/(Math.log10(maximum)-Math.log10(minimum)||1)*(width-left-right),y=mean=>height-bottom-Math.max(0,Math.min(1,r.measurement==='digital'?(mean>=.5?1:0):mean/r.rawMax))*(height-top-bottom);
-        let svg=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Step response: voltage versus delay, logarithmic time axis">`;
-        for(const volts of [0,1.1,2.2,3.3]){const py=height-bottom-volts/3.3*(height-top-bottom);svg+=`<path d="M${left},${py}H${width-right}" stroke="#35414b"/><text x="${left-7}" y="${py+4}" text-anchor="end" fill="#9aa9b6" font-size="10">${volts.toFixed(1)} V</text>`;}
-        for(let ns=10**Math.ceil(Math.log10(minimum));ns<=maximum;ns*=10)svg+=`<text x="${x(ns)}" y="${height-23}" text-anchor="middle" fill="#9aa9b6" font-size="10">${ns<1e6?ns/1000+' µs':ns/1e6+' ms'}</text>`;
-        const colors={falling:['#a05b63','#bc626e','#d76e7e','#ed8c99','#ffb5c0'],rising:['#385f49','#47805c','#55a76c','#77cf8a','#b5f386']};
-        for(const c of r.curves){const color=colors[c.direction][c.mode];svg+=`<path d="${c.points.map((p,i)=>(i?'L':'M')+x(p.actualDelayNs).toFixed(2)+','+y(p.mean).toFixed(2)).join(' ')}" fill="none" stroke="${color}" stroke-width="1.7"/>`;for(const p of c.points)svg+=`<circle cx="${x(p.actualDelayNs)}" cy="${y(p.mean)}" r="2" fill="${color}"><title>${escape(c.direction+' '+c.label)}: ${(p.actualDelayNs/1000).toFixed(3)} µs (requested ${p.requestedDelayNs/1000} µs), ${((r.measurement==='digital'?(p.mean>=.5?1:0):p.mean/r.rawMax)*3.3).toFixed(3)} V</title></circle>`;}
-        svg+=`<text x="${width/2}" y="${height-5}" text-anchor="middle" fill="#9aa9b6" font-size="10">Actual edge → measurement delay (log)</text></svg>`;
-        const legend=r.curves.map(c=>`<span><i style="background:${colors[c.direction][c.mode]}"></i>${c.direction==='falling'?'↓':'↑'} ${escape(c.label)}</span>`).join('');
-        return `<section class="step-response"><strong>Step response · HIGH → LOW / LOW → HIGH</strong>${svg}<div class="step-legend">${legend}</div><p class="muted">Red: falling · Green: rising. Dark: pulls; brighter: D0–D3. ${r.repetitions} repeats; ${(r.settleUs/1000).toFixed(2)} ms settling at D3 before each edge. ${r.measurement==='adc'?'Nominal ADC scale 0–3.3 V, not voltage-calibrated. Conversion latency is included in the actual delay.':'Digital readback: LOW = 0 V, HIGH = 3.3 V (logic indicators).'}</p></section>`;
+        let svg=`<svg class="load-xy" viewBox="0 0 ${width} ${height}" role="img" aria-label="Step response: voltage versus delay, logarithmic time axis">`;
+        for(let i=0;i<=4;i++){const volts=3.3*i/4,py=height-bottom-i/4*(height-top-bottom);svg+=`<path class="load-grid" d="M${left},${py}H${width-right}"/><text x="${left-8}" y="${py+3}" text-anchor="end">${volts.toFixed(2)}</text>`;}
+        for(let ns=10**Math.ceil(Math.log10(minimum));ns<=maximum;ns*=10)svg+=`<path class="load-grid" d="M${x(ns)},${top}V${height-bottom}"/><text x="${x(ns)}" y="${height-bottom+19}" text-anchor="middle">${ns<1e6?ns/1000+' µs':ns/1e6+' ms'}</text>`;
+        svg+=`<path class="load-grid" d="M${left},${top}H${width-right}V${height-bottom}H${left}Z"/><text x="${left}" y="13">${r.measurement==='adc'?'Nominal voltage (V)':'Logic level (V)'}</text>`;
+        const colors={falling:['#2e6b83','#3c89ad','#51a9d3','#67c9ff','#a2dfff'],rising:['#2a704e','#38956a','#4db884','#68e8a5','#aff8d2']};
+        for(const c of r.curves){const color=colors[c.direction][c.mode];svg+=`<path d="${c.points.map((p,i)=>(i?'L':'M')+x(p.actualDelayNs).toFixed(2)+','+y(p.mean).toFixed(2)).join(' ')}" fill="none" stroke="${color}" stroke-width="2"/>`;for(const p of c.points)svg+=`<circle cx="${x(p.actualDelayNs)}" cy="${y(p.mean)}" r="3.5" fill="${color}"><title>${escape(c.direction+' '+c.label)}: ${(p.actualDelayNs/1000).toFixed(3)} µs (requested ${p.requestedDelayNs/1000} µs), ${((r.measurement==='digital'?(p.mean>=.5?1:0):p.mean/r.rawMax)*3.3).toFixed(3)} V</title></circle>`;}
+        svg+=`<text x="${left+(width-left-right)/2}" y="${height-9}" text-anchor="middle">Actual edge → measurement delay (log)</text></svg>`;
+        const legend=r.curves.map(c=>`<span style="--load-color:${colors[c.direction][c.mode]}">${c.direction==='falling'?'↓':'↑'} ${escape(c.label)}</span>`).join('');
+        const caption=r.measurement==='adc'?'ADC means per edge; logarithmic delay axis':'Digital readback per edge; logarithmic delay axis';
+        return `<section class="load-profile step-response"><h4>Step response · HIGH → LOW / LOW → HIGH</h4><p class="load-profile-caption">${caption}</p><div class="load-legend step-legend">${legend}</div>${svg}<p class="load-thresholds">${r.repetitions} repeats per point<br>${(r.settleUs/1000).toFixed(2)} ms settling at D3 before each edge<br>Requested delays: ${r.minDelayNs/1000} µs – ${r.maxDelayUs/1000} ms</p><small>Blue: falling · Green: rising. Dark: pulls; brighter: D0–D3.</small><small>${r.measurement==='adc'?'Nominal ADC scale 0–3.3 V, not voltage-calibrated. Conversion latency is included in the actual delay.':'Digital readback: LOW = 0 V, HIGH = 3.3 V (logic indicators).'}</small></section>`;
     }
     const api={stepDelays,stepOptions,measureStepResponse,stepResponseHTML};if(typeof module==='object'&&module.exports)module.exports=api;else Object.assign(root.ESPIO ||= {},api);
 })(globalThis);

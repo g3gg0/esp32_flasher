@@ -541,3 +541,21 @@ C61 reserves 11 KiB DRAM; C2 keeps 10 KiB and other targets keep 16 KiB, all
 including their 2 KiB stack. Builds still use ESP-IDF 6.1 and run exclusively
 from RAM. Obsolete RMT periph-clock calls were removed to match the installed
 6.1 LL API; the existing group-clock calls retain clock enable/disable behavior.
+
+
+### C6 ADC initialization and diagnostics (0.9.2)
+
+C6 calibration follows the installed IDF `esp_rom_hp_regi2c_esp32c6.c` patch,
+not the older RF ROM lookup-table layout: SAR block 0x69 is unmasked at bit 9,
+master selection is read at bit 11 per transaction, and no command bit 26 is
+used. The stub explicitly enables/forces the master clock, selects its 160 MHz
+source as the IDF bootloader does, and performs the SAR regi2c reset/power
+sequence. All changed clock, routing and power fields are restored on ADC
+release. C6 bus routing is handled natively even with a stale browser descriptor.
+
+ADC_INITIALIZE IO_ERROR replies preserve the eFuse version in detail bits 0-15.
+When failed_slot is not 65535, its high byte is the failure stage (1 read BUSY,
+2 write BUSY, 3 masked register readback) and its low byte is the analog register.
+Expected and observed bytes occupy detail bits 16-23 and 24-31. The host shows
+these fields without treating them as part of the eFuse version. The original
+0.5.0 initialization did not configure the master clock source explicitly.

@@ -2,6 +2,14 @@
     'use strict';
     // English source text -> German translation; {0}, {1}, ... preserve dynamic values.
     const messages = {
+    "ADC means per edge; logarithmic delay axis": "ADC-Mittelwerte je Flanke; logarithmische Zeitachse",
+    "Digital readback per edge; logarithmic delay axis": "Digitale Istwerte je Flanke; logarithmische Zeitachse",
+    "Nominal voltage (V)": "Nominale Spannung (V)",
+    "Logic level (V)": "Logikpegel (V)",
+    "{0} repeats per point": "{0} Wiederholungen je Messpunkt",
+    "{0} ms settling at D3 before each edge": "{0} ms Einschwingen mit D3 vor jeder Flanke",
+    "Requested delays: {0} µs – {1} ms": "Angeforderte Wartezeiten: {0} µs – {1} ms",
+    "Blue: falling · Green: rising. Dark: pulls; brighter: D0–D3.": "Blau: fallend · Grün: steigend. Dunkel: Pulls; heller: D0–D3.",
     "Toniebox ESP32 variant with ESP32-S3. GPIO markers use a generic package layout.": "Toniebox-ESP32-Variante mit ESP32-S3. GPIO-Markierungen verwenden ein allgemeines Chip-Layout.",
     "Red: falling · Green: rising. Dark: pulls; brighter: D0–D3. {0} repeats; {1} ms settling at D3 before each edge. {2}": "Rot: fallend · Grün: steigend. Dunkel: Pulls; heller: D0–D3. {0} Wiederholungen; {1} ms Einschwingen mit D3 vor jeder Flanke. {2}",
     "Nominal ADC scale 0–3.3 V, not voltage-calibrated. Conversion latency is included in the actual delay.": "Nominale ADC-Skala 0–3,3 V, nicht spannungskalibriert. Die tatsächliche Wartezeit enthält die ADC-Wandlungszeit.",
