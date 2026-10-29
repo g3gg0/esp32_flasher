@@ -57,10 +57,18 @@ async function exercisePeripherals(backend) {
     if (!['esp32c2','esp32c61'].includes(chip)) {
         await evaluate(`document.querySelector('[data-peripheral="rmt"]').click();${$('rmt-pin')}.value=String(busPins[0]);${$('rmt-pin')}.dispatchEvent(new Event('change'));${$('rmt-apply')}.click();`);
         await wait(`!${$('rmt-send')}.disabled`);
-        await evaluate(`${$('rmt-count')}.value='1365';${$('rmt-send')}.click()`);
+        await evaluate(`${$('rmt-pattern')}.value='rgb';${$('rmt-pattern')}.dispatchEvent(new Event('change'));${$('rmt-sequence')}.value='FF0000 '.repeat(1365);${$('rmt-send')}.click()`);
         await wait(`${$('rmt-result')}.textContent.startsWith('Gesendet')`);
         assert.ok((await evaluate(`${$('rmt-result')}.textContent`)).includes('32760'));
         assert.equal(await evaluate('serialPeer.rmtBytes'), 4095);
+        await evaluate(`${$('rmt-pattern')}.value='rainbow';${$('rmt-pattern')}.dispatchEvent(new Event('change'));${$('rmt-count')}.value='8';window.rmtStartCount=serialPeer.rmtSends;${$('rmt-send')}.click()`);
+        await wait(`serialPeer.rmtSends>=window.rmtStartCount+4 && !${$('rmt-stop')}.disabled`);
+        await evaluate(`${$('rmt-stop')}.click()`);await wait(`!${$('rmt-send')}.disabled && ${$('rmt-stop')}.hidden`);
+        const stopped=await evaluate('serialPeer.rmtSends');
+        await evaluate('new Promise(resolve=>setTimeout(resolve,50))');
+        assert.equal(await evaluate('serialPeer.rmtSends'),stopped);
+        await evaluate(`${$('rmt-send')}.click()`);await wait(`serialPeer.rmtSends>${stopped}`);
+        await evaluate(`${$('rmt-stop')}.click()`);await wait(`!${$('rmt-send')}.disabled`);
         await evaluate(`${$('rmt-release')}.click()`);await wait(`${$('rmt-release')}.hidden`);
     } else assert.equal(await evaluate(`!document.querySelector('[data-peripheral="rmt"]') || document.querySelector('[data-peripheral="rmt"]').disabled`), true);
     console.log(`PASS: ${chip} ${backend} I2C register table, SPI full duplex, LEDC duty and release.`);
@@ -117,7 +125,7 @@ try {
                         if(q.operation===2&&tag==='I2CC')data=Uint8Array.from({length:q.args[2]},(_,i)=>(q.data[0]||0)+i);
                         if(q.operation===2&&tag==='SPIC')data=Uint8Array.from(q.data,b=>b^255);
                         if(tag==='I2CC'&&q.operation===2&&q.data[0]===99){status=5;error=9;data=new Uint8Array();}
-                        if(tag==='RMTC'){if(q.operation===16){this.rmtSymbols=q.args[1];this.rmtBytes=0;}if(q.operation===17){if(q.args[0]!==this.rmtBytes)throw new Error('RMT upload offset');this.rmtBytes+=q.data.length;}if(q.operation===18){v[0]=this.rmtSymbols*q.args[0];v[1]=Math.ceil(v[0]/24);v[2]=v[0]*1.25+q.args[1];}}
+                        if(tag==='RMTC'){if(q.operation===16){this.rmtSymbols=q.args[1];this.rmtBytes=0;}if(q.operation===17){if(q.args[0]!==this.rmtBytes)throw new Error('RMT upload offset');this.rmtBytes+=q.data.length;}if(q.operation===18){this.rmtSends=(this.rmtSends||0)+1;v[0]=this.rmtSymbols*q.args[0];v[1]=Math.ceil(v[0]/24);v[2]=v[0]*1.25+q.args[1];}}
                         await this.processPacket(ESPIO.rpcEncode('peripheral_response',{status,error,operation:q.operation,port:q.port,actual_hz:q.args[0]||1000000,values:v},tag.slice(0,3)+'R',data));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'FUSC') {
                         const q=ESPIO.rpcDecode(packet,'peripheral_command','FUSC'),record=(name,type,bits,data)=>{const text=new TextEncoder().encode(name),r=new Uint8Array(8+text.length+data.length),v=new DataView(r.buffer);v.setUint16(0,r.length,true);r[2]=text.length;r[3]=type;v.setUint16(4,bits,true);v.setUint16(6,data.length,true);r.set(text,8);r.set(data,8+text.length);return r;};

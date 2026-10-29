@@ -32,6 +32,28 @@
         for(let i=0;i<count;i++){const h=((i/count+phase)%1+1)%1*6,x=1-Math.abs(h%2-1),c=h<1?[1,x,0]:h<2?[x,1,0]:h<3?[0,1,x]:h<4?[0,x,1]:h<5?[x,0,1]:[1,0,x];c.forEach((v,j)=>rgb[i*3+j]=Math.round(v*255*brightness));}
         return rgb;
     }
+    function animationDelay(ms,signal){
+        return new Promise(resolve=>{
+            const done=()=>{clearTimeout(timer);signal?.removeEventListener('abort',done);resolve();};
+            const timer=setTimeout(done,ms);
+            signal?.addEventListener('abort',done,{once:true});if(signal?.aborted)done();
+        });
+    }
+    async function animateRMTRainbow(host,{count,brightness=.08,idleUs=80,signal,onFrame=()=>{}}={},timing={now:()=>performance.now(),wait:animationDelay}){
+        const interval=10,cycle=256*interval,start=timing.now();let deadline=start,frames=0;
+        while(!signal?.aborted){
+            const sequence=ws2812Sequence(rainbowPattern(count,brightness,(timing.now()-start)/cycle),host.actualHz);
+            try{await host.send(sequence,{signal,idleUs});}
+            catch(error){if(signal?.aborted&&error.name==='AbortError')break;throw error;}
+            frames++;if(signal?.aborted)break;
+            onFrame({frames,elapsedMs:timing.now()-start});
+            // One outstanding frame only. Slow links skip missed deadlines;
+            // phase follows elapsed time, rather than slowing the color scroll.
+            deadline=Math.max(deadline+interval,timing.now());
+            await timing.wait(Math.max(0,deadline-timing.now()),signal);
+        }
+        return{frames,elapsedMs:timing.now()-start};
+    }
     class RMTHost extends PeripheralHost{
         constructor(controller){super(controller,'RMT');}
         send(sequence,{signal,repeat=1,idleUs=80}={}){
@@ -51,6 +73,6 @@
             },signal);
         }
     }
-    const api={RMTHost,rmtSymbol:symbol,packRMT,ws2812Sequence,rainbowPattern};
+    const api={RMTHost,rmtSymbol:symbol,packRMT,ws2812Sequence,rainbowPattern,animateRMTRainbow};
     if(node)module.exports=api;else Object.assign(root.ESPIO ||= {},api);
 })(globalThis);

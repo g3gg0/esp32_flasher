@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { RMTHost, rmtSymbol, packRMT, ws2812Sequence, rainbowPattern } = require('../rmt.js');
+const { RMTHost, rmtSymbol, packRMT, ws2812Sequence, rainbowPattern, animateRMTRainbow } = require('../rmt.js');
 
 test('WS2812 uses GRB, MSB first and defined pulse durations at 20 MHz', () => {
     const words = ws2812Sequence(Uint8Array.of(0x80, 0x01, 0), 20000000);
@@ -64,4 +64,41 @@ test('upload errors abort the staged sequence; malformed completion closes the s
     const b = hostFixture({ partial: true });await assert.rejects(b.host.send(sequence), /unvoll/);assert.equal(b.transport.closed, true);
     const cancelled = hostFixture(), abort = new AbortController();abort.abort();
     await assert.rejects(cancelled.host.send(sequence, { signal: abort.signal }), { name: 'AbortError' });assert.equal(cancelled.calls.length, 0);
+});
+
+test('rainbow updates every 10 ms, shifts colors and stops without another frame', async () => {
+    let now=0;const starts=[],sequences=[],cancel=new AbortController();
+    const host={actualHz:20000000,async send(sequence,{signal,idleUs}){
+        assert.equal(signal,cancel.signal);assert.equal(idleUs,80);
+        starts.push(now);sequences.push(sequence);now+=3;
+    }};
+    const result=await animateRMTRainbow(host,{count:8,signal:cancel.signal,onFrame({frames}){if(frames===4)cancel.abort();}},
+        {now:()=>now,async wait(ms){now+=ms;}});
+    assert.deepEqual(starts,[0,10,20,30]);assert.equal(result.frames,4);
+    assert.notDeepEqual(sequences[0],sequences[3]);
+});
+
+test('rainbow serializes slow frames and keeps its phase tied to elapsed time', async () => {
+    let now=0,inFlight=0;const starts=[],sequences=[],cancel=new AbortController();
+    const host={actualHz:20000000,async send(sequence){
+        assert.equal(++inFlight,1);starts.push(now);sequences.push(sequence);
+        await Promise.resolve();now+=25;inFlight--;
+    }};
+    await animateRMTRainbow(host,{count:8,signal:cancel.signal,onFrame({frames}){if(frames===3)cancel.abort();}},
+        {now:()=>now,async wait(ms){now+=ms;}});
+    assert.deepEqual(starts,[0,25,50]);
+    assert.deepEqual(sequences[2],ws2812Sequence(rainbowPattern(8,.08,50/2560),20000000));
+});
+
+test('rainbow cancellation wakes its timer and real transport errors stop the loop', async () => {
+    const cancel=new AbortController();let frames=0;
+    const host={actualHz:20000000,async send(){frames++;}};
+    await animateRMTRainbow(host,{count:8,signal:cancel.signal,onFrame(){queueMicrotask(()=>cancel.abort());}});
+    assert.equal(frames,1);
+    const stopped=new AbortController();stopped.abort();
+    await animateRMTRainbow(host,{count:8,signal:stopped.signal});assert.equal(frames,1);
+    await assert.rejects(animateRMTRainbow({actualHz:20000000,async send(){throw new Error('link lost');}},{count:8}),/link lost/);
+    const uploading=new AbortController();
+    const result=await animateRMTRainbow({actualHz:20000000,async send(){uploading.abort();throw new DOMException('cancelled','AbortError');}},{count:8,signal:uploading.signal});
+    assert.equal(result.frames,0);
 });

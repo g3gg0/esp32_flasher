@@ -613,6 +613,11 @@ alternating hardware RAM halves. Up to 4096 encoded bytes fit: 1024 arbitrary
 symbols or 32768 symbols using two pulse types (1365 WS2812 LEDs). Long streams
 require at least 1 microsecond per symbol. There is no WS2812 software fallback
 on chips without RMT. Actual clock frequency is shown after activation.
+Rainbow uses a continuous JavaScript animation with a 10 ms target interval
+and a 2.56-second color cycle. Start/Stop controls retain the final LED colors
+when stopped. Frames are serialized, with no backlog on slow links; serial
+throughput and browser scheduling can reduce the frame rate. RGB and custom
+symbol sequences remain single transmissions. No new stub version is needed.
 I2C/SPI pin lists are numerically sorted with compact labels and full pin
 descriptions in tooltips; control widths align in a responsive grid.
 
