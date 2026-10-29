@@ -559,3 +559,19 @@ When failed_slot is not 65535, its high byte is the failure stage (1 read BUSY,
 Expected and observed bytes occupy detail bits 16-23 and 24-31. The host shows
 these fields without treating them as part of the eFuse version. The original
 0.5.0 initialization did not configure the master clock source explicitly.
+
+### RMT clock negotiation and refill timing (0.9.3)
+
+RMT resolution is selected from the peripheral source and channel divider,
+independently of the CPU frequency. Previously the integer CPU/RMT ratio check
+reduced a C6 running at 53 MHz to 1 MHz despite requesting 20 MHz; WS2812's
+350 ns pulse then rounded to zero ticks in the browser. Streaming deadlines
+now compare the two clock domains using exact cross products, without an
+integer cycles-per-tick assumption or accumulated rounding error. The browser
+also explains when a negotiated resolution cannot represent WS2812 pulses.
+C6 refill timing reads the CPU source/divider through IDF LL, preserving
+fractional MHz that the ROM's whole-MHz frequency report cannot represent.
+
+Native streaming tests cover 53 MHz CPU / 20 MHz RMT and the H2's 32 MHz
+source, including long sequences, timeout and underrun handling. These tests
+do not replace checking the waveform or LED output on a physical board.

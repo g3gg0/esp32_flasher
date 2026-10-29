@@ -2,6 +2,7 @@
 #include <stdint.h>
 unsigned hw_rmt_count(void);
 unsigned hw_rmt_words(void);
+uint32_t hw_rmt_cpu_hz(void);
 void hw_rmt_info(unsigned channel,uint32_t values[8]);
 uint32_t hw_rmt_config(unsigned channel,unsigned hz,unsigned idle);
 void hw_rmt_prepare(unsigned channel);

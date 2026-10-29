@@ -47,3 +47,25 @@ class RMTTest(unittest.TestCase):
     def test_invalid_zero_duration_and_clock_budget_fail_before_start(self):
         for word in (0,0x8000,0x10000):
             r=self.exchange(self.upload(struct.pack('<I',word),1))[-1];self.assertNotEqual(struct.unpack_from('<I',r,8)[0],0)
+    def test_ws2812_clock_and_refills_with_fractional_cpu_ratio(self):
+        # C6 ROM download clock is 53 MHz: 20 MHz RMT must still be selected.
+        # Odd-sized symbols expose rounding drift over many ring refills.
+        n=1024;pattern=[0x00128007,0x000b800e]*512
+        data=struct.pack('<'+'I'*n,*pattern)
+        for source,actual in ((40000000,20000000),(32000000,16000000)):
+            for cpu in (1,53,160):
+                for mode in ('normal','underrun','timeout'):
+                    commands=self.upload(data,n)
+                    commands[0]=request('RMT',1,args=[20000000,0])
+                    r=self.exchange(commands,{'RMT_CPU_US':str(cpu),'RMT_SOURCE_HZ':str(source),'RMT_MODE':mode,'RMT_WORDS':'48','RMT_EXPECT':''.join(f'{w:08x}' for w in pattern),'RMT_COUNT':str(n),'RMT_TOTAL':str(n)})
+                    self.assertEqual(struct.unpack_from('<I',r[0],20)[0],actual)
+                    status=struct.unpack_from('<I',r[-1],8)[0]
+                    self.assertEqual(status==0,mode=='normal')
+                    self.assertEqual(struct.unpack_from('<I',r[-1],24)[0],n if mode=='normal' else 0)
+    def test_long_stream_uses_cpu_hz_instead_of_rounded_rom_mhz(self):
+        n=32768;data=bytes([0x55])*4096;dictionary=[0x00128007,0x000b800e]
+        commands=self.upload(data,n,1,dictionary)
+        commands[0]=request('RMT',1,args=[20000000,0])
+        r=self.exchange(commands,{'RMT_CPU_US':'53','RMT_CPU_HZ':'53333333','RMT_WORDS':'48','RMT_BITS':data.hex(),'RMT_EXPECT':''.join(f'{w:08x}' for w in dictionary),'RMT_COUNT':str(n),'RMT_TOTAL':str(n)})[-1]
+        self.assertEqual(struct.unpack_from('<I',r,8)[0],0)
+        self.assertEqual(struct.unpack_from('<I',r,24)[0],n)

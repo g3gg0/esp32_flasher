@@ -11,6 +11,14 @@ test('WS2812 uses GRB, MSB first and defined pulse durations at 20 MHz', () => {
     assert.throws(() => rainbowPattern(1366));
 });
 
+test('WS2812 explains an unsuitable negotiated resolution instead of emitting zero-tick pulses', () => {
+    for (const hz of [1000000, 0, NaN, Infinity]) {
+        assert.throws(() => ws2812Sequence(Uint8Array.of(1, 2, 3), hz), /WS2812:.*20000000/);
+    }
+    const h2 = ws2812Sequence(Uint8Array.of(1, 2, 3), 16000000);
+    assert.equal(packRMT(h2).totalTicks, 24 * 20);
+});
+
 test('two-symbol packing retains bit order, RAW uses little endian and both enforce RAM limits', () => {
     const a = rmtSymbol(1, 10, 0, 20), b = rmtSymbol(1, 20, 0, 10), c = rmtSymbol(1, 30, 0, 10);
     const bitmap = packRMT(Uint32Array.of(a, b, a, b, b, a, a, b, b));

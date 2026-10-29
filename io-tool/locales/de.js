@@ -327,6 +327,7 @@
     "Preview - no samples": "Vorschau · keine Messwerte",
     "WS2812: select 1-1365 LEDs and brightness 0-1.": "WS2812: 1–1365 LEDs und Helligkeit 0–1 wählen.",
     "WS2812: RGB bytes are required for each LED.": "WS2812: RGB-Bytes je LED erforderlich.",
+    "WS2812: unsuitable RMT resolution. Release the port and activate it at 20000000 Hz; reload the current version if using an old stub.": "WS2812: RMT-Auflösung ungeeignet. Port freigeben und mit 20000000 Hz aktivieren; bei alten Stubs die aktuelle Version neu laden.",
     "Web Serial requires Chrome/Edge and a secure context (localhost or HTTPS).": "Web Serial benötigt Chrome/Edge und einen sicheren Kontext (localhost oder HTTPS).",
     "Inconsistent response": "Widersprüchliche Reaktion",
     "Identify the card first. Raw image with 512 bytes per sector.": "Zuerst die Karte identifizieren. Rohabbild mit 512 Bytes pro Sektor.",

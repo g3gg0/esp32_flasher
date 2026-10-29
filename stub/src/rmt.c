@@ -23,15 +23,15 @@ static void send(const rpc_peripheral_command_t *q){
     for(unsigned i=0;i<symbols;i++){uint32_t w=word(i);if(!valid(w)||(symbols*repeat>=size&&ticks(w)<(hz+999999)/1000000)){fail(RPC_STATUS_BAD_ARGUMENT,RPC_PERIPHERALERRORS_BAD_SEQUENCE);return;}total_ticks+=ticks(w);}
     uint64_t duration=(total_ticks*repeat*1000000u+hz-1)/hz+idle;
     if(duration>q->timeout_us){fail(RPC_STATUS_BAD_ARGUMENT,RPC_PERIPHERALERRORS_BAD_TIMEOUT);return;}
-    uint32_t cpu_us=platform_ticks_per_us(),cycles_per_tick=cpu_us*1000000u/hz;
-    uint64_t half_cycles[2]={0,0},elapsed=0,budget=(uint64_t)q->timeout_us*cpu_us;
+    uint32_t cpu_hz=hw_rmt_cpu_hz();
+    uint64_t half_ticks[2]={0,0},elapsed=0,budget=(uint64_t)q->timeout_us*cpu_hz/1000000u;
     unsigned total=symbols*repeat,position=0,index=0,refills=0,next=0,sentinel=0;
     hw_rmt_prepare(channel);
     for(unsigned i=0;i<size;i++){
-        uint32_t w=0;if(position<total){w=word(index);if(++index==symbols)index=0;position++;half_cycles[i/half]+=(uint64_t)ticks(w)*cycles_per_tick;}else sentinel=1;
+        uint32_t w=0;if(position<total){w=word(index);if(++index==symbols)index=0;position++;half_ticks[i/half]+=ticks(w);}else sentinel=1;
         hw_rmt_write(channel,i,w);
     }
-    uint64_t threshold=half_cycles[0];uint32_t previous=platform_cycles();hw_rmt_start(channel);
+    uint64_t threshold=half_ticks[0];uint32_t previous=platform_cycles();hw_rmt_start(channel);
     for(;;){
         unsigned event=hw_rmt_events(channel);uint32_t now=platform_cycles();elapsed+=(uint32_t)(now-previous);previous=now;
         if(event&4){fail(RPC_STATUS_IO_ERROR,RPC_PERIPHERALERRORS_UNDERRUN);break;}
@@ -40,15 +40,18 @@ static void send(const rpc_peripheral_command_t *q){
         if(event&2){
             hw_rmt_clear(channel,2);
             if(!sentinel){
-                uint64_t boundary=threshold+half_cycles[next^1];
-                if(elapsed>=boundary){fail(RPC_STATUS_IO_ERROR,RPC_PERIPHERALERRORS_UNDERRUN);break;}
-                half_cycles[next]=0;
+                uint64_t boundary=threshold+half_ticks[next^1];
+                /* Compare rational clock domains without truncating cycles per
+                 * RMT tick (e.g. 53 MHz CPU / 20 MHz RMT), or rounding drift. */
+                uint64_t deadline=boundary*cpu_hz;
+                if(elapsed*hz>=deadline){fail(RPC_STATUS_IO_ERROR,RPC_PERIPHERALERRORS_UNDERRUN);break;}
+                half_ticks[next]=0;
                 for(unsigned i=0;i<half;i++){
-                    uint32_t w=0;if(position<total){w=word(index);if(++index==symbols)index=0;position++;half_cycles[next]+=(uint64_t)ticks(w)*cycles_per_tick;}else sentinel=1;
+                    uint32_t w=0;if(position<total){w=word(index);if(++index==symbols)index=0;position++;half_ticks[next]+=ticks(w);}else sentinel=1;
                     hw_rmt_write(channel,next*half+i,w);
                 }
                 now=platform_cycles();elapsed+=(uint32_t)(now-previous);previous=now;
-                if(elapsed>=boundary){fail(RPC_STATUS_IO_ERROR,RPC_PERIPHERALERRORS_UNDERRUN);break;}
+                if(elapsed*hz>=deadline){fail(RPC_STATUS_IO_ERROR,RPC_PERIPHERALERRORS_UNDERRUN);break;}
                 threshold=boundary;next^=1;refills++;
             }
         }

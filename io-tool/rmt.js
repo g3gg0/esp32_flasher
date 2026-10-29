@@ -20,6 +20,7 @@
     function ws2812Sequence(rgb,hz){
         if(!(rgb instanceof Uint8Array)||!rgb.length||rgb.length%3)throw new Error('WS2812: RGB-Bytes je LED erforderlich.');
         const period=Math.round(hz*1.25e-6),zero=Math.round(hz*.35e-6),one=Math.round(hz*.7e-6);
+        if(!Number.isFinite(hz)||![zero,period-zero,one,period-one].every(n=>n>=1&&n<=32767))throw new Error('WS2812: RMT-Auflösung ungeeignet. Port freigeben und mit 20000000 Hz aktivieren; bei alten Stubs die aktuelle Version neu laden.');
         const words=[symbol(1,zero,0,period-zero),symbol(1,one,0,period-one)],result=new Uint32Array(rgb.length*8);let n=0;
         for(let led=0;led<rgb.length;led+=3)for(const component of [rgb[led+1],rgb[led],rgb[led+2]])for(let b=7;b>=0;b--)result[n++]=words[component>>>b&1];
         return result;

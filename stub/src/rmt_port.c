@@ -1,6 +1,7 @@
 /* One LL adapter for all chips with physical RMT. C2/C61 have no RMT. */
 #if STUB_HAS_RMT
 #include "rmt_port.h"
+#include "rmt_clock.h"
 #include "platform.h"
 #include "sdkconfig.h"
 #include "hal/rmt_ll.h"
@@ -21,16 +22,23 @@ static uint32_t source_hz(void){
 }
 unsigned hw_rmt_count(void){return RMT_LL_TX_CANDIDATES_PER_INST;}
 unsigned hw_rmt_words(void){return SOC_RMT_MEM_WORDS_PER_CHANNEL;}
+uint32_t hw_rmt_cpu_hz(void){
+#if CONFIG_IDF_TARGET_ESP32C6
+    /* ROM reports whole MHz, e.g. 53 for 480 MHz / 9. That rounding would
+     * accumulate enough deadline drift to reject a long, valid stream. */
+    if(clk_ll_cpu_get_src()==SOC_CPU_CLK_SRC_PLL)
+        return clk_ll_bbpll_get_freq_mhz()*1000000u/clk_ll_cpu_get_hs_divider();
+    if(clk_ll_cpu_get_src()==SOC_CPU_CLK_SRC_XTAL)
+        return source_hz()/clk_ll_cpu_get_ls_divider();
+#endif
+    return platform_ticks_per_us()*1000000u;
+}
 void hw_rmt_info(unsigned channel,uint32_t v[8]){
     v[0]=soc_rmt_signals[0].channels[channel].tx_sig;v[1]=hw_rmt_count();v[2]=hw_rmt_words();v[3]=4096;v[4]=source_hz();v[5]=3;v[6]=v[7]=0;
 }
 uint32_t hw_rmt_config(unsigned channel,unsigned hz,unsigned idle){
-    uint32_t src=source_hz(),cpu=platform_ticks_per_us()*1000000u,best=0,error=UINT32_MAX,divider=0;
-    for(unsigned d=1;d<=256;d++)if(!(src%d)){
-        uint32_t f=src/d,e=f>hz?f-hz:hz-f;
-        if(f&&!(cpu%f)&&e<error){error=e;best=f;divider=d;}
-    }
-    if(!best)return 0;
+    uint32_t src=source_hz(),divider=rmt_clock_divider(src,hz);
+    if(!divider)return 0;
     requested_hz=hz;idle_level=idle;
     rmt_ll_enable_bus_clock(0,true);rmt_ll_reset_register(0);
 #if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2
@@ -46,7 +54,7 @@ uint32_t hw_rmt_config(unsigned channel,unsigned hz,unsigned idle){
 #if SOC_RMT_SUPPORT_DMA
     rmt_ll_tx_enable_dma(&RMT,channel,false);
 #endif
-    rmt_ll_tx_set_limit(&RMT,channel,hw_rmt_words()/2);rmt_ll_tx_reset_pointer(&RMT,channel);return best;
+    rmt_ll_tx_set_limit(&RMT,channel,hw_rmt_words()/2);rmt_ll_tx_reset_pointer(&RMT,channel);return src/divider;
 }
 void hw_rmt_prepare(unsigned channel){hw_rmt_stop(channel);rmt_ll_tx_reset_pointer(&RMT,channel);rmt_ll_clear_interrupt_status(&RMT,UINT32_MAX);}
 void hw_rmt_write(unsigned channel,unsigned offset,uint32_t word){((volatile uint32_t *)&RMTMEM)[channel*SOC_RMT_MEM_WORDS_PER_CHANNEL+offset]=word;}

@@ -26,7 +26,13 @@ uint32_t platform_cycles(void) {
     static uint32_t cycles; return cycles += 10;
 #endif
 }
-uint32_t platform_ticks_per_us(void) { return 1; }
+uint32_t platform_ticks_per_us(void) {
+#ifdef RPC_RMT_TEST
+    extern uint32_t rmt_test_cpu_us(void);return rmt_test_cpu_us();
+#else
+    return 1;
+#endif
+}
 int platform_register_allowed(uint32_t address, int write) {
     (void)write;
 #ifdef RPC_CAPTURE_TEST
