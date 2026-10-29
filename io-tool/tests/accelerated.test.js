@@ -57,6 +57,21 @@ test('one step-response command validates the averaged payload and response corr
     }
 });
 
+test('ADC trigger timing is separate from midpoint estimates and remains optional for older stubs', async () => {
+    const config=require('../step-response.js').stepOptions({maxDelayUs:4,settleUs:2,repetitions:2});
+    const values={pin:5,slot:0,min_delay_ns:1000,max_delay_us:4,settle_us:2,repetitions:2,mode_mask:31};
+    for(const trigger of [0,1400,50000,65535]){
+        const {transport}=fixture(packet=>{
+            const q=rpcDecode(packet,'step_command'),count=config.delays.length*10,data=new Uint8Array(count*6),v=new DataView(data.buffer);
+            for(let i=0;i<count;i++){v.setUint16(i*6,1600,true);v.setUint32(i*6+2,config.delays[i%3]+20000,true);}
+            return rpcEncode('step_response',{...q,measurement:1,point_count:3,sample_count:count,duration_us:1000,first_adc_trigger_ns:trigger},undefined,data);
+        });
+        transport.identity=rpcDecode(identity('esp32c6',{protocol_minor:9,capabilities:1|(1<<protocol.capabilities.CAPTURE)}),'identity');
+        if(trigger===50000)await assert.rejects(transport.captureStep(values,config),/Invalid ADC trigger timing/);
+        else{const samples=await transport.captureStep(values,config);assert.equal(samples.firstADCTriggerNs,trigger||undefined);assert.equal(samples[0].actualDelayNs,21000);}
+    }
+});
+
 test('debug log budget bounds polling bursts and reports dropped logs each second', t => {
     let now = 0;
     t.mock.method(performance, 'now', () => now);

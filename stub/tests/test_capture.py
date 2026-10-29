@@ -93,6 +93,24 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual(self.status(r),0)
         self.assertEqual(self.record_values(r)[0][0],0x103*16)
         self.assertTrue(self.record_values(r)[0][1]>1000)
+    def test_adc_start_low_preparation_is_before_edge_not_after_delay(self):
+        # The host mock counts cycles in whole us. Its GPIO/ADC register access
+        # overhead is included, but the plan's 10-us preparation must not be.
+        r=self.exchange(setup(),plan(),self.step(slot=0,mode_mask=2,min_delay_ns=1000,max_delay_us=1,settle_us=100,repetitions=1))[2]
+        self.assertEqual(self.status(r),0)
+        values=self.record_values(r)
+        self.assertEqual(len(values),2)
+        for _,ns in values:
+            self.assertGreaterEqual(ns,1000)
+            self.assertLess(ns,10000)
+    def test_adc_trigger_is_measured_separately_from_slow_conversion(self):
+        r=self.exchange(setup(),plan(),self.step(slot=0,mode_mask=2,min_delay_ns=1000,max_delay_us=1,repetitions=2),mode='slow-adc')[2]
+        self.assertEqual(self.status(r),0)
+        header_size=8+sum({'u16':2,'u32':4}[t]*(n[0] if n else 1) for _,t,*n in SPEC['packets']['step_response']['fields'])
+        trigger=struct.unpack_from('<H',r,header_size-2)[0]
+        self.assertGreaterEqual(trigger,1000)
+        self.assertLess(trigger,10000)
+        self.assertGreater(self.record_values(r)[0][1],20000)
     def test_rejects_oversized_scans_bad_slot_registers_and_unbounded_times(self):
         for args in [dict(repetitions=0),dict(mode_mask=32),dict(min_delay_ns=1,max_delay_us=10000),dict(settle_us=1000000),dict(slot=24),dict(mux_addr=0x40000000),dict(bit_mask=64)]:
             r=self.exchange(self.step(**args))[0];self.assertNotEqual(self.status(r),0)
@@ -105,6 +123,21 @@ class C6CalibrationTest(unittest.TestCase):
     exchange=CaptureTest.exchange
     status=CaptureTest.status
     samples=CaptureTest.samples
+    step=CaptureTest.step
+    def test_c6_clock_and_fsm_are_native_and_restored(self):
+        inspect=command(1,2,data=struct.pack('<2I',0x60000620,0x60000624))
+        r=self.exchange(inspect,setup(),command(3,selection=3),command(7),command(3,selection=3))
+        self.assertEqual(self.status(r[1]),0)
+        self.assertEqual([x[2] for x in self.samples(r[2])],[0x0050f040,0x00640805])
+        self.assertEqual([x[2] for x in self.samples(r[4])],[0,0])
+    def test_c6_stabilizes_channel_once_before_repeated_edge_captures(self):
+        inspect=command(1,3,data=struct.pack('<3I',0x60000630,0x60000634,0x60000100))
+        r=self.exchange(setup(),plan(),self.step(slot=0,mode_mask=2),inspect,command(3,selection=7),command(7),command(3,selection=7))
+        self.assertEqual(self.status(r[2]),0)
+        values=[x[2] for x in self.samples(r[4])]
+        self.assertEqual(values[:2],[1,1]) # one 50-us stabilization, one enable
+        self.assertNotEqual(values[2]&(1<<31),0)
+        self.assertEqual(self.samples(r[6])[2][2]&(1<<31),0)
     def test_cold_c6_bus_is_enabled_reset_and_restored(self):
         inspect=command(1,3,data=struct.pack('<3I',0x600af018,0x600af01c,0x600b0154))
         r=self.exchange(inspect,setup(command_mask=1<<26),command(3,selection=7),command(7),command(3,selection=7),mode='c6-cold')

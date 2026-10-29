@@ -10,7 +10,7 @@
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.9.3",
+  "buildVersion": "0.9.6",
   "header": [
     [
       "magic",
@@ -871,11 +871,11 @@
           "u16"
         ],
         [
-          "reserved",
+          "first_adc_trigger_ns",
           "u16"
         ]
       ],
-      "trailing": "sample_count packed records: mean_q4 uint16 and actual_delay_ns uint32. Order: falling then rising, mode ascending, delay ascending. mean_q4 is raw ADC or digital 0/1 multiplied by 16.",
+      "trailing": "sample_count packed records: mean_q4 uint16 and actual_delay_ns uint32. Order: falling then rising, mode ascending, delay ascending. mean_q4 is raw ADC or digital 0/1 multiplied by 16. first_adc_trigger_ns uses the former reserved uint16: mean edge-to-ADC-trigger time at the first point, 0=unavailable, 65535=saturated. It does not establish the analog sample aperture.",
       "offsets": {
         "status": 8,
         "pin": 12,
@@ -888,7 +888,7 @@
         "measurement": 34,
         "duration_us": 36,
         "sample_count": 40,
-        "reserved": 42
+        "first_adc_trigger_ns": 42
       },
       "size": 44
     }

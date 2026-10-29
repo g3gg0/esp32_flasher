@@ -35,13 +35,19 @@ static bool wait_bits(uint32_t address,uint32_t mask,bool asserted) {
     do { if (!!(capture_read(address)&mask)==asserted) return true; } while ((uint32_t)(platform_cycles()-start)<budget);
     return false;
 }
-static bool conversion_timed(const rpc_capture_plan_t *p,uint32_t *value,uint32_t *started,uint32_t *finished) {
+static bool conversion_prepare(const rpc_capture_plan_t *p) {
     if(p->idle_mask&&!wait_bits(p->idle_addr,p->idle_mask,false))return false;
-    for(unsigned i=0;i<3;i++) {
-        capture_write(p->steps[i*3],p->steps[i*3+1],p->steps[i*3+2]);
-        if(i==2&&started)*started=platform_cycles();
+    for(unsigned i=0;i<2;i++) {
+        int prepared=i?0:capture_adc_prepare_channel(p->steps[0],p->steps[1],p->steps[2]);
+        if(prepared<0)return false;
+        if(!prepared)capture_write(p->steps[i*3],p->steps[i*3+1],p->steps[i*3+2]);
         if(i==0&&p->low_us)platform_delay(p->low_us);
     }
+    return true;
+}
+static bool conversion_read(const rpc_capture_plan_t *p,uint32_t *value,uint32_t *started,uint32_t *finished) {
+    capture_write(p->steps[6],p->steps[7],p->steps[8]);
+    if(started)*started=platform_cycles();
     if(!wait_bits(p->wait_addr,p->wait_mask,true))return false;
     if(p->data_delay_us)platform_delay(p->data_delay_us);
     uint32_t raw=capture_read(p->data_addr);
@@ -49,7 +55,7 @@ static bool conversion_timed(const rpc_capture_plan_t *p,uint32_t *value,uint32_
     if(raw&p->invalid_mask)return false;
     *value=raw&p->data_mask;return true;
 }
-static bool conversion(const rpc_capture_plan_t *p,uint32_t *value){return conversion_timed(p,value,0,0);}
+static bool conversion(const rpc_capture_plan_t *p,uint32_t *value){return conversion_prepare(p)&&conversion_read(p,value,0,0);}
 uint32_t rpc_capture_capabilities(void) { return 1u<<RPC_CAPABILITIES_CAPTURE; }
 static int step_response(const rpc_header_t *request,uint32_t length) {
     rpc_step_response_t *r=&step_reply.header;
@@ -81,7 +87,7 @@ static int step_response(const rpc_header_t *request,uint32_t length) {
     const rpc_capture_plan_t *p=q->slot==0xffff?0:&plans[q->slot];
     for(unsigned direction=0;direction<2&&!r->status;direction++)for(unsigned mode=0;mode<5&&!r->status;mode++)if(q->mode_mask&(1u<<mode)) {
         for(unsigned point=0;point<count&&!r->status;point++){
-            uint32_t sum=0;uint64_t times=0;
+            uint32_t sum=0;uint64_t times=0,triggers=0;
             uint32_t delay_ticks=(uint32_t)(((uint64_t)delays[point]*ticks+999)/1000);
             for(unsigned repeat=0;repeat<q->repetitions;repeat++){
                 uint32_t value=0;
@@ -91,6 +97,10 @@ static int step_response(const rpc_header_t *request,uint32_t length) {
                 capture_write(q->enable_set_addr,bit,UINT32_MAX);
                 if(p&&!conversion(p,&value)){r->status=RPC_STATUS_TIMEOUT;break;}
                 platform_delay(q->settle_us);
+                /* Arm the ADC while the pin is still precharged. In particular,
+                 * the SAR start-low hold must never delay the requested sample
+                 * after the edge (e.g. 1 us must not become 1 + 10 us). */
+                if(p&&!conversion_prepare(p)){r->status=RPC_STATUS_TIMEOUT;break;}
                 if(mode)capture_write(q->mux_addr,(mode-1u)<<10,mux_mask);
                 else capture_write(q->mux_addr,direction?q->pull_up:q->pull_down,mux_mask);
                 capture_write(mode?(direction?q->set_addr:q->clear_addr):q->enable_clear_addr,bit,UINT32_MAX);
@@ -98,12 +108,16 @@ static int step_response(const rpc_header_t *request,uint32_t length) {
                 while((uint32_t)(platform_cycles()-edge)<delay_ticks){}
                 uint32_t start=platform_cycles();
                 uint32_t end;
-                if(p){if(!conversion_timed(p,&value,&start,&end)){r->status=RPC_STATUS_TIMEOUT;break;}}
+                if(p){if(!conversion_read(p,&value,&start,&end)){r->status=RPC_STATUS_TIMEOUT;break;}}
                 else {value=!!(capture_read(q->input_addr)&bit);end=platform_cycles();}
                 sum+=value;times+=(uint64_t)((start-edge)+(end-start)/2)*1000/ticks;
+                triggers+=(uint32_t)(start-edge);
                 if((uint32_t)(end-began)/ticks>RPC_STEPRESPONSE_MAXDURATIONUS){r->status=RPC_STATUS_TIMEOUT;break;}
             }
-            if(!r->status){step_sample_t *s=&step_reply.samples[r->sample_count++];s->mean_q4=(sum*16u+q->repetitions/2)/q->repetitions;s->actual_delay_ns=(uint32_t)(times/q->repetitions);}
+            if(!r->status){
+                if(p&&!r->sample_count){uint64_t ns=triggers*1000/q->repetitions/ticks;r->first_adc_trigger_ns=ns>=65535?65535:ns;}
+                step_sample_t *s=&step_reply.samples[r->sample_count++];s->mean_q4=(sum*16u+q->repetitions/2)/q->repetitions;s->actual_delay_ns=(uint32_t)(times/q->repetitions);
+            }
         }
     }
     capture_write(q->enable_clear_addr,bit,UINT32_MAX);

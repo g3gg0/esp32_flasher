@@ -4,6 +4,8 @@
     const messages = {
     "ADC means per edge; logarithmic delay axis": "ADC-Mittelwerte je Flanke; logarithmische Zeitachse",
     "Digital readback per edge; logarithmic delay axis": "Digitale Istwerte je Flanke; logarithmische Zeitachse",
+    "Digital readback per edge; separate lane per drive level": "Digitale Istwerte je Flanke; eigene Spur je Treiberstufe",
+    "Filled: HIGH; empty: LOW. Steps connect samples; the transition may lie between them.": "Gefüllt: HIGH; leer: LOW. Stufen verbinden Messpunkte; der Wechsel kann dazwischen liegen.",
     "Nominal voltage (V)": "Nominale Spannung (V)",
     "Logic level (V)": "Logikpegel (V)",
     "{0} repeats per point": "{0} Wiederholungen je Messpunkt",
@@ -22,6 +24,9 @@
     "Repeats": "Wiederholungen",
     "Min delay µs": "Minimale Wartezeit µs",
     "Actual edge → measurement delay (log)": "Flanke → Messzeitpunkt (log)",
+    "Estimated conversion midpoint delay (log)": "Geschätzte Wandlungsmitte nach Flanke (log)",
+    "First ADC trigger: {0} µs after edge (requested {1} µs)": "Erster ADC-Trigger: {0} µs nach Flanke (angefordert {1} µs)",
+    "Nominal ADC scale 0–3.3 V, not voltage-calibrated. ADC timing estimates the conversion midpoint, not the sampling aperture.": "Nominale ADC-Skala 0–3,3 V, nicht spannungskalibriert. Der ADC-Zeitwert schätzt die Wandlungsmitte; er misst nicht den Abtastzeitpunkt.",
     "Select at least one measurement.": "Mindestens eine Messung auswählen.",
     "Load accelerated stub 0.9.0 or newer for step response.": "Für die Sprungantwort beschleunigten Stub 0.9.0 oder neuer laden.",
     "Drive strength": "Treiberstufe",

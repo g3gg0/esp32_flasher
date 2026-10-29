@@ -37,7 +37,7 @@ static int metadata(unsigned index){
     case 0:name="CHIP.MODEL";text=STUB_CHIP;break;
     case 1:name="CHIP.CPU";text=STUB_CPU;break;
     case 2:name="CHIP.CORES";number=STUB_CORES;break;
-    case 3:name="CHIP.CPU_HZ";number=platform_ticks_per_us()*1000000u;break;
+    case 3:name="CHIP.CPU_HZ";number=platform_cpu_hz();break;
     case 4:{name="CHIP.RESET_REASON";rpc_identity_t id={0};platform_identity(&id);number=id.reset_reason;break;}
     case 5:name="ROM.BASE";type=RPC_FUSETYPES_HEX;number=FUSE_ROM_BASE;break;
     case 6:name="ROM.CHIP_ID";if(FUSE_ROM_CHIP_ADDRESS)number=hw_fuse_read(FUSE_ROM_CHIP_ADDRESS);else text="not exposed";break;

@@ -575,3 +575,33 @@ fractional MHz that the ROM's whole-MHz frequency report cannot represent.
 Native streaming tests cover 53 MHz CPU / 20 MHz RMT and the H2's 32 MHz
 source, including long sequences, timeout and underrun handling. These tests
 do not replace checking the waveform or LED output on a physical board.
+
+### ADC preparation before the measured edge (0.9.4)
+
+Step-response capture arms the ADC before changing the GPIO level. SAR
+start-low hold time and status clearing run during precharge, rather than
+after the requested edge-to-sample delay. At a requested 1 us the stub now
+issues the conversion trigger after that delay without inserting the plan's
+additional 10 us hold. Conversion completion and register-access overhead
+remain; the reported delay still estimates the conversion midpoint, not a
+hardware-verified sample aperture. Ordinary ADC scans retain their existing
+prepare/trigger/read sequence. No protocol layout changes are needed.
+
+Build 0.9.5 also applies the C6 IDF oneshot clock source/divider and FSM wait
+defaults natively. Its oneshot enable stays asserted across edge trials;
+channel/attenuation changes stabilize for 50 us before conversion, matching
+`adc_oneshot_ll_enable()`. This avoids enabling the C6 ADC at the same instant
+as the sample trigger. Clock, FSM and channel fields are restored on release.
+These changes do not establish a 1-us analog sample aperture: `actual_delay_ns`
+still reports an estimated conversion midpoint, including conversion latency.
+The C6 CPU clock is read from the hardware source/divider and shared by RMT
+and chip metadata. Startup refreshes ROM's whole-MHz delay scale from that
+value, preventing inherited clock bookkeeping from distorting delays and
+cycle timestamps. `CHIP.CPU_HZ` now preserves the hardware frequency in Hz.
+
+Build 0.9.6 reuses the step response's reserved uint16 for
+`first_adc_trigger_ns`: the averaged edge-to-trigger time at the first ADC
+point, zero if unavailable and 65535 when saturated. Packet sizes and record
+ordering are unchanged; older browsers ignore it and newer browsers accept
+zero from older stubs. This exposes the trigger separately from the estimated
+conversion midpoint without claiming a measured analog sample aperture.

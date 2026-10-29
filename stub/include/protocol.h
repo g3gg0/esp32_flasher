@@ -6,7 +6,7 @@
 #define RPC_PROTOCOL_MINOR 9u
 #define RPC_MAX_PACKET_LENGTH 1024u
 #define RPC_MAX_REGISTER_DELAY_US 100000u
-#define RPC_BUILD_VERSION "0.9.3"
+#define RPC_BUILD_VERSION "0.9.6"
 #define RPC_STEPRESPONSE_MAXPOINTS 16u
 #define RPC_STEPRESPONSE_MAXRECORDS 160u
 #define RPC_STEPRESPONSE_RECORDSIZE 6u
@@ -338,7 +338,7 @@ typedef struct __attribute__((packed)) {
     uint16_t measurement;
     uint32_t duration_us;
     uint16_t sample_count;
-    uint16_t reserved;
+    uint16_t first_adc_trigger_ns;
 } rpc_step_response_t;
 _Static_assert(sizeof(rpc_step_response_t) == 44, "step_response wire size");
 #define RPC_MAGIC_STEP_RESPONSE "STPR"

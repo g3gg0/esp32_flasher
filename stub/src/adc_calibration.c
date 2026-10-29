@@ -10,6 +10,8 @@
 #include "modem/modem_lpcon_reg.h"
 #include "soc/pmu_reg.h"
 #include "soc/i2c_ana_mst_reg.h"
+#include "soc/pcr_reg.h"
+#include "soc/apb_saradc_reg.h"
 #elif defined(RPC_C6_CAL_TEST)
 #define MODEM_LPCON_CLK_CONF_REG 0x600af018u
 #define MODEM_LPCON_CLK_CONF_FORCE_ON_REG 0x600af01cu
@@ -24,6 +26,9 @@
 #define PMU_RF_PWC_REG 0x600b0154u
 #define PMU_PERIF_I2C_RSTB (1u<<26)
 #define PMU_XPD_PERIF_I2C (1u<<27)
+#define PCR_SARADC_CLKM_CONF_REG 0x60000620u
+#define APB_SARADC_FSM_WAIT_REG 0x60000624u
+#define APB_SARADC_ONETIME_SAMPLE_REG 0x60000100u
 #endif
 #if defined(STUB_HAS_PERIPHERALS) || defined(RPC_CAPTURE_TEST)
 uint32_t capture_read(uint32_t address);
@@ -55,6 +60,22 @@ static bool set(uint32_t a,uint32_t value,uint32_t mask){
     if(i==saved_count){if(saved_count==24)return false;saved_count++;saved[i].address=a;saved[i].value=0;saved[i].mask=0;}
     uint32_t fresh=mask&~saved[i].mask;if(fresh)saved[i].value|=capture_read(a)&fresh;saved[i].mask|=mask;
     capture_write(a,value,mask);return true;
+}
+int capture_adc_prepare_channel(uint32_t address,uint32_t value,uint32_t mask){
+#if defined(CONFIG_IDF_TARGET_ESP32C6) || defined(RPC_C6_CAL_TEST)
+    if(address==APB_SARADC_ONETIME_SAMPLE_REG){
+        /* adc_oneshot_ll_enable(): C6 channel selection needs 50 us after
+         * enabling. Keep it enabled between conversions, before the edge. */
+        uint32_t enable=1u<<31,selection=enable|(15u<<25)|(3u<<23);
+        uint32_t before=capture_read(address);value|=enable;mask|=enable;
+        if(!set(address,value,mask))return -1;
+        if((before^value)&mask&selection)platform_delay(50);
+        return 1;
+    }
+#else
+    (void)address;(void)value;(void)mask;
+#endif
+    return 0;
 }
 static bool prepare_bus(void){
 #if defined(CONFIG_IDF_TARGET_ESP32C6) || defined(RPC_C6_CAL_TEST)
@@ -100,6 +121,11 @@ unsigned capture_adc_initialize(const rpc_header_t *request,uint32_t length,uint
     }
     for(unsigned i=0;i<p->init_count;i++)if(!set(ops[i*3],ops[i*3+1],ops[i*3+2]))goto failed;
 #if defined(CONFIG_IDF_TARGET_ESP32C6) || defined(RPC_C6_CAL_TEST)
+    /* Match adc_oneshot_hal_setup: PLL_F80M / (15 + 1), fractional B=1,
+     * A=0. The host's older profile selected XTAL at half this clock.
+     * Initialize FSM waits as adc_hal.c does, rather than inherit ROM state. */
+    if(!set(PCR_SARADC_CLKM_CONF_REG,0x0050f040u,0x007fffffu)||
+       !set(APB_SARADC_FSM_WAIT_REG,0x00640805u,0x00ffffffu))goto failed;
     /* Match IDF's SAR regi2c enable sequence even after an inherited ROM/stub
      * session. Keep both the root gate and force-on active during readback. */
     if(!set(MODEM_LPCON_CLK_CONF_REG,MODEM_LPCON_CLK_I2C_MST_EN,MODEM_LPCON_CLK_I2C_MST_EN)||
@@ -120,6 +146,7 @@ failed:
 #else
 unsigned capture_adc_ready(void){return 0;}
 unsigned capture_adc_failure_slot(void){return 0xffff;}
+int capture_adc_prepare_channel(uint32_t a,uint32_t v,uint32_t m){(void)a;(void)v;(void)m;return 0;}
 unsigned capture_adc_release(void){return RPC_STATUS_OK;}
 unsigned capture_adc_initialize(const rpc_header_t *p,uint32_t n,uint32_t c[2],uint32_t *v){(void)p;(void)n;(void)c;(void)v;return RPC_STATUS_UNSUPPORTED;}
 #endif

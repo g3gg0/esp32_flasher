@@ -33,6 +33,7 @@ uint32_t platform_ticks_per_us(void) {
     return 1;
 #endif
 }
+uint32_t platform_cpu_hz(void) { return platform_ticks_per_us()*1000000u; }
 int platform_register_allowed(uint32_t address, int write) {
     (void)write;
 #ifdef RPC_CAPTURE_TEST

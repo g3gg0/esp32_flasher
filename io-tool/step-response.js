@@ -34,25 +34,49 @@
         if(signal?.aborted)throw new DOMException('Scan cancelled.','AbortError');
         const curves=[];let index=0;
         for(const direction of ['falling','rising'])for(let mode=0;mode<5;mode++)if(config.modeMask&1<<mode){const points=config.delays.map(requestedDelayNs=>({requestedDelayNs,...records[index++]}));curves.push({direction,mode,label:mode?`D${mode-1}`:direction==='falling'?'Pull-down':'Pull-up',points});}
-        return {format:'esp-io-step-response-v1',measurement:analog?'adc':'digital',voltageCalibrated:false,referenceVolts:3.3,rawMax:analog?4095:1,...config,curves,simulation:!!controller.transport.simulation};
+        return {format:'esp-io-step-response-v1',measurement:analog?'adc':'digital',voltageCalibrated:false,firstADCTriggerNs:records.firstADCTriggerNs??null,referenceVolts:3.3,rawMax:analog?4095:1,...config,curves,simulation:!!controller.transport.simulation};
     }
     const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     function stepResponseHTML(result){
         const r=result?.stepResponse;if(!r)return '';if(r.skipped)return `<section class="load-profile step-response"><h4>Step response</h4><p>${escape(r.skipped)}</p></section>`;
-        // Match the load-profile SVG's plot rectangle and shared typography.
-        const width=560,height=260,left=52,right=22,top=26,bottom=56;
+        const digital=r.measurement==='digital',width=560,height=260,left=digital?72:52,right=digital?32:22,top=26,bottom=56,base=height-bottom;
         const minimum=Math.min(r.minDelayNs,...r.curves.flatMap(c=>c.points.map(p=>p.actualDelayNs))),maximum=Math.max(r.maxDelayUs*1000,...r.curves.flatMap(c=>c.points.map(p=>p.actualDelayNs)));
-        const x=ns=>left+(Math.log10(Math.max(ns,minimum))-Math.log10(minimum))/(Math.log10(maximum)-Math.log10(minimum)||1)*(width-left-right),y=mean=>height-bottom-Math.max(0,Math.min(1,r.measurement==='digital'?(mean>=.5?1:0):mean/r.rawMax))*(height-top-bottom);
-        let svg=`<svg class="load-xy" viewBox="0 0 ${width} ${height}" role="img" aria-label="Step response: voltage versus delay, logarithmic time axis">`;
-        for(let i=0;i<=4;i++){const volts=3.3*i/4,py=height-bottom-i/4*(height-top-bottom);svg+=`<path class="load-grid" d="M${left},${py}H${width-right}"/><text x="${left-8}" y="${py+3}" text-anchor="end">${volts.toFixed(2)}</text>`;}
-        for(let ns=10**Math.ceil(Math.log10(minimum));ns<=maximum;ns*=10)svg+=`<path class="load-grid" d="M${x(ns)},${top}V${height-bottom}"/><text x="${x(ns)}" y="${height-bottom+19}" text-anchor="middle">${ns<1e6?ns/1000+' µs':ns/1e6+' ms'}</text>`;
-        svg+=`<path class="load-grid" d="M${left},${top}H${width-right}V${height-bottom}H${left}Z"/><text x="${left}" y="13">${r.measurement==='adc'?'Nominal voltage (V)':'Logic level (V)'}</text>`;
+        const x=ns=>left+(Math.log10(Math.max(ns,minimum))-Math.log10(minimum))/(Math.log10(maximum)-Math.log10(minimum)||1)*(width-left-right);
         const colors={falling:['#2e6b83','#3c89ad','#51a9d3','#67c9ff','#a2dfff'],rising:['#2a704e','#38956a','#4db884','#68e8a5','#aff8d2']};
-        for(const c of r.curves){const color=colors[c.direction][c.mode];svg+=`<path d="${c.points.map((p,i)=>(i?'L':'M')+x(p.actualDelayNs).toFixed(2)+','+y(p.mean).toFixed(2)).join(' ')}" fill="none" stroke="${color}" stroke-width="2"/>`;for(const p of c.points)svg+=`<circle cx="${x(p.actualDelayNs)}" cy="${y(p.mean)}" r="3.5" fill="${color}"><title>${escape(c.direction+' '+c.label)}: ${(p.actualDelayNs/1000).toFixed(3)} µs (requested ${p.requestedDelayNs/1000} µs), ${((r.measurement==='digital'?(p.mean>=.5?1:0):p.mean/r.rawMax)*3.3).toFixed(3)} V</title></circle>`;}
-        svg+=`<text x="${left+(width-left-right)/2}" y="${height-9}" text-anchor="middle">Actual edge → measurement delay (log)</text></svg>`;
-        const legend=r.curves.map(c=>`<span style="--load-color:${colors[c.direction][c.mode]}">${c.direction==='falling'?'↓':'↑'} ${escape(c.label)}</span>`).join('');
-        const caption=r.measurement==='adc'?'ADC means per edge; logarithmic delay axis':'Digital readback per edge; logarithmic delay axis';
-        return `<section class="load-profile step-response"><h4>Step response · HIGH → LOW / LOW → HIGH</h4><p class="load-profile-caption">${caption}</p><div class="load-legend step-legend">${legend}</div>${svg}<p class="load-thresholds">${r.repetitions} repeats per point<br>${(r.settleUs/1000).toFixed(2)} ms settling at D3 before each edge<br>Requested delays: ${r.minDelayNs/1000} µs – ${r.maxDelayUs/1000} ms</p><small>Blue: falling · Green: rising. Dark: pulls; brighter: D0–D3.</small><small>${r.measurement==='adc'?'Nominal ADC scale 0–3.3 V, not voltage-calibrated. Conversion latency is included in the actual delay.':'Digital readback: LOW = 0 V, HIGH = 3.3 V (logic indicators).'}</small></section>`;
+        const plots=(digital?['falling','rising']:['analog']).map(direction=>{
+            const curves=r.curves.filter(c=>!digital||c.direction===direction),band=(base-top-8*(curves.length-1))/Math.max(1,curves.length);
+            const floor=i=>digital?top+i*(band+8)+band:base;
+            const y=(mean,i)=>floor(i)-Math.max(0,Math.min(1,digital?(mean>=.5?1:0):mean/r.rawMax))*(digital?band:base-top);
+            let svg=`<svg class="load-xy step-xy" viewBox="0 0 ${width} ${height}" role="img" aria-label="${digital?(direction==='falling'?'Falling':'Rising'):'Falling and rising'} step response: ${digital?'separate digital lanes':'voltage'} versus delay, logarithmic time axis">`;
+            if(digital){
+                curves.forEach((c,i)=>{
+                    svg+=`<rect class="step-lane" x="${left}" y="${floor(i)-band}" width="${width-left-right}" height="${band}"/><text class="step-lane-label" x="${left-8}" y="${floor(i)-band/2+3}" text-anchor="end">${escape(c.label)}</text><text class="step-level" x="${width-right+5}" y="${floor(i)-band+4}">1</text><text class="step-level" x="${width-right+5}" y="${floor(i)}">0</text>`;
+                });
+            }else{
+                for(let i=0;i<=4;i++){const py=base-i/4*(base-top);svg+=`<path class="load-grid" d="M${left},${py}H${width-right}"/><text x="${left-8}" y="${py+3}" text-anchor="end">${(3.3*i/4).toFixed(2)}</text>`;}
+                svg+=`<text x="${left}" y="13">Nominal voltage (V)</text>`;
+            }
+            for(let ns=10**Math.ceil(Math.log10(minimum));ns<=maximum;ns*=10)svg+=`<path class="load-grid" d="M${x(ns)},${top}V${base}"/><text x="${x(ns)}" y="${base+19}" text-anchor="middle">${ns<1e6?ns/1000+' \u00b5s':ns/1e6+' ms'}</text>`;
+            if(!digital)svg+=`<path class="load-grid" d="M${left},${top}H${width-right}V${base}H${left}Z"/>`;
+            // Draw every translucent area before the lines, keeping all strokes crisp.
+            const paths=curves.map((c,i)=>{
+                const points=c.points,first=points[0],last=points.at(-1);if(!first)return '';
+                const line=points.map((p,n)=>(n?(digital?'H'+x(p.actualDelayNs).toFixed(2)+'V':'L'+x(p.actualDelayNs).toFixed(2)+','):'M'+x(p.actualDelayNs).toFixed(2)+',')+y(p.mean,i).toFixed(2)).join(' ');
+                const area=line+` L${x(last.actualDelayNs).toFixed(2)},${floor(i).toFixed(2)} H${x(first.actualDelayNs).toFixed(2)} Z`;
+                svg+=`<path class="step-area${digital?' step-digital-area':''}" d="${area}" fill="${colors[c.direction][c.mode]}"/>`;
+                return line;
+            });
+            curves.forEach((c,i)=>{
+                const color=colors[c.direction][c.mode];svg+=`<path class="step-trace" d="${paths[i]}" fill="none" stroke="${color}" vector-effect="non-scaling-stroke"/>`;
+                for(const p of c.points)svg+=`<circle class="step-point" cx="${x(p.actualDelayNs)}" cy="${y(p.mean,i)}" r="${digital?1.1:1.6}" fill="${color}"><title>${escape(c.direction+' '+c.label)}: ${(p.actualDelayNs/1000).toFixed(3)} \u00b5s (requested ${p.requestedDelayNs/1000} \u00b5s), ${((digital?(p.mean>=.5?1:0):p.mean/r.rawMax)*3.3).toFixed(3)} V</title></circle>`;
+            });
+            svg+=`<text x="${left+(width-left-right)/2}" y="${height-9}" text-anchor="middle">${digital?'Actual edge \u2192 measurement delay (log)':'Estimated conversion midpoint delay (log)'}</text></svg>`;
+            const legend=digital?'':`<div class="load-legend step-legend">${curves.map(c=>`<span style="--load-color:${colors[c.direction][c.mode]}">${c.direction==='falling'?'\u2193':'\u2191'} ${escape(c.label)}</span>`).join('')}</div>`;
+            return `<div class="step-direction step-${direction}">${digital?`<h5>${direction==='falling'?'HIGH \u2192 LOW':'LOW \u2192 HIGH'}</h5>`:''}${legend}${svg}</div>`;
+        }).join('');
+        const caption=digital?'Digital readback per edge; separate lane per drive level':'ADC means per edge; logarithmic delay axis';
+        const adcTiming=!digital&&r.firstADCTriggerNs?`<br>First ADC trigger: ${r.firstADCTriggerNs===65535?'\u2265':''}${(r.firstADCTriggerNs/1000).toFixed(3)} \u00b5s after edge (requested ${r.minDelayNs/1000} \u00b5s)` : '';
+        return `<section class="load-profile step-response"><h4>Step response \u00b7 HIGH \u2192 LOW / LOW \u2192 HIGH</h4><p class="load-profile-caption">${caption}</p><div class="step-directions">${plots}</div><p class="load-thresholds">${r.repetitions} repeats per point<br>${(r.settleUs/1000).toFixed(2)} ms settling at D3 before each edge<br>Requested delays: ${r.minDelayNs/1000} \u00b5s \u2013 ${r.maxDelayUs/1000} ms${adcTiming}</p><small>${digital?'Filled: HIGH; empty: LOW. Steps connect samples; the transition may lie between them.':'Blue: falling \u00b7 Green: rising. Dark: pulls; brighter: D0\u2013D3.'}</small><small>${digital?'Digital readback: LOW = 0 V, HIGH = 3.3 V (logic indicators).':'Nominal ADC scale 0\u20133.3 V, not voltage-calibrated. ADC timing estimates the conversion midpoint, not the sampling aperture.'}</small></section>`;
     }
     const api={stepDelays,stepOptions,measureStepResponse,stepResponseHTML};if(typeof module==='object'&&module.exports)module.exports=api;else Object.assign(root.ESPIO ||= {},api);
 })(globalThis);

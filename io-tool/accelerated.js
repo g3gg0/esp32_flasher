@@ -155,6 +155,10 @@
             if(r.pin!==values.pin||r.point_count!==config.delays.length||r.sample_count!==count||r.data.length!==count*6||r.mode_mask!==values.mode_mask||r.min_delay_ns!==values.min_delay_ns||r.max_delay_us!==values.max_delay_us||r.settle_us!==values.settle_us||r.repetitions!==values.repetitions||r.measurement!==(values.slot===65535?0:1)||r.duration_us>8020000){this.close();throw new Error('Malformed step-response result.');}
             const view=new DataView(r.data.buffer,r.data.byteOffset,r.data.length),samples=[];
             for(let i=0;i<count;i++){const mean=view.getUint16(i*6,true)/16,actualDelayNs=view.getUint32(i*6+2,true);if(mean>(r.measurement?4095:1)||actualDelayNs<config.delays[i%config.delays.length]||actualDelayNs>r.duration_us*1000){this.close();throw new Error('Invalid step-response sample.');}samples.push({mean,actualDelayNs});}
+            if(r.first_adc_trigger_ns){
+                if(!r.measurement||(r.first_adc_trigger_ns!==65535&&(r.first_adc_trigger_ns<config.delays[0]||r.first_adc_trigger_ns>samples[0].actualDelayNs))){this.close();throw new Error('Invalid ADC trigger timing.');}
+                samples.firstADCTriggerNs=r.first_adc_trigger_ns;
+            }
             return samples;
         }
         captureRelease() { return this.captureRequest('capture_command', { operation: protocol.captureOperations.RELEASE }); }
