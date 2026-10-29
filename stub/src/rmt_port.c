@@ -32,7 +32,7 @@ uint32_t hw_rmt_config(unsigned channel,unsigned hz,unsigned idle){
     }
     if(!best)return 0;
     requested_hz=hz;idle_level=idle;
-    rmt_ll_enable_bus_clock(0,true);rmt_ll_reset_register(0);rmt_ll_enable_periph_clock(&RMT,true);
+    rmt_ll_enable_bus_clock(0,true);rmt_ll_reset_register(0);
 #if CONFIG_IDF_TARGET_ESP32 || CONFIG_IDF_TARGET_ESP32S2
     rmt_ll_set_group_clock_src(&RMT,channel,RMT_CLK_SRC_APB,1,1,0);
 #else
@@ -66,5 +66,5 @@ void hw_rmt_stop(unsigned channel){
 #endif
     rmt_ll_clear_interrupt_status(&RMT,UINT32_MAX);
 }
-void hw_rmt_release(unsigned channel){hw_rmt_stop(channel);rmt_ll_enable_group_clock(&RMT,false);rmt_ll_enable_periph_clock(&RMT,false);rmt_ll_enable_bus_clock(0,false);}
+void hw_rmt_release(unsigned channel){hw_rmt_stop(channel);rmt_ll_enable_group_clock(&RMT,false);rmt_ll_enable_bus_clock(0,false);}
 #endif

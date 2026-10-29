@@ -725,3 +725,31 @@ auch die LOW-Rückkehr passen. Nicht monotone Reaktionen werden gekennzeichnet.
 Externe Treiber, Pulls, kapazitive Lasten und andere Dynamik bleiben mögliche
 Ursachen. Die neue Messung benötigt den beschleunigten Stub, aber keine neuen
 Firmwarebefehle: Konfiguration und Erfassung nutzen die vorhandenen RPCs.
+
+
+### Selectable usage-scan measurements and step response (stub 0.9.0)
+
+Switching trace, load profile and step response are independently selectable.
+Selecting only step response skips the older host-timed sweep. The native
+`STPC`/`STPR` command in `stub/protocol.json` performs the entire experiment and
+returns one bounded packet (at most 1004 bytes). It generates exponentially
+spaced delays and tests both falling and rising edges with pulls and D0-D3.
+Before each trial the source level uses D3. The default maximum delay and
+settling time are 10 ms, with four repetitions per point. Settle time,
+maximum delay, first delay and repetitions can be adjusted in the UI.
+
+The packet holds averaged values in Q4 and measured conversion-midpoint delays
+in nanoseconds. ADC channel warm-up occurs before settling. Delay requests are
+rounded up to CPU ticks; ADC setup/conversion latency still limits the earliest
+observable analog point. The plot uses those measured times on a logarithmic
+axis. ADC values use a clearly marked nominal 0-3.3 V scale, not a calibrated
+voltage conversion; digital points show thresholded LOW/HIGH at 0/3.3 V and the
+export retains the averaged logic fraction. Inputs without an output driver
+are skipped. Every command restores mux, driver strength, pull, output latch and
+enable state on success or ADC timeout. Host cancellation waits for the bounded
+native command before restoring the complete prior GPIO/ADC setup. Commands
+are limited to 16 delay points, 16 repeats and an 8-second device budget.
+Submicrosecond starts are accepted when the selected range fits these bounds.
+
+The interface requires stub protocol 1.9 for step response. A reused older stub
+continues to support the earlier scans but must be replaced for the new command.

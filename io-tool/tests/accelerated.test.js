@@ -27,6 +27,36 @@ function fixture(handler, options = {}) {
 const manifest = chip => JSON.parse(fs.readFileSync(path.join(__dirname, '../../stub', chip, 'stub.json'), 'utf8'));
 const fetchManifest = value => async () => ({ ok: true, json: async () => structuredClone(value) });
 
+test('ADC calibration failures expose the native bus stage without confusing readback bytes with the eFuse version', async () => {
+    for(const diagnostic of [false,true]){
+        const {transport}=fixture(()=>rpcEncode('capture_response',{status:5,failed_slot:diagnostic?0x0307:65535,detail:diagnostic?3|(2<<16)|(1<<24):3},'IOCR'));
+        transport.identity={capabilities:1<<protocol.capabilities.CAPTURE,max_packet_length:1024};
+        await assert.rejects(transport.captureRequest('adc_setup',{operation:protocol.captureOperations.ADC_INITIALIZE}),error=>{
+            assert.match(error.message,/eFuse version 3\)/);
+            if(diagnostic)assert.match(error.message,/analog register readback mismatch, register 0x07, expected 0x02, observed 0x01/);
+            else assert.doesNotMatch(error.message,/readback mismatch/);
+            return true;
+        });
+        assert.equal(transport.closed,false);
+    }
+});
+
+test('one step-response command validates the averaged payload and response correlation', async () => {
+    const config=require('../step-response.js').stepOptions({maxDelayUs:4,settleUs:2,repetitions:2});
+    const values={pin:5,slot:65535,min_delay_ns:1000,max_delay_us:4,settle_us:2,repetitions:2,mode_mask:31};
+    for(const malformed of [false,true]){
+        const {device,transport,sent}=fixture(packet=>{
+            const q=rpcDecode(packet,'step_command'),count=config.delays.length*10,data=new Uint8Array(count*6),view=new DataView(data.buffer);
+            for(let i=0;i<count;i++){view.setUint16(i*6,8,true);view.setUint32(i*6+2,config.delays[i%3]+100,true);}
+            return rpcEncode('step_response',{...q,pin:malformed?6:q.pin,point_count:3,sample_count:count,duration_us:1000},undefined,data);
+        });
+        transport.identity=rpcDecode(identity('esp32s3',{protocol_minor:9,capabilities:1|(1<<protocol.capabilities.CAPTURE)}),'identity');
+        if(malformed){await assert.rejects(transport.captureStep(values,config),/Malformed step-response/);assert.equal(transport.closed,true);}
+        else{const samples=await transport.captureStep(values,config);assert.equal(samples.length,30);assert.equal(samples[0].mean,.5);assert.equal(samples[0].actualDelayNs,1100);}
+        assert.equal(sent.length,1);assert.equal(device.port.writable,true);
+    }
+});
+
 test('debug log budget bounds polling bursts and reports dropped logs each second', t => {
     let now = 0;
     t.mock.method(performance, 'now', () => now);

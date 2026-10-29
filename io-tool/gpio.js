@@ -284,11 +284,12 @@
                 }
             });
         }
-        async scanUsage(ids, { method = 'pull', settleMs = 20, loadProfile = false, maxDrive = null, signal, onResult = () => {}, onPhase = () => {} } = {}) {
+        async scanUsage(ids, { method = 'pull', settleMs = 20, loadProfile = false, switching = true, stepResponse = false, stepOptions = {}, maxDrive = null, signal, onResult = () => {}, onPhase = () => {} } = {}) {
             if (this.readOnly) throw new Error('Load the accelerated stub for usage scans.');
             if (this.scanning || this.fault || !this.active) throw new Error('Usage-Scan nicht verfügbar.');
             if (!['pull', 'drive', 'compare', 'sweep'].includes(method) || !Number.isFinite(settleMs) || settleMs < 1 || settleMs > 200 || typeof loadProfile !== 'boolean' || (maxDrive !== null && (!Number.isInteger(maxDrive) || maxDrive < 0))) throw new Error('Ungültige Scanparameter.');
             const targets = [...new Set(ids)];
+            if (typeof switching !== 'boolean' || typeof stepResponse !== 'boolean' || !(switching || loadProfile || stepResponse)) throw new Error('Select at least one usage-scan measurement.');
             if (!targets.length || targets.some(id => !this.pins.has(id) || !this.descriptor(id) || this.pinOwners.has(id))) throw new Error('Nur verwaltete, verfügbare GPIO-Pins ohne Peripheriezuordnung können gescannt werden.');
             this.scanning = true; const resume = this.running;
             await this.pause();
@@ -300,7 +301,7 @@
                         for (const id of targets) {
                             if (signal?.aborted) throw new DOMException('Scan abgebrochen.', 'AbortError');
                             if (this.adc?.channel(id)) await this.adc.open();
-                            const result = await adcAPI.scanPin(this, id, { method, settleMs, loadProfile, maxDrive, signal, onPhase });
+                            const result = await adcAPI.scanPin(this, id, { method, settleMs, loadProfile, switching, stepResponse, stepOptions, maxDrive, signal, onPhase });
                             results.push(result); onResult(result);
                         }
                         return results;

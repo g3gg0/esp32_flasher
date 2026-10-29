@@ -3,6 +3,28 @@
 #include "adc_calibration.h"
 #include "platform.h"
 #include <stdbool.h>
+#ifdef STUB_HAS_PERIPHERALS
+#include "sdkconfig.h"
+#endif
+#if defined(STUB_HAS_PERIPHERALS) && defined(CONFIG_IDF_TARGET_ESP32C6)
+#include "modem/modem_lpcon_reg.h"
+#include "soc/pmu_reg.h"
+#include "soc/i2c_ana_mst_reg.h"
+#elif defined(RPC_C6_CAL_TEST)
+#define MODEM_LPCON_CLK_CONF_REG 0x600af018u
+#define MODEM_LPCON_CLK_CONF_FORCE_ON_REG 0x600af01cu
+#define MODEM_LPCON_CLK_I2C_MST_EN (1u<<2)
+#define MODEM_LPCON_CLK_I2C_MST_FO (1u<<2)
+#define MODEM_LPCON_I2C_MST_CLK_CONF_REG 0x600af010u
+#define MODEM_LPCON_CLK_I2C_MST_SEL_160M 1u
+#define I2C_ANA_MST_I2C0_CTRL_REG 0x60000200u
+#define I2C_ANA_MST_ANA_CONF1_REG 0x6000060cu
+#define I2C_ANA_MST_ANA_CONF1_M 0x00ffffffu
+#define I2C_ANA_MST_ANA_CONF2_REG 0x60000610u
+#define PMU_RF_PWC_REG 0x600b0154u
+#define PMU_PERIF_I2C_RSTB (1u<<26)
+#define PMU_XPD_PERIF_I2C (1u<<27)
+#endif
 #if defined(STUB_HAS_PERIPHERALS) || defined(RPC_CAPTURE_TEST)
 uint32_t capture_read(uint32_t address);
 void capture_write(uint32_t address,uint32_t value,uint32_t mask);
@@ -10,24 +32,40 @@ static struct {uint32_t address,value,mask;} saved[24];
 static struct {uint8_t reg,value,mask;} analog[16];
 static unsigned saved_count,analog_count;
 static uint32_t bus,command_mask,block;
+static unsigned failure_slot=0xffff;
+static uint8_t failure_expected,failure_actual;
+unsigned capture_adc_failure_slot(void){return failure_slot;}
+static bool fail(unsigned stage,unsigned reg,unsigned expected,unsigned actual){if(failure_slot==0xffff){failure_slot=(stage<<8)|(reg&255);failure_expected=expected;failure_actual=actual;}return false;}
 unsigned capture_adc_ready(void){return bus&&saved_count;}
 static bool valid(uint32_t a,int write){return a&&!(a&3)&&platform_register_allowed(a,write);}
 static bool idle(void){uint32_t start=platform_cycles(),limit=5000u*platform_ticks_per_us();do{if(!(capture_read(bus)&(1u<<25)))return true;}while((uint32_t)(platform_cycles()-start)<limit);return false;}
-static bool ar(unsigned reg,uint32_t *value){if(!idle())return false;capture_write(bus,block|(reg<<8)|command_mask,UINT32_MAX);if(!idle())return false;*value=capture_read(bus)>>16&255;return true;}
-static bool aw(unsigned reg,uint32_t value){if(!idle())return false;capture_write(bus,block|(reg<<8)|((value&255)<<16)|(1u<<24)|command_mask,UINT32_MAX);return idle();}
+static bool prepare_bus(void);
+static bool ar(unsigned reg,uint32_t *value){if(!prepare_bus()||!idle())return fail(1,reg,0,1);capture_write(bus,block|(reg<<8)|command_mask,UINT32_MAX);if(!idle())return fail(1,reg,0,1);*value=capture_read(bus)>>16&255;return true;}
+static bool aw(unsigned reg,uint32_t value){if(!prepare_bus()||!idle())return fail(2,reg,0,1);capture_write(bus,block|(reg<<8)|((value&255)<<16)|(1u<<24)|command_mask,UINT32_MAX);return idle()||fail(2,reg,0,1);}
 static bool aset(unsigned reg,uint32_t value,uint32_t mask){
     uint32_t old;if(!ar(reg,&old))return false;
     unsigned i;for(i=0;i<analog_count;i++)if(analog[i].reg==reg)break;
     if(i==analog_count){if(analog_count==16)return false;analog_count++;analog[i].reg=reg;analog[i].value=0;analog[i].mask=0;}
     unsigned fresh=mask&~analog[i].mask;analog[i].value|=old&fresh;analog[i].mask|=mask;
     if(!aw(reg,(old&~mask)|(value&mask))||!ar(reg,&old))return false;
-    return (old&mask)==(value&mask);
+    return (old&mask)==(value&mask)||fail(3,reg,value&mask,old&mask);
 }
 static bool set(uint32_t a,uint32_t value,uint32_t mask){
     unsigned i;for(i=0;i<saved_count;i++)if(saved[i].address==a)break;
     if(i==saved_count){if(saved_count==24)return false;saved_count++;saved[i].address=a;saved[i].value=0;saved[i].mask=0;}
     uint32_t fresh=mask&~saved[i].mask;if(fresh)saved[i].value|=capture_read(a)&fresh;saved[i].mask|=mask;
     capture_write(a,value,mask);return true;
+}
+static bool prepare_bus(void){
+#if defined(CONFIG_IDF_TARGET_ESP32C6) || defined(RPC_C6_CAL_TEST)
+    /* ESP-IDF esp_rom_hp_regi2c_esp32c6.c replaces the older ROM RF table
+     * layout. Re-apply its SAR mask and select the current master per access. */
+    if(block!=0x69)return false;
+    if(!set(I2C_ANA_MST_ANA_CONF1_REG,I2C_ANA_MST_ANA_CONF1_M&~(1u<<9),I2C_ANA_MST_ANA_CONF1_M))return false;
+    bus=I2C_ANA_MST_I2C0_CTRL_REG+((capture_read(I2C_ANA_MST_ANA_CONF2_REG)&(1u<<11))?0:4);
+    command_mask=0;
+#endif
+    return true;
 }
 static bool efuse(uint32_t address,unsigned shift,unsigned bits,uint32_t *value){
     if(!bits||bits>16||shift>31||!valid(address,0)||(shift+bits>32&&!valid(address+4,0)))return false;
@@ -41,6 +79,7 @@ unsigned capture_adc_release(void){
     bus=0;return ok?RPC_STATUS_OK:RPC_STATUS_IO_ERROR;
 }
 unsigned capture_adc_initialize(const rpc_header_t *request,uint32_t length,uint32_t codes[2],uint32_t *version){
+    failure_slot=0xffff;failure_expected=failure_actual=0;
     if(length<sizeof(rpc_adc_setup_t))return RPC_STATUS_BAD_LENGTH;
     const rpc_adc_setup_t *p=(const void *)request;
     if(saved_count||analog_count)return RPC_STATUS_BAD_ARGUMENT;
@@ -60,16 +99,27 @@ unsigned capture_adc_initialize(const rpc_header_t *request,uint32_t length,uint
         codes[u]=code;
     }
     for(unsigned i=0;i<p->init_count;i++)if(!set(ops[i*3],ops[i*3+1],ops[i*3+2]))goto failed;
+#if defined(CONFIG_IDF_TARGET_ESP32C6) || defined(RPC_C6_CAL_TEST)
+    /* Match IDF's SAR regi2c enable sequence even after an inherited ROM/stub
+     * session. Keep both the root gate and force-on active during readback. */
+    if(!set(MODEM_LPCON_CLK_CONF_REG,MODEM_LPCON_CLK_I2C_MST_EN,MODEM_LPCON_CLK_I2C_MST_EN)||
+       !set(MODEM_LPCON_CLK_CONF_FORCE_ON_REG,MODEM_LPCON_CLK_I2C_MST_FO,MODEM_LPCON_CLK_I2C_MST_FO)||
+       !set(MODEM_LPCON_I2C_MST_CLK_CONF_REG,MODEM_LPCON_CLK_I2C_MST_SEL_160M,MODEM_LPCON_CLK_I2C_MST_SEL_160M)||
+       !set(PMU_RF_PWC_REG,0,PMU_PERIF_I2C_RSTB)||
+       !set(PMU_RF_PWC_REG,PMU_XPD_PERIF_I2C,PMU_XPD_PERIF_I2C)||
+       !set(PMU_RF_PWC_REG,PMU_PERIF_I2C_RSTB,PMU_PERIF_I2C_RSTB))goto failed;
+#endif
     bus=p->bus_control;command_mask=p->bus_command_mask;block=p->block;
     if(p->bus_select&&!(capture_read(p->bus_select)&p->bus_select_mask))bus+=4;
     for(unsigned i=p->init_count;i<p->init_count+p->analog_count;i++)if(!aset(ops[i*3],ops[i*3+1],ops[i*3+2]))goto failed;
     for(unsigned u=0;u<p->unit_count;u++){unsigned k=u*19;if(!aset(p->units[k+15],codes[u]>>8,p->units[k+16])||!aset(p->units[k+17],codes[u]&255,p->units[k+18]))goto failed;}
     platform_delay(2000);return RPC_STATUS_OK;
 failed:
-    capture_adc_release();return RPC_STATUS_IO_ERROR;
+    capture_adc_release();if(failure_slot!=0xffff)*version=(*version&65535u)|((uint32_t)failure_expected<<16)|((uint32_t)failure_actual<<24);return RPC_STATUS_IO_ERROR;
 }
 #else
 unsigned capture_adc_ready(void){return 0;}
+unsigned capture_adc_failure_slot(void){return 0xffff;}
 unsigned capture_adc_release(void){return RPC_STATUS_OK;}
 unsigned capture_adc_initialize(const rpc_header_t *p,uint32_t n,uint32_t c[2],uint32_t *v){(void)p;(void)n;(void)c;(void)v;return RPC_STATUS_UNSUPPORTED;}
 #endif

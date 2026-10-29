@@ -4,7 +4,7 @@
   "compiler": "riscv32-esp-elf-",
   "text": "0x4ff50000",
   "data": "0x4ff60000",
-  "textBudget": 24576,
+  "textBudget": 28672,
   "dataBudget": 16384,
   "stack": 2048,
   "registerStart": "0x50000000",

@@ -3,10 +3,18 @@
 #include <stdint.h>
 #include <stddef.h>
 #define RPC_PROTOCOL_MAJOR 1u
-#define RPC_PROTOCOL_MINOR 8u
+#define RPC_PROTOCOL_MINOR 9u
 #define RPC_MAX_PACKET_LENGTH 1024u
 #define RPC_MAX_REGISTER_DELAY_US 100000u
-#define RPC_BUILD_VERSION "0.8.0"
+#define RPC_BUILD_VERSION "0.9.2"
+#define RPC_STEPRESPONSE_MAXPOINTS 16u
+#define RPC_STEPRESPONSE_MAXRECORDS 160u
+#define RPC_STEPRESPONSE_RECORDSIZE 6u
+#define RPC_STEPRESPONSE_DEFAULTMAXDELAYUS 10000u
+#define RPC_STEPRESPONSE_DEFAULTSETTLEUS 10000u
+#define RPC_STEPRESPONSE_DEFAULTREPETITIONS 4u
+#define RPC_STEPRESPONSE_MAXREPETITIONS 16u
+#define RPC_STEPRESPONSE_MAXDURATIONUS 8000000u
 #define RPC_STATUS_OK 0u
 #define RPC_STATUS_UNSUPPORTED 1u
 #define RPC_STATUS_BAD_LENGTH 2u
@@ -294,6 +302,46 @@ typedef struct __attribute__((packed)) {
     uint16_t data_length;
 } rpc_fuse_record_t;
 _Static_assert(sizeof(rpc_fuse_record_t) == 8, "fuse_record wire size");
+typedef struct __attribute__((packed)) {
+    rpc_header_t header;
+    uint16_t pin;
+    uint16_t slot;
+    uint32_t min_delay_ns;
+    uint32_t max_delay_us;
+    uint32_t settle_us;
+    uint16_t repetitions;
+    uint16_t mode_mask;
+    uint32_t mux_addr;
+    uint32_t pull_up;
+    uint32_t pull_down;
+    uint32_t output_addr;
+    uint32_t enable_addr;
+    uint32_t enable_set_addr;
+    uint32_t enable_clear_addr;
+    uint32_t set_addr;
+    uint32_t clear_addr;
+    uint32_t input_addr;
+    uint32_t bit_mask;
+} rpc_step_command_t;
+_Static_assert(sizeof(rpc_step_command_t) == 72, "step_command wire size");
+#define RPC_MAGIC_STEP_COMMAND "STPC"
+typedef struct __attribute__((packed)) {
+    rpc_header_t header;
+    uint32_t status;
+    uint16_t pin;
+    uint16_t point_count;
+    uint32_t mode_mask;
+    uint32_t min_delay_ns;
+    uint32_t max_delay_us;
+    uint32_t settle_us;
+    uint16_t repetitions;
+    uint16_t measurement;
+    uint32_t duration_us;
+    uint16_t sample_count;
+    uint16_t reserved;
+} rpc_step_response_t;
+_Static_assert(sizeof(rpc_step_response_t) == 44, "step_response wire size");
+#define RPC_MAGIC_STEP_RESPONSE "STPR"
 #define RPC_MODULES(X) \
     X(I2C, "I2CC", "I2CR") \
     X(SPI, "SPIC", "SPIR") \

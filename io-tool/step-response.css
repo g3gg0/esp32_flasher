@@ -1,0 +1,2 @@
+.step-response svg{display:block;width:100%;height:auto;min-width:0}.step-response p{font-size:11px;line-height:1.6}.scan-plots{grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}#step-options{display:flex;flex-wrap:wrap;gap:12px}#step-options[hidden]{display:none}#step-options label{display:flex;flex-direction:column;gap:6px;font-size:11px}#step-options input{width:110px}
+.step-legend{display:flex;flex-wrap:wrap;gap:5px 12px;font-size:10px}.step-legend span{display:flex;align-items:center;gap:4px}.step-legend i{width:12px;height:3px;display:inline-block}

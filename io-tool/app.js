@@ -919,16 +919,26 @@
     function updateScanControls() {
         const active = !!scanAbort, targets = scanTargets();
         const analogCount = targets.filter(id => adcChannel(id)).length;
-        const blocked = !accelerated() || !controller || controller.fault || busy || operation || !targets.length;
+        const chosen=$('scan-switching').checked||$('scan-load-profile').checked||$('scan-step-response').checked;
+        let stepError='';
+        if($('scan-step-response').checked){try{if(!transport?.supportsStepResponse?.())throw new Error('Load accelerated stub 0.9.0 or newer for step response.');ESPIO.stepOptions(readStepOptions());}catch(error){stepError=error.message;}}
+        const blocked = !accelerated() || !controller || controller.fault || busy || operation || !targets.length || !chosen || !!stepError;
         $('scan-start').disabled = blocked; $('scan-start').hidden = active;
         $('scan-cancel').hidden = !active;
         $('scan-target').disabled = active || busy || operation;
         $('scan-settle').disabled = active || busy || operation;
         $('scan-load-profile').disabled = active || busy || operation;
+        $('scan-switching').disabled = active || busy || operation;
+        $('scan-step-response').disabled = active || busy || operation;
+        $('step-options').hidden = !$('scan-step-response').checked;
+        for(const id of ['step-max','step-settle','step-repeats','step-min'])$(id).disabled=active||busy||operation;
         $('scan-export').disabled = !scanResults.length || active;
         $('scan-info').textContent = !targets.length ? 'Einen verfügbaren GPIO wählen oder alle GPIOs des Boards scannen.' : `${targets.length} GPIOs · ${analogCount} mit ADC, ${targets.length - analogCount} nur digital · Idle (High-Z), dann LOW → HIGH → LOW je Pull-/Treiberstufe. Dunkelgrün: Pulls, zunehmend hellgrün: D0 bis zur stärksten Stufe, Rot: Sollwert. Pins ohne passende Treiber/Pulls werden nur beobachtet. Vorherige Konfiguration wird wiederhergestellt.`;
         if(targets.length && $('scan-load-profile').checked) $('scan-info').textContent += ' Lastprofil: Idle (High-Z) → Pulls → alle Treiberstufen bis zur stärksten, je LOW und HIGH.';
+        if(!chosen)$('scan-info').textContent='Select at least one measurement.';
+        if(stepError)$('scan-info').textContent=stepError;
     }
+    function readStepOptions(){return {maxDelayUs:Math.round(Number($('step-max').value)*1000),settleUs:Math.round(Number($('step-settle').value)*1000),repetitions:Number($('step-repeats').value),minDelayNs:Math.round(Number($('step-min').value)*1000)};}
     let lastPinScope = null;
     function renderPinScope() {
         if (scanAbort) return;
@@ -936,10 +946,11 @@
         if (lastPinScope === result) return;
         lastPinScope = result;
         $('pin-scope').hidden = !result;
-        $('pin-scope').querySelector('strong').textContent = result?.method === 'observe' ? 'Usage-Scope · Eingangsmessung' : 'Usage-Scope · LOW → HIGH → LOW';
-        $('pin-scope-plot').innerHTML = result ? ESPIO.scopeLegend(result) + ESPIO.scopeSVG(result) : '';
+        $('pin-scope').querySelector('strong').textContent = result?.stepResponse && result.switching===false ? 'Step response' : result?.method === 'observe' ? 'Usage-Scope · Eingangsmessung' : 'Usage-Scope · LOW → HIGH → LOW';
+        $('pin-scope-plot').innerHTML = result && result.switching!==false ? ESPIO.scopeLegend(result) + ESPIO.scopeSVG(result) : '';
         $('pin-load-profile').innerHTML = result ? ESPIO.loadProfileHTML(result) : '';
-        $('pin-scope-stats').textContent = result ? ESPIO.scopeStats(result) : '';
+        $('pin-step-response').innerHTML = result ? ESPIO.stepResponseHTML(result) : '';
+        $('pin-scope-stats').textContent = result && result.switching!==false ? ESPIO.scopeStats(result) : '';
     }
     function renderScanResults() {
         if (scanAbort || !scanResults.length) return;
@@ -963,9 +974,10 @@
             const chart = document.createElement('div'); chart.className = 'scope-plot'; chart.innerHTML = ESPIO.scopeLegend(result) + ESPIO.scopeSVG(result);
             const times = document.createElement('small'); times.textContent = `${ESPIO.scopeStats(result)}${digital ? ' · Nur digital; keine Analogbewertung' : ` · ADC-Hardwaretrim: ${result.calibration?.source || '—'}`} · Zeitachse pro Durchlauf, keine zeitliche Streckung.`;
             const showLoad = result.loadProfile || result.loadProfileSkipped;
-            const plots = document.createElement('div'); plots.className = showLoad ? 'scan-plots' : 'scan-plots no-load-profile'; plots.append(chart);
+            const plots = document.createElement('div'); plots.className = 'scan-plots'; if(result.switching!==false)plots.append(chart);
             if(showLoad){const loadPlot=document.createElement('div');loadPlot.innerHTML=ESPIO.loadProfileHTML(result);plots.append(loadPlot);}
-            detail.append(note, plots, times);
+            if(result.stepResponse){const stepPlot=document.createElement('div');stepPlot.innerHTML=ESPIO.stepResponseHTML(result);plots.append(stepPlot);}
+            detail.append(note, plots);if(result.switching!==false)detail.append(times);
         }
         const source = document.createElement('p');
         source.className = scanMetadata?.simulation ? 'simulation-label' : '';
@@ -978,13 +990,13 @@
         const method = 'sweep';
         const ids = scanTargets(); if (!ids.length) return;
         const current = controller;
-        scanMetadata = { chip: chip.id, board: board.id, simulation: session === 'demo', capturedAt: new Date().toISOString(), loadProfile: $('scan-load-profile').checked };
+        scanMetadata = { chip: chip.id, board: board.id, simulation: session === 'demo', capturedAt: new Date().toISOString(), loadProfile: $('scan-load-profile').checked, switching:$('scan-switching').checked, stepResponse:$('scan-step-response').checked,stepOptions:readStepOptions() };
         scanAbort = new AbortController(); scanResults = []; operation = true; updateControls();
         $('scan-results').replaceChildren(); $('pin-scope').hidden = true; lastPinScope = null;
         $('scan-progress').textContent = 'Polling anhalten, Scan vorbereiten …';
         let lastStage = '';
         try {
-            await current.scanUsage(ids, { method, settleMs: Number($('scan-settle').value), loadProfile: scanMetadata.loadProfile, signal: scanAbort.signal,
+            await current.scanUsage(ids, { method, settleMs: Number($('scan-settle').value), loadProfile: scanMetadata.loadProfile, switching:scanMetadata.switching,stepResponse:scanMetadata.stepResponse,stepOptions:scanMetadata.stepOptions,signal: scanAbort.signal,
                 onPhase: (id, phase, { attempt = 1, maxAttempts = 4 } = {}) => {
                     const stage = phase.replace(/ (low|high|return-low|idle|observe)$/, '').replace(/^pull$/, 'Internal pulls').replace(/^idle$/, 'High-Z').replace(/^observe$/, 'Observe only').replace(/^drive /, 'Drive strength ');
                     const message = t(`Measuring GPIO${id}: ${stage} (attempt ${attempt} of ${maxAttempts})...`);
@@ -1163,7 +1175,7 @@
     $('read-mode').addEventListener('change', () => changeReadMode($('read-mode').value));
     $('scan-start').addEventListener('click', startScan);
     $('scan-cancel').addEventListener('click', () => { scanAbort?.abort(); $('scan-progress').textContent = 'Abbruch angefordert; laufenden Zugriff beenden und Pin wiederherstellen …'; });
-    for (const id of ['scan-target', 'scan-load-profile']) $(id).addEventListener('change', updateScanControls);
+    for (const id of ['scan-target', 'scan-load-profile','scan-switching','scan-step-response','step-max','step-settle','step-repeats','step-min']) $(id).addEventListener('change', updateScanControls);
     $('scan-export').addEventListener('click', () => {
         const data = { format: 'esp-io-usage-scan-v3', ...scanMetadata, rawMax: 4095, calibrated: false, results: scanResults };
         const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));

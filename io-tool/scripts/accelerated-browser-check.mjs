@@ -101,7 +101,13 @@ try {
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'SYNC') {
                         if (!this.acceleratedRunning) continue;
                         const target = ESPIO.acceleratedTargets[window.peerChip];
-                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:8, max_packet_length:1024, capabilities:1536 | (target.sdmmc ? 303 : 295) | (["esp32c2","esp32c61"].includes(window.peerChip)?0:16), chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
+                        await this.processPacket(ESPIO.rpcEncode('identity', { protocol_major:1, protocol_minor:ESPIO.rpcProtocol.version.minor, max_packet_length:1024, capabilities:1536 | (target.sdmmc ? 303 : 295) | (["esp32c2","esp32c61"].includes(window.peerChip)?0:16), chip:window.peerChip, cpu:target.cpu, cpu_cores:target.cores, build:ESPIO.rpcProtocol.buildVersion, idf:'6.1' }));
+                    } else if (new TextDecoder().decode(packet.slice(0,4)) === 'STPC') {
+                        this.stepCalls=(this.stepCalls||0)+1;
+                        const q=ESPIO.rpcDecode(packet,'step_command'),cfg=ESPIO.stepOptions({minDelayNs:q.min_delay_ns,maxDelayUs:q.max_delay_us,settleUs:q.settle_us,repetitions:q.repetitions},q.mode_mask);
+                        const modes=[0,1,2,3,4].filter(m=>q.mode_mask&1<<m),count=cfg.delays.length*modes.length*2,data=new Uint8Array(count*6),v=new DataView(data.buffer);
+                        for(let i=0;i<count;i++){const ns=cfg.delays[i%cfg.delays.length],fall=Math.exp(-ns/10000),mean=(i<count/2?fall:1-fall)*(q.slot===65535?1:4095);v.setUint16(i*6,Math.round(mean*16),true);v.setUint32(i*6+2,ns+(q.slot===65535?50:12000),true);}
+                        await this.processPacket(ESPIO.rpcEncode('step_response',{...q,point_count:cfg.delays.length,sample_count:count,measurement:q.slot===65535?0:1,duration_us:cfg.budget+100000},undefined,data));
                     } else if (new TextDecoder().decode(packet.slice(0,4)) === 'IOCC') {
                         await this.processPacket(await this.captureReply(packet));
                     } else if (['I2CC','SPIC','PWMC','RMTC'].includes(new TextDecoder().decode(packet.slice(0,4)))) {
@@ -240,7 +246,7 @@ try {
     assert.equal(await evaluate(`!!document.querySelector('[data-peripheral="gpio"], [data-peripheral="adc"]')`), false, 'GPIO and ADC use the pin inspector and measurement selector');
     await evaluate(`document.querySelector('[data-peripheral="fuses"]').click()`);
     assert.equal(await evaluate(`${$('fuses-panel')}.hidden || ${$('fuses-read')}.disabled`),false,'FUSES must open directly after accelerated handoff without GPIO or board clicks');
-    assert.ok((await evaluate(`${$('accelerated-info')}.textContent`)).includes('1.8'));
+    assert.ok(await evaluate(`${$('accelerated-info')}.textContent.includes('1.'+ESPIO.rpcProtocol.version.minor)`));
     assert.equal(await evaluate(`${$('load-accelerated')}.disabled`), true);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);
     await wait(`!${$('disconnect')}.disabled`);
@@ -259,6 +265,17 @@ try {
     assert.equal(await evaluate(`${$('pin-drive')}.value`), '2', 'pull changes retain drive strength');
     assert.equal(await evaluate(`(()=>{const a=${$('pin-pull')}.getBoundingClientRect(),b=${$('pin-drive')}.getBoundingClientRect();return Math.abs(a.width-b.width)<1&&Math.abs(a.y-b.y)<1&&a.right<b.left;})()`), true, 'pull and drive occupy equal columns on one row');
     await wait(`!${$('disconnect')}.disabled`);
+    await evaluate(`${$('scan-switching')}.checked=false;${$('scan-load-profile')}.checked=false;${$('scan-step-response')}.checked=true;${$('step-max')}.value='0.004';${$('step-settle')}.value='0.002';${$('step-repeats')}.value='2';${$('scan-step-response')}.dispatchEvent(new Event('change'));`);
+    assert.equal(await evaluate(`${$('scan-start')}.disabled`),false,'step response is independently selectable');
+    await evaluate(`${$('scan-start')}.click()`);
+    await wait(`!${$('scan-start')}.hidden && document.querySelector('#scan-results .step-response svg')`);
+    assert.equal(await evaluate(`serialPeer.stepCalls`),1,'complete scan uses one device request');
+    assert.equal(await evaluate(`document.querySelectorAll('#scan-results .scope-plot').length`),0,'switching trace is disabled');
+    assert.equal(await evaluate(`${$('drive-level')}.textContent`),'1 / HIGH','pin state restored after step response');
+    await evaluate(`${$('scan-step-response')}.checked=false;${$('scan-step-response')}.dispatchEvent(new Event('change'));`);
+    assert.equal(await evaluate(`${$('scan-start')}.disabled`),true,'empty scan selection is blocked');
+    await evaluate(`${$('scan-switching')}.checked=true;${$('scan-load-profile')}.checked=true;${$('scan-load-profile')}.dispatchEvent(new Event('change'));`);
+    console.log(`PASS: ${chip} independent step-response selection, one averaged native request, SVG and restored output.`);
     if (process.argv.includes('--gpio-only')) {
         await evaluate(`${$('disconnect')}.click()`);
         await wait(`${$('session-badge')}.textContent === 'OFFLINE'`);
@@ -277,7 +294,7 @@ try {
     await evaluate(`${$('flash-address')}.value='0';${$('flash-length')}.value='8192';window.flashDump=[];window.flashClosed=false;window.showSaveFilePicker=async()=>({createWritable:async()=>({write:async bytes=>flashDump.push(bytes.slice()),close:async()=>{window.flashClosed=true;},abort:async()=>{}})});${$('flash-download')}.click();`);
     await wait(`window.flashClosed && ${$('flash-result')}.textContent.startsWith('Download fertig')`);
     assert.equal(await evaluate(`flashDump.length===1 && flashDump[0].every((b,i)=>b===serialPeer.flashMemory[i])`),true);
-    await evaluate(`window.confirm=()=>true;${$('flash-erase')}.click();`);await wait(`${$('flash-result')}.textContent.startsWith('Gelöscht')`);
+    await evaluate(`window.confirm=()=>true;${$('flash-erase')}.click();`);await wait(`${$('flash-result')}.textContent.startsWith('GelÃ¶scht')`);
     await evaluate(`${$('flash-check')}.click()`);await wait(`${$('flash-result')}.textContent.startsWith('Leer')`);
     console.log(`PASS: ${chip} FLASH probe, CRC/blank check, partial-sector program with preserved edges, verify, streaming download and erase; simulated memory.`);
     await evaluate(`document.querySelector('[data-peripheral="fuses"]').click();${$('fuses-read')}.click();`);

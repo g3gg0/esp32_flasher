@@ -2,6 +2,7 @@
     'use strict';
     const profiles = typeof module === 'object' && module.exports ? require('./configs/adc.js') : root.ESPIO.adcProfiles;
     const loadAPI = typeof module === 'object' && module.exports ? require('./load-profile.js') : root.ESPIO;
+    const stepAPI = typeof module === 'object' && module.exports ? require('./step-response.js') : root.ESPIO;
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
     const abortError = () => new DOMException('Scan abgebrochen.', 'AbortError');
     const checkAbort = signal => { if (signal?.aborted) throw abortError(); };
@@ -268,7 +269,7 @@
 
     // Called inside the controller queue with polling paused. Work on one pin
     // at a time and restore physical register values rather than UI defaults.
-    async function scanPin(controller, id, { method, settleMs, loadProfile: wantLoadProfile = false, maxDrive = null, signal, onPhase = () => {} }) {
+    async function scanPin(controller, id, { method, settleMs, loadProfile: wantLoadProfile = false, switching = true, stepResponse = false, stepOptions = {}, maxDrive = null, signal, onPhase = () => {} }) {
         const pin = controller.descriptor(id), adc = controller.adc;
         const hasADC = !!adc?.channel(id);
         // Analog where the pad has an ADC channel, otherwise the digital input level.
@@ -301,6 +302,7 @@
             baseline: null, low: [], high: [], returnLow: [], runs: [], startedAt: controller.clock(),
             timingQuality: [],
             calibration: hasADC ? structuredClone(adc.calibration) : null, timing: 'Host intervals around serial commands; no device clock timestamps.' };
+        result.switching = switching;
         if(loadProfile)result.loadProfile={format:'esp-io-load-profile-v2',measurement:result.measurement,maxDrive:topDrive,settleMs,rawMax:hasADC?adc.profile.max:null,driveMask:strength.mask,driveShift:strength.shift,stages:[]};
         let primaryError, restoreErrors = [];
         const readSample = async () => {
@@ -337,7 +339,7 @@
             const ladder = sweep ? ['idle', ...(pin.pulls ? ['pull'] : []), ...(pin.output ? ['drive'] : [])] : [];
             const modes = [...ladder, ...methods.filter(mode => !ladder.includes(mode))];
             const tests=modes.flatMap(mode=>mode==='drive'?Array.from({length:sweep?topDrive+1:1},(_,driveStrength)=>({mode,driveStrength})):[{mode,driveStrength:null}]);
-            for (const {mode,driveStrength} of tests) {
+            for (const {mode,driveStrength} of (switching || loadProfile ? tests : [])) {
                 checkAbort(signal);
                 const primary = methods.includes(mode) && (mode !== 'drive' || driveStrength === 0);
                 let run, bestGap = Infinity;
@@ -389,7 +391,11 @@
                 }
             }
             result.finishedAt = controller.clock();
-            result.assessment = classifyUsage(result, adc?.profile.max);
+            result.assessment = result.runs.length ? classifyUsage(result, adc?.profile.max) : { label: 'Step response only', interpretation: 'Device-side averaged edge measurements.', note: '', span: null };
+            if (stepResponse) {
+                onPhase(id, 'Step response', { attempt: 1, maxAttempts: 1 });
+                result.stepResponse = await stepAPI.measureStepResponse(controller, id, stepOptions, signal);
+            }
         } catch (error) { primaryError = error; }
         finally {
             // Always first release test drive, even on cancel/ADC timeout. Try

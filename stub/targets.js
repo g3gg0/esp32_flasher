@@ -3,7 +3,7 @@
     const targets = {
   "esp32": {
     "textStart": 1074331648,
-    "textBudget": 24576,
+    "textBudget": 28672,
     "dataStart": 1073528832,
     "dataBudget": 16384,
     "stackBytes": 2048,
@@ -16,7 +16,7 @@
   },
   "esp32c2": {
     "textStart": 1077411840,
-    "textBudget": 18432,
+    "textBudget": 20480,
     "dataStart": 1070219264,
     "dataBudget": 10240,
     "stackBytes": 2048,
@@ -71,9 +71,9 @@
   },
   "esp32c61": {
     "textStart": 1082130432,
-    "textBudget": 18432,
+    "textBudget": 20480,
     "dataStart": 1082150912,
-    "dataBudget": 10240,
+    "dataBudget": 11264,
     "stackBytes": 2048,
     "cpu": "riscv32",
     "cores": 1,
@@ -99,7 +99,7 @@
   },
   "esp32p4": {
     "textStart": 1341456384,
-    "textBudget": 24576,
+    "textBudget": 28672,
     "dataStart": 1341521920,
     "dataBudget": 16384,
     "stackBytes": 2048,
@@ -114,7 +114,7 @@
   },
   "esp32s2": {
     "textStart": 1073905664,
-    "textBudget": 24576,
+    "textBudget": 28672,
     "dataStart": 1073545216,
     "dataBudget": 16384,
     "stackBytes": 2048,
@@ -128,7 +128,7 @@
   },
   "esp32s3": {
     "textStart": 1077379072,
-    "textBudget": 24576,
+    "textBudget": 28672,
     "dataStart": 1070202880,
     "dataBudget": 16384,
     "stackBytes": 2048,

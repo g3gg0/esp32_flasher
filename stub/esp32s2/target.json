@@ -4,7 +4,7 @@
   "compiler": "xtensa-esp32s2-elf-",
   "text": "0x40028000",
   "data": "0x3ffd0000",
-  "textBudget": 24576,
+  "textBudget": 28672,
   "dataBudget": 16384,
   "stack": 2048,
   "registerStart": "0x3f400000",

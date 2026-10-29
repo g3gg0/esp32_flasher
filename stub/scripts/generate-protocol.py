@@ -14,6 +14,9 @@ def generate():
     for key, value in spec["version"].items():
         lines.append(f"#define RPC_PROTOCOL_{key.upper()} {value}u")
     lines += [f'#define RPC_MAX_PACKET_LENGTH {spec["maxPacketLength"]}u', f'#define RPC_MAX_REGISTER_DELAY_US {spec["maxRegisterDelayUs"]}u', f'#define RPC_BUILD_VERSION "{spec["buildVersion"]}"']
+    for name, value in spec.get("stepResponse", {}).items():
+        if isinstance(value, int):
+            lines.append(f'#define RPC_STEPRESPONSE_{name.upper()} {value}u')
     for group in ("status", "operations", "identityFlags", "registerOperations", "capabilities", "sdmmcResponseTypes", "sdmmcErrors", "peripheralErrors", "captureOperations", "rmtOperations", "rmtEncodings", "flashOperations", "flashErrors", "fuseOperations", "fuseTypes"):
         for name, value in spec[group].items():
             lines.append(f'#define RPC_{group.upper()}_{name} {value}u')

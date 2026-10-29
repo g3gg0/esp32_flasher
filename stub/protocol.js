@@ -4,13 +4,13 @@
   "name": "esp-io-rpc",
   "version": {
     "major": 1,
-    "minor": 8
+    "minor": 9
   },
   "byteOrder": "little",
   "framing": "SLIP",
   "maxPacketLength": 1024,
   "maxRegisterDelayUs": 100000,
-  "buildVersion": "0.8.0",
+  "buildVersion": "0.9.2",
   "header": [
     [
       "magic",
@@ -723,6 +723,174 @@
         "data_length": 6
       },
       "size": 8
+    },
+    "step_command": {
+      "magic": "STPC",
+      "response": "step_response",
+      "fields": [
+        [
+          "pin",
+          "u16"
+        ],
+        [
+          "slot",
+          "u16"
+        ],
+        [
+          "min_delay_ns",
+          "u32"
+        ],
+        [
+          "max_delay_us",
+          "u32"
+        ],
+        [
+          "settle_us",
+          "u32"
+        ],
+        [
+          "repetitions",
+          "u16"
+        ],
+        [
+          "mode_mask",
+          "u16"
+        ],
+        [
+          "mux_addr",
+          "u32"
+        ],
+        [
+          "pull_up",
+          "u32"
+        ],
+        [
+          "pull_down",
+          "u32"
+        ],
+        [
+          "output_addr",
+          "u32"
+        ],
+        [
+          "enable_addr",
+          "u32"
+        ],
+        [
+          "enable_set_addr",
+          "u32"
+        ],
+        [
+          "enable_clear_addr",
+          "u32"
+        ],
+        [
+          "set_addr",
+          "u32"
+        ],
+        [
+          "clear_addr",
+          "u32"
+        ],
+        [
+          "input_addr",
+          "u32"
+        ],
+        [
+          "bit_mask",
+          "u32"
+        ]
+      ],
+      "offsets": {
+        "pin": 8,
+        "slot": 10,
+        "min_delay_ns": 12,
+        "max_delay_us": 16,
+        "settle_us": 20,
+        "repetitions": 24,
+        "mode_mask": 26,
+        "mux_addr": 28,
+        "pull_up": 32,
+        "pull_down": 36,
+        "output_addr": 40,
+        "enable_addr": 44,
+        "enable_set_addr": 48,
+        "enable_clear_addr": 52,
+        "set_addr": 56,
+        "clear_addr": 60,
+        "input_addr": 64,
+        "bit_mask": 68
+      },
+      "size": 72
+    },
+    "step_response": {
+      "magic": "STPR",
+      "fields": [
+        [
+          "status",
+          "u32"
+        ],
+        [
+          "pin",
+          "u16"
+        ],
+        [
+          "point_count",
+          "u16"
+        ],
+        [
+          "mode_mask",
+          "u32"
+        ],
+        [
+          "min_delay_ns",
+          "u32"
+        ],
+        [
+          "max_delay_us",
+          "u32"
+        ],
+        [
+          "settle_us",
+          "u32"
+        ],
+        [
+          "repetitions",
+          "u16"
+        ],
+        [
+          "measurement",
+          "u16"
+        ],
+        [
+          "duration_us",
+          "u32"
+        ],
+        [
+          "sample_count",
+          "u16"
+        ],
+        [
+          "reserved",
+          "u16"
+        ]
+      ],
+      "trailing": "sample_count packed records: mean_q4 uint16 and actual_delay_ns uint32. Order: falling then rising, mode ascending, delay ascending. mean_q4 is raw ADC or digital 0/1 multiplied by 16.",
+      "offsets": {
+        "status": 8,
+        "pin": 12,
+        "point_count": 14,
+        "mode_mask": 16,
+        "min_delay_ns": 20,
+        "max_delay_us": 24,
+        "settle_us": 28,
+        "repetitions": 32,
+        "measurement": 34,
+        "duration_us": 36,
+        "sample_count": 40,
+        "reserved": 42
+      },
+      "size": 44
     }
   },
   "registerOperations": {
@@ -891,6 +1059,24 @@
     "BYTES": 7,
     "TEXT": 8,
     "OPTIONAL_ID": 9
+  },
+  "stepResponse": {
+    "maxPoints": 16,
+    "maxRecords": 160,
+    "recordSize": 6,
+    "defaultMaxDelayUs": 10000,
+    "defaultSettleUs": 10000,
+    "defaultRepetitions": 4,
+    "maxRepetitions": 16,
+    "maxDurationUs": 8000000,
+    "referenceVolts": 3.3,
+    "modes": {
+      "PULL": 0,
+      "D0": 1,
+      "D1": 2,
+      "D2": 3,
+      "D3": 4
+    }
   }
 };
     if (typeof module === "object" && module.exports) module.exports = protocol;

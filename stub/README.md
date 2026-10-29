@@ -521,3 +521,23 @@ Code/data remain RAM-only. DRAM budgets are 16 KiB, or 10 KiB on C2/C61;
 C61 places data at 0x40805000 to keep its enlarged code reservation separate.
 The loader accepts smaller valid budgets within current target bounds and
 reports the mismatching field if UI and manifest layouts differ.
+
+
+### Step response, protocol 1.9 / build 0.9.0
+
+`STPC` requests one complete averaged edge scan; `STPR` returns it in one
+SLIP-framed packet. Both packed layouts, limits and Q4 sample ordering live in
+`protocol.json`. The common `capture.c` implementation precharges at D3, waits
+the requested settling time, switches using a pull or D0-D3, delays against CPU
+cycles, and samples the configured native ADC plan or digital input. It repeats
+that trial before moving to the next exponentially spaced delay. Falling and
+rising curves are packed in deterministic order with measured ADC-conversion
+midpoint delays. Pins are restored before the response, including error paths.
+
+The existing capture reply and the new at-most-1004-byte result share a union.
+There is no heap allocation. The additional routine requires 28 KiB IRAM
+reservations for ESP32/S2/S3/P4 and 20 KiB for C2/C61; other targets keep 24 KiB.
+C61 reserves 11 KiB DRAM; C2 keeps 10 KiB and other targets keep 16 KiB, all
+including their 2 KiB stack. Builds still use ESP-IDF 6.1 and run exclusively
+from RAM. Obsolete RMT periph-clock calls were removed to match the installed
+6.1 LL API; the existing group-clock calls retain clock enable/disable behavior.

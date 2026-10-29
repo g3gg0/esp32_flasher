@@ -17,9 +17,9 @@ def encode(name, values=None, trailing=b''):
 
 def command(op,count=0,selection=0,data=b''):return encode('capture_command',{'operation':op,'count':count,'selection':selection},data)
 
-def setup():
+def setup(command_mask=0):
     units=[1,1000,1,0x60000304,30,10,*([0]*9),1,15,0,255]
-    return encode('adc_setup',{'operation':6,'init_count':1,'analog_count':1,'unit_count':1,'bus_control':0x60000200,'block':0x69,'major':[0x60000300,0,2],'version_min':1,'version_exact':1,'units':units},struct.pack('<6I',0x60000400,0x33,0xff,2,7,15))
+    return encode('adc_setup',{'operation':6,'init_count':1,'analog_count':1,'unit_count':1,'bus_control':0x60000200,'bus_command_mask':command_mask,'block':0x69,'major':[0x60000300,0,2],'version_min':1,'version_exact':1,'units':units},struct.pack('<6I',0x60000400,0x33,0xff,2,7,15))
 
 def plan(slot=0,pin=5):
     return encode('capture_plan',{'operation':2,'slot':slot,'pin':pin,'low_us':10,'steps':[0x60000100,0,1,0x60000104,16,0xffffffff,0x60000100,1,1],'wait_addr':0x60000108,'wait_mask':16,'data_addr':0x6000010c,'data_mask':4095,'cleanup_addr':0x60000100,'cleanup_mask':1})
@@ -28,7 +28,7 @@ class CaptureTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();cls.exe=Path(cls.temp.name)/'capture-test'
-        subprocess.run(['cc','-std=c11','-Os','-Wall','-Wextra','-Werror','-fno-builtin','-DRPC_CAPTURE_TEST=1','-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-I',str(ROOT/'include'),'-I',str(ROOT/'src'),*[str(ROOT/'src'/n) for n in ('stub.c', 'fuses.c', 'flash.c','capture.c','adc_calibration.c','peripheral.c','sdmmc.c','rmt.c')],str(ROOT/'tests/host-platform.c'),str(ROOT/'tests/capture-mock.c'),'-o',str(cls.exe)],check=True)
+        subprocess.run(['cc','-std=c11','-Os','-Wall','-Wextra','-Werror','-fno-builtin','-DRPC_CAPTURE_TEST=1',*getattr(cls,'extra_flags',[]),'-ffunction-sections','-fdata-sections','-Wl,--gc-sections','-I',str(ROOT/'include'),'-I',str(ROOT/'src'),*[str(ROOT/'src'/n) for n in ('stub.c', 'fuses.c', 'flash.c','capture.c','adc_calibration.c','peripheral.c','sdmmc.c','rmt.c')],str(ROOT/'tests/host-platform.c'),str(ROOT/'tests/capture-mock.c'),'-o',str(cls.exe)],check=True)
     @classmethod
     def tearDownClass(cls):cls.temp.cleanup()
     def exchange(self,*requests,mode=''):
@@ -64,3 +64,59 @@ class CaptureTest(unittest.TestCase):
     def test_malformed_config_and_outside_register_window(self):
         r=self.exchange(command(1,1,data=struct.pack('<I',0x40000000)),plan(slot=24),command(1,5,data=b'\0'*20))
         self.assertTrue(all(self.status(x)!=0 for x in r))
+
+
+    def step(self, **updates):
+        q=dict(pin=5,slot=65535,min_delay_ns=1000,max_delay_us=4,settle_us=4,repetitions=2,mode_mask=31,mux_addr=0x60000518,pull_up=256,pull_down=128,output_addr=0x60000500,enable_addr=0x60000504,enable_set_addr=0x60000510,enable_clear_addr=0x60000514,set_addr=0x60000508,clear_addr=0x6000050c,input_addr=0x6000051c,bit_mask=32)
+        q.update(updates)
+        return encode('step_command',q)
+    def record_values(self,r):
+        start=8+sum({'u16':2,'u32':4}[t]*(n[0] if n else 1) for _,t,*n in SPEC['packets']['step_response']['fields'])
+        return [struct.unpack_from('<HI',r,i) for i in range(start,len(r),6)]
+    def test_both_edges_all_modes_averaged_in_one_bounded_packet(self):
+        r=self.exchange(self.step())[0]
+        self.assertEqual(r[:4],b'STPR');self.assertEqual(self.status(r),0)
+        values=self.record_values(r);self.assertEqual(len(values),30)
+        self.assertEqual([v for v,_ in values[:15]],[0]*15)
+        self.assertEqual([v for v,_ in values[15:]],[16]*15)
+        self.assertTrue(all(ns>=1000*(2**(i%3)) for i,(_,ns) in enumerate(values)))
+        self.assertLessEqual(len(r),1024)
+    def test_native_pin_state_is_restored_on_success_and_adc_timeout(self):
+        inspect=command(1,3,data=struct.pack('<3I',0x60000500,0x60000504,0x60000518))
+        for adc,mode in [(False,''),(True,'timeout')]:
+            requests=([setup(),plan()] if adc else [])+[self.step(slot=0 if adc else 65535),inspect,command(3,selection=7)]
+            r=self.exchange(*requests,mode=mode)
+            self.assertEqual(self.status(r[-3]),4 if adc else 0)
+            self.assertEqual([v[2] for v in self.samples(r[-1])],[32,32,0x80008800])
+    def test_native_adc_average_and_latency_are_reported(self):
+        r=self.exchange(setup(),plan(),self.step(slot=0,mode_mask=2))[2]
+        self.assertEqual(self.status(r),0)
+        self.assertEqual(self.record_values(r)[0][0],0x103*16)
+        self.assertTrue(self.record_values(r)[0][1]>1000)
+    def test_rejects_oversized_scans_bad_slot_registers_and_unbounded_times(self):
+        for args in [dict(repetitions=0),dict(mode_mask=32),dict(min_delay_ns=1,max_delay_us=10000),dict(settle_us=1000000),dict(slot=24),dict(mux_addr=0x40000000),dict(bit_mask=64)]:
+            r=self.exchange(self.step(**args))[0];self.assertNotEqual(self.status(r),0)
+
+
+class C6CalibrationTest(unittest.TestCase):
+    extra_flags=['-DRPC_C6_CAL_TEST=1']
+    setUpClass=classmethod(CaptureTest.setUpClass.__func__)
+    tearDownClass=classmethod(CaptureTest.tearDownClass.__func__)
+    exchange=CaptureTest.exchange
+    status=CaptureTest.status
+    samples=CaptureTest.samples
+    def test_cold_c6_bus_is_enabled_reset_and_restored(self):
+        inspect=command(1,3,data=struct.pack('<3I',0x600af018,0x600af01c,0x600b0154))
+        r=self.exchange(inspect,setup(command_mask=1<<26),command(3,selection=7),command(7),command(3,selection=7),mode='c6-cold')
+        self.assertEqual(self.status(r[1]),0)
+        self.assertEqual([x[2] for x in self.samples(r[2])],[0x84,0x44,0x0c000123])
+        self.assertEqual([x[2] for x in self.samples(r[4])],[0x80,0x40,0x0c000123])
+    def test_error_details_preserve_efuse_version_and_readback_values(self):
+        r=self.exchange(setup(),mode='ignored-write')[0]
+        status,count,slot,duration,detail=struct.unpack_from('<IHHII',r,8)
+        self.assertEqual(status,5)
+        self.assertEqual(count,0)
+        self.assertEqual(slot,0x0302)
+        self.assertEqual(detail&65535,1)
+        self.assertEqual((detail>>16)&255,7)
+        self.assertEqual(detail>>24,5)

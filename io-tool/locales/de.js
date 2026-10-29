@@ -2,6 +2,20 @@
     'use strict';
     // English source text -> German translation; {0}, {1}, ... preserve dynamic values.
     const messages = {
+    "Toniebox ESP32 variant with ESP32-S3. GPIO markers use a generic package layout.": "Toniebox-ESP32-Variante mit ESP32-S3. GPIO-Markierungen verwenden ein allgemeines Chip-Layout.",
+    "Red: falling · Green: rising. Dark: pulls; brighter: D0–D3. {0} repeats; {1} ms settling at D3 before each edge. {2}": "Rot: fallend · Grün: steigend. Dunkel: Pulls; heller: D0–D3. {0} Wiederholungen; {1} ms Einschwingen mit D3 vor jeder Flanke. {2}",
+    "Nominal ADC scale 0–3.3 V, not voltage-calibrated. Conversion latency is included in the actual delay.": "Nominale ADC-Skala 0–3,3 V, nicht spannungskalibriert. Die tatsächliche Wartezeit enthält die ADC-Wandlungszeit.",
+    "Digital readback: LOW = 0 V, HIGH = 3.3 V (logic indicators).": "Digitaler Istwert: LOW = 0 V, HIGH = 3,3 V (Logikanzeige).",
+    "Switching trace": "Schaltverlauf",
+    "Step response": "Sprungantwort",
+    "Step response · HIGH → LOW / LOW → HIGH": "Sprungantwort · HIGH → LOW / LOW → HIGH",
+    "Max delay ms": "Maximale Wartezeit ms",
+    "Settle time ms": "Einschwingzeit ms",
+    "Repeats": "Wiederholungen",
+    "Min delay µs": "Minimale Wartezeit µs",
+    "Actual edge → measurement delay (log)": "Flanke → Messzeitpunkt (log)",
+    "Select at least one measurement.": "Mindestens eine Messung auswählen.",
+    "Load accelerated stub 0.9.0 or newer for step response.": "Für die Sprungantwort beschleunigten Stub 0.9.0 oder neuer laden.",
     "Drive strength": "Treiberstufe",
     "Drive strength D{0}": "Treiberstufe D{0}",
     "Internal pulls": "Interne Pull-Widerstände",

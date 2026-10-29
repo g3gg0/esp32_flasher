@@ -121,7 +121,12 @@
             catch (error) { if (!error.response) throw error; r = error.response; failure = error; }
             const receivedAt = performance.now(), init = values.operation === protocol.captureOperations.ADC_INITIALIZE, scan = init || [protocol.captureOperations.GPIO_SCAN, protocol.captureOperations.ADC_SCAN].includes(values.operation);
             if (r.count > protocol.captureResult.maxChannels || r.data.length !== r.count * protocol.captureResult.size || ((!scan || failure) && r.count) || r.duration_us > 500000) { this.close(); throw new Error('Malformed capture response; reconnect.'); }
-            if (failure) { failure.message += init ? ` (ADC initialization/calibration, eFuse version ${r.detail})` : ` (capture slot ${r.failed_slot})`; throw failure; }
+            if (failure) {
+                const diagnostic=init&&r.failed_slot!==65535;
+                failure.message += init ? ` (ADC initialization/calibration, eFuse version ${diagnostic?r.detail&65535:r.detail})` : ` (capture slot ${r.failed_slot})`;
+                if(diagnostic){const stages={1:'analog-I2C read BUSY timeout',2:'analog-I2C write BUSY timeout',3:'analog register readback mismatch'},hex=n=>'0x'+n.toString(16).padStart(2,'0');failure.message+=` · ${stages[r.failed_slot>>>8]||'initialization failed'}, register ${hex(r.failed_slot&255)}, expected ${hex(r.detail>>>16&255)}, observed ${hex(r.detail>>>24)}`;}
+                throw failure;
+            }
             const view = new DataView(r.data.buffer, r.data.byteOffset, r.data.byteLength), samples = [], seen = new Set();
             for (let i = 0; i < r.count; i++) {
                 const offset = i * 12, pin = view.getUint16(offset, true), kind = view.getUint16(offset + 2, true), value = view.getUint32(offset + 4, true), us = view.getUint32(offset + 8, true);
@@ -142,6 +147,16 @@
             return r;
         }
         captureADC(selection) { return this.captureRequest('capture_command', { operation: protocol.captureOperations.ADC_SCAN, selection }); }
+        supportsStepResponse() { return !!this.identity && this.identity.protocol_minor >= 9 && this.supports('CAPTURE'); }
+        async captureStep(values, config) {
+            if (!this.supportsStepResponse()) throw new Error('Load accelerated stub 0.9.0 or newer for step response.');
+            const r=await this.request('step_command',values,'step_response',undefined,undefined,undefined,Math.ceil(config.budget/1000)+3000);
+            const modes=[0,1,2,3,4].filter(m=>values.mode_mask&1<<m),count=config.delays.length*modes.length*2;
+            if(r.pin!==values.pin||r.point_count!==config.delays.length||r.sample_count!==count||r.data.length!==count*6||r.mode_mask!==values.mode_mask||r.min_delay_ns!==values.min_delay_ns||r.max_delay_us!==values.max_delay_us||r.settle_us!==values.settle_us||r.repetitions!==values.repetitions||r.measurement!==(values.slot===65535?0:1)||r.duration_us>8020000){this.close();throw new Error('Malformed step-response result.');}
+            const view=new DataView(r.data.buffer,r.data.byteOffset,r.data.length),samples=[];
+            for(let i=0;i<count;i++){const mean=view.getUint16(i*6,true)/16,actualDelayNs=view.getUint32(i*6+2,true);if(mean>(r.measurement?4095:1)||actualDelayNs<config.delays[i%config.delays.length]||actualDelayNs>r.duration_us*1000){this.close();throw new Error('Invalid step-response sample.');}samples.push({mean,actualDelayNs});}
+            return samples;
+        }
         captureRelease() { return this.captureRequest('capture_command', { operation: protocol.captureOperations.RELEASE }); }
         async captureADCInitialize(profile) {
             const cal = profile.hardwareCalibration, a = profile.analog, field = f => f ? [f.address, f.shift, f.bits] : [0, 0, 0];
