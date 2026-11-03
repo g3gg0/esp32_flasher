@@ -37,4 +37,4 @@ Beim Stoppen/Entladen werden Blöcke entfernt und belegte GPIOs wieder auf Einga
 
 ## Beispiele
 
-`gpio-blink.js`, `i2c-analyzer.js` (Scan, Registermap), `lattice-machxo2.js` (MachXO2 per I²C, SRAM-Laden experimentell), `ws2812.js` (WS2812/SK6812 3ch/4ch über RMT). Beispiele werden per HTTP geladen (nicht über `file://`).
+`gpio-blink.js`, `i2c-analyzer.js` (Scan, Registermap), `lattice-machxo2.js` (MachXO2 wahlweise per I²C oder Slave-SPI; Config-Flash programmieren, SRAM-Laden nur I²C und experimentell), `ws2812.js` (WS2812/SK6812 3ch/4ch über RMT). Beispiele werden per HTTP geladen (nicht über `file://`).
