@@ -1,0 +1,19 @@
+.extension-panel{margin-top:20px}
+.extension-panel>.sd-actions,.extension-panel>.sd-note,.extension-panel>.muted,#extension-list{margin-left:20px;margin-right:20px}
+.extension-panel .file-button{padding:6px 10px;border:1px dashed var(--line);border-radius:7px;cursor:pointer}
+.extension-panel .file-button input{width:auto;max-width:230px;border:0;background:transparent;padding:0}
+.extension-panel .sd-note.error,.ext-status.error{color:var(--red)}
+.ext-card{margin:0 0 18px}
+.ext-config{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+.ext-config label{display:flex;flex-direction:column;gap:8px;font-size:11px;color:var(--muted)}
+.ext-blocks{display:flex;flex-direction:column;gap:14px;margin-top:14px}
+.ext-block{margin:0;background:#101516}
+.ext-block .sd-actions input[type=text],.ext-block .sd-actions input:not([type]){width:150px}
+.ext-block .sd-actions select{max-width:260px}
+.ext-output{max-height:260px;overflow:auto;white-space:pre-wrap}
+.ext-table-wrap{max-height:420px;overflow:auto;margin:10px 0}
+.ext-table{border-collapse:collapse;width:100%;font:11px Consolas,monospace}
+.ext-table th,.ext-table td{text-align:left;border-bottom:1px solid var(--line);padding:5px 10px;vertical-align:top}
+.ext-table th{position:sticky;top:0;background:#151a1b;color:var(--muted);font-weight:500}
+.ext-table td:nth-child(n+3){color:var(--muted)}
+.ext-block progress{width:100%}

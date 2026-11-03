@@ -126,7 +126,7 @@
         for (const kind of ['apply', 'release', 'scan', 'transfer', 'register-scan']) $(`i2c-${kind}`).addEventListener('click', () => action(kind));
         $('i2c-cancel').addEventListener('click', () => { cancel?.abort(); update(); });
         $('i2c-board-preset').addEventListener('click', () => { if (live() || ctx.blocked() || !ctx.board().i2c) return; Object.assign(draft(), ctx.board().i2c); render(true); ctx.update(); });
-        return { render, update, role(id) { const d = live() ? host.config : draft(); return d.sda === id ? 'I²C SDA' : d.scl === id ? 'I²C SCL' : ''; },
+        return { render, update, host: () => live() ? host : null, role(id) { const d = live() ? host.config : draft(); return d.sda === id ? 'I²C SDA' : d.scl === id ? 'I²C SCL' : ''; },
             reset() { host = null; log = []; found = []; $('i2c-progress').textContent = ''; $('i2c-register-body').replaceChildren(); renderLog(); renderAddresses(); }, abort() { cancel?.abort(); } };
     };
 })(globalThis);

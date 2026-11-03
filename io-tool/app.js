@@ -56,6 +56,10 @@
 
     const fusesPanel = ESPIO.createFusesPanel({ controller: () => controller, chip: () => chip, blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); }, log });
 
+    const extensionPanel = ESPIO.createExtensionPanel({ controller: () => controller, chip: () => chip, board: () => board, pins: exposedPins, session: () => session, gpioOption, log,
+        blocked: () => busy || operation || !accelerated(), setOperation: value => { operation = value; updateControls(); },
+        hosts: { i2c: () => i2cPanel.host(), spi: () => peripheralPanels.host('spi'), pwm: () => peripheralPanels.host('pwm'), rmt: () => rmtPanel.host() } });
+
     function gpioOption(id) {
         const pin = chip.pins.find(pin => pin.id === id);
         const reason = pinReason(id), note = board.notes?.[id];
@@ -481,13 +485,13 @@
         updateSDControls();
         updateLDO4Controls();
         if(renderPeripheralButtons()){renderSD();i2cPanel.render(false);peripheralPanels.render(peripheral);rmtPanel.render(peripheral);flashPanel.render(peripheral);fusesPanel.render(peripheral);}
-        i2cPanel.update(); peripheralPanels.update(); rmtPanel.update(); flashPanel.update(); fusesPanel.update();
+        i2cPanel.update(); peripheralPanels.update(); rmtPanel.update(); flashPanel.update(); fusesPanel.update(); extensionPanel.update();
     }
     async function initializeBoard() {
         const token = ++boardRequest;
         sampleTimes = []; lastPoll = null;
         if (controller) { await controller.release(); await controller.close(); controller = null; }
-        sdHost = null; clearSDResults(); renderSD(); i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); fusesPanel.reset(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral); fusesPanel.render(peripheral);
+        sdHost = null; clearSDResults(); renderSD(); i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); fusesPanel.reset(); extensionPanel.reset(); i2cPanel.render(peripheral === 'i2c'); peripheralPanels.render(peripheral); rmtPanel.render(peripheral); flashPanel.render(peripheral); fusesPanel.render(peripheral);
         if (!transport || session === 'offline') return;
         const current = new GPIOController(transport, chip, {
             readOnly: !accelerated(),
@@ -630,7 +634,7 @@
             status('Releasing I/O and loading accelerated stub into RAM…');
             await controller.release(); await controller.close(); controller = null;
             transport.close(); transport = null;
-            sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); fusesPanel.reset(); clearScan();
+            sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); fusesPanel.reset(); extensionPanel.reset(); clearScan();
             transport = await ESPIO.startAccelerated(flasher, manifest);
             $('interval').value = '1';
             await initializeBoard();
