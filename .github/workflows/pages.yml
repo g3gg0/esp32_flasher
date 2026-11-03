@@ -2,7 +2,6 @@ name: Deploy static tools to GitHub Pages
 
 on:
   push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +10,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -23,9 +22,22 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+      - name: Install ESP-IDF 6.1 and build RAM stubs
+        run: |
+          export IDF_PATH="$RUNNER_TEMP/esp-idf"
+          git -c advice.detachedHead=false clone --depth 1 --branch v6.1 --recurse-submodules --shallow-submodules https://github.com/espressif/esp-idf.git "$IDF_PATH"
+          targets=$(python3 -c 'from pathlib import Path; print(",".join(p.parent.name for p in sorted(Path("stub").glob("esp32*/target.json"))))')
+          "$IDF_PATH/install.sh" "$targets"
+          source "$IDF_PATH/export.sh"
+          IFS=, read -r -a targets <<< "$targets"
+          for target in "${targets[@]}"; do
+            python3 stub/scripts/build.py --target "$target"
+          done
       - name: Configure GitHub Pages
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: actions/configure-pages@v5
       - name: Stage static tools
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         run: |
           mkdir -p _site/io-tool _site/stub
           cp index.html esp32-viewer.html flasher.html chips.js flasher.js esp32-parser.js _site/
@@ -38,9 +50,11 @@ jobs:
             fi
           done
       - name: Upload site
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: actions/upload-pages-artifact@v4
         with:
           path: _site
       - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         id: deployment
         uses: actions/deploy-pages@v4
