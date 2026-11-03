@@ -58,7 +58,7 @@
                         abort(signal);
                         const id = config[role], pin = c.descriptor(id), bank = g.banks[Math.floor(id / 32)], bit = 2 ** (id % 32), route = routes[role];
                         for (const o of pin.digitalRoute) await this.set(o.address, 0, o.mask);
-                        await this.set(g.pinConfig + id * 4, this.kind === 'I2C' ? 4 : 0, g.pinConfigMask);
+                        await this.set(g.pinConfig + id * 4, this.kind === 'I2C' && role === 'sda' ? 4 : 0, g.pinConfigMask);
                         await this.set(pin.mux, g.muxGPIO | (this.kind === 'I2C' && config.pullups ? g.pullUp : 0), g.muxMask);
                         if (route.input !== undefined) await this.set(v[4] + route.input * 4, id | 128, 255);
                         await this.set(g.matrix + id * 4, route.out ?? g.matrixGPIO, g.matrixMask);

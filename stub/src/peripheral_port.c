@@ -82,7 +82,8 @@ void hw_i2c_config(unsigned port, unsigned speed) {
     i2c_ll_enable_controller_clock(hw, true);
     i2c_ll_set_source_clk(hw, I2C_SOURCE);
     i2c_ll_set_mode(hw, I2C_BUS_MODE_MASTER);
-    i2c_ll_enable_pins_open_drain(hw, true); i2c_ll_enable_arbitration(hw, false);
+    i2c_ll_enable_pins_open_drain(hw, true); hw->ctr.scl_force_out = 0; /* drive SCL actively; weak pull-up is too slow for clock edges */
+    i2c_ll_enable_arbitration(hw, false);
     i2c_ll_master_rx_full_ack_level(hw, false);
     i2c_ll_set_data_mode(hw, I2C_DATA_MODE_MSB_FIRST, I2C_DATA_MODE_MSB_FIRST);
     i2c_ll_enable_fifo_mode(hw, true);
