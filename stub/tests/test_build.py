@@ -17,6 +17,14 @@ class BuildTest(unittest.TestCase):
 
             self.assertIn(components / 'esp_rom/esp32', include_dirs(components, 'esp32', Path(temp) / 'out'))
 
+    def test_includes_target_specific_regi2c_hal_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            components = Path(temp) / 'components'
+            regi2c_include = components / 'esp_hal_regi2c/esp32/include'
+            regi2c_include.mkdir(parents=True)
+
+            self.assertIn(regi2c_include, include_dirs(components, 'esp32', Path(temp) / 'out'))
+
 
 if __name__ == '__main__':
     unittest.main()

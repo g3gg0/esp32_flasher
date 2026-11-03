@@ -21,7 +21,7 @@ def run(args):
 def include_dirs(components, target, out):
     includes = [out, ROOT / "include", components / "esp_common/include", components / "esp_rom/include", components / f"esp_rom/{target}", components / f"esp_rom/{target}/include", components / f"soc/{target}/include", components / f"soc/{target}/register", components / f"soc/{target}/register/hw_ver1", components / "soc/include", components / "esp_hw_support/include", components / "esp_hal/include"]
     includes += [components / f'hal/{target}/include', components / 'hal/include', components / 'hal/platform_port/include', components / f'esp_rom/{target}/include/{target}']
-    for name in ('clock', 'i2c', 'gpspi', 'ledc', 'gpio', 'rmt'):
+    for name in ('clock', 'i2c', 'gpspi', 'ledc', 'gpio', 'rmt', 'regi2c'):
         includes += [components / f'esp_hal_{name}/{target}/include', components / f'esp_hal_{name}/include']
     includes += [p / 'include' for p in components.iterdir() if p.name != 'linux' and (p / 'include').is_dir()]
     return includes
