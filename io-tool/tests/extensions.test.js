@@ -141,3 +141,41 @@ test('Lattice example reads the device ID and looks up the part name', async () 
     assert.deepEqual(sent.find(item => item[1][0] === 0xE0), [0x40, [0xE0, 0, 0, 0], 4]);
     await controller.close();
 });
+
+test('Lattice example runs over SPI: ID read and config-flash programming sequence', async () => {
+    const { controller } = await fixture({ i2c: false });
+    const sent = [];
+    // Status: DONE set, not busy; ID answer follows the four command bytes.
+    const spiHost = { ready: true, controller, config: { mode: 0, lsb: false }, transfer: async data => {
+        sent.push([...data]);
+        const rx = new Uint8Array(data.length);
+        if (data[0] === 0xE0) rx.set([0x01, 0x2B, 0xB0, 0x43], 4);
+        if (data[0] === 0x3C) rx.set([0x00, 0x00, 0x01, 0x00], 4);
+        return rx;
+    } };
+    const buttons = new Map(), out = { set: text => out.text = text };
+    const helper = { button: (label, fn) => { buttons.set(label, fn); return {}; }, field: () => ({ value: '', input: { files: [{ arrayBuffer: async () => Uint8Array.from({ length: 40 }, (_, i) => i).buffer }] } }), output: () => out };
+    const block = new Proxy({}, { get: (_, key) => helper[key] || (() => block) });
+    globalThis.window = { confirm: () => true };
+    const manager = new ExtensionManager({
+        controller: () => controller, chip: () => chips.esp32c3, board: () => ({ id: 'raw', name: 'Raw' }), pins: () => [], session: () => 'demo', log() {},
+        hosts: { i2c: () => null, spi: () => spiHost }, blocked: () => false, setOperation() {}, ui: { block: () => block }
+    });
+    const entry = await manager.loadSource(fs.readFileSync(path.join(__dirname, '../extensions/lattice-machxo2.js'), 'utf8'), 'lattice.js');
+    assert.equal(manager.missing(entry), '', 'single available SPI host is selected automatically');
+    await manager.start('lattice-machxo2');
+    await buttons.get('ID lesen')();
+    assert.match(out.text, /LCMXO2-2000HC/);
+    sent.length = 0;
+    await buttons.get('Flash programmieren')();
+    delete globalThis.window;
+    const opcodes = sent.map(p => p[0]).filter(op => op !== 0x3C);
+    assert.deepEqual(opcodes.slice(0, 3), [0xC6, 0x0E, 0x46]);
+    assert.deepEqual(sent.find(p => p[0] === 0x0E), [0x0E, 0x04, 0, 0], 'flash erase mask');
+    const pages = sent.filter(p => p[0] === 0x70);
+    assert.equal(pages.length, 3, '40 bytes are padded to three 16-byte pages');
+    assert.deepEqual(pages[0].slice(0, 6), [0x70, 0, 0, 1, 0, 1]);
+    assert.deepEqual(pages[2].slice(-8), new Array(8).fill(0xFF));
+    assert.ok(opcodes.includes(0x5E) && opcodes.includes(0x79));
+    await controller.close();
+});
