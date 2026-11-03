@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="step-response.css?v=0.9.0">
     <link rel="stylesheet" href="sd.css?v=0.8.0-ui4">
     <link rel="stylesheet" href="peripherals.css?v=0.8.0-ui4">
+    <link rel="stylesheet" href="extensions.css?v=0.10.0">
     <script src="locales/de.js?v=0.8.0-ui5" defer></script>
     <script src="i18n.js?v=0.8.0-ui5" defer></script>
     <script src="../chips.js?v=0.8.0-ui4" defer></script>
@@ -43,6 +44,8 @@
     <script src="rmt-ui.js?v=0.8.0-ui4" defer></script>
     <script src="flash.js?v=0.8.0-ui4" defer></script>
     <script src="flash-ui.js?v=0.8.0-ui4" defer></script>
+    <script src="extensions.js?v=0.10.0" defer></script>
+    <script src="extensions-ui.js?v=0.10.0" defer></script>
 
     <script src="app.js?v=0.8.0-ui8" defer></script>
 </head>
@@ -192,6 +195,17 @@
                 </div>
             </div>
             <details id="catalog-details"><summary>Registerkatalog öffnen</summary><label class="catalog-search">Registerblock <select id="register-block" aria-label="Registerblock"></select></label><label class="catalog-search">Register suchen <input id="register-filter" placeholder="z. B. GPIO_IN, RMT, SPI_CMD …" type="search"></label><div id="register-list"></div></details>
+        </section>
+        <section class="panel extension-panel">
+            <div class="section-heading"><div><h2>Extensions</h2><span class="muted">JavaScript-Erweiterungen mit Zugriff auf GPIO, I²C, SPI, RMT und PWM</span></div></div>
+            <div class="sd-actions">
+                <label>Beispiel <select id="extension-example" aria-label="Beispiel-Extension"></select></label><button id="extension-load-example">Beispiel laden</button>
+                <label class="file-button">Von Datei laden … <input id="extension-file" type="file" accept=".js,text/javascript" multiple></label>
+            </div>
+            <p id="extension-note" class="sd-note" role="status" aria-live="polite"></p>
+            <p class="sd-note">Extensions laufen mit vollem Zugriff auf diese Seite und das Board. Vorher I²C/SPI/RMT/PWM im Peripherie-Block aktivieren; die Extension wählt dann die Schnittstelle und fehlende GPIOs hier. Aufbau: <a href="extensions/README.md" target="_blank" rel="noreferrer">extensions/README.md</a></p>
+            <p id="extension-empty" class="muted">Keine Extension geladen.</p>
+            <div id="extension-list"></div>
         </section>
         <details class="panel logs"><summary>Verbindungsprotokoll <span id="log-count">0</span></summary><pre id="log" aria-label="Verbindungsprotokoll"></pre></details>
         <footer><span>ESP I/O Lab <b>02</b> · RAM-Stub · Flash-Zugriff im FLASH-Block</span><span id="measurement-note">Grün zeigt den digitalen Pinpegel, keine Spannung. Kurze Pulse zwischen Abtastungen können fehlen.</span></footer>

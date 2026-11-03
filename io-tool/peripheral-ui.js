@@ -74,6 +74,6 @@
             } catch (e) { $(`${kind}-result`).textContent = e.message; ctx.log(kind.toUpperCase(), e.message); }
             finally { ctx.setOperation(false); update(); }
         }
-        return { render, update, reset() { hosts.spi = hosts.pwm = null; }, role(id) { for (const kind of ['spi', 'pwm']) if (active(kind)) for (const role of roles(kind)) if (hosts[kind].config[role] === id) return `${kind.toUpperCase()} ${role.toUpperCase()}`; return ''; } };
+        return { render, update, host: kind => active(kind) ? hosts[kind] : null, reset() { hosts.spi = hosts.pwm = null; }, role(id) { for (const kind of ['spi', 'pwm']) if (active(kind)) for (const role of roles(kind)) if (hosts[kind].config[role] === id) return `${kind.toUpperCase()} ${role.toUpperCase()}`; return ''; } };
     };
 })(globalThis);

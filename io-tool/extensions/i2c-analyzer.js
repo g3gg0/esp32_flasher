@@ -1,0 +1,196 @@
+// I²C Analyzer: bus scan, device identification and a named register map.
+// Uses the I²C port that was activated in the I²C block of the lab.
+(function () {
+    const hex2 = v => v.toString(16).toUpperCase().padStart(2, '0');
+    const bits = (value, ...fields) => fields.map(([hi, lo, name, names]) => {
+        const v = (value >> lo) & ((1 << (hi - lo + 1)) - 1);
+        return `${name}=${names?.[v] ?? v}`;
+    }).join(' ');
+    const bcd = v => (v >> 4) * 10 + (v & 15);
+
+    // width 1: byte registers, burst reads; width 2: 16-bit big-endian pointer registers.
+    const DEVICES = [
+        {
+            name: 'BME280 / BMP280', addresses: [0x76, 0x77], id: { reg: 0xD0, values: { 0x60: 'BME280', 0x58: 'BMP280', 0x56: 'BMP280 (Muster)', 0x57: 'BMP280 (Muster)', 0x61: 'BME680' } }, range: [0x88, 0xFF],
+            regs: { 0xD0: 'id', 0xE0: 'reset', 0xF2: 'ctrl_hum', 0xF3: 'status', 0xF4: 'ctrl_meas', 0xF5: 'config', 0xF7: 'press_msb', 0xF8: 'press_lsb', 0xF9: 'press_xlsb', 0xFA: 'temp_msb', 0xFB: 'temp_lsb', 0xFC: 'temp_xlsb', 0xFD: 'hum_msb', 0xFE: 'hum_lsb', 0xE1: 'calib26 (H2 lsb)' },
+            decode: { 0xF2: v => bits(v, [2, 0, 'osrs_h']), 0xF3: v => bits(v, [3, 3, 'measuring'], [0, 0, 'im_update']), 0xF4: v => bits(v, [7, 5, 'osrs_t'], [4, 2, 'osrs_p'], [1, 0, 'mode', { 0: 'sleep', 1: 'forced', 2: 'forced', 3: 'normal' }]), 0xF5: v => bits(v, [7, 5, 't_sb'], [4, 2, 'filter'], [0, 0, 'spi3w_en']) }
+        },
+        {
+            name: 'MPU-6050 / 6500 / 9250', addresses: [0x68, 0x69], id: { reg: 0x75, values: { 0x68: 'MPU-6050', 0x70: 'MPU-6500', 0x71: 'MPU-9250', 0x73: 'MPU-9255', 0x72: 'MPU-6050 (Klon)' } }, range: [0x00, 0x7F],
+            regs: { 0x19: 'SMPLRT_DIV', 0x1A: 'CONFIG', 0x1B: 'GYRO_CONFIG', 0x1C: 'ACCEL_CONFIG', 0x23: 'FIFO_EN', 0x37: 'INT_PIN_CFG', 0x38: 'INT_ENABLE', 0x3A: 'INT_STATUS', 0x3B: 'ACCEL_XOUT_H', 0x3C: 'ACCEL_XOUT_L', 0x3D: 'ACCEL_YOUT_H', 0x3E: 'ACCEL_YOUT_L', 0x3F: 'ACCEL_ZOUT_H', 0x40: 'ACCEL_ZOUT_L', 0x41: 'TEMP_OUT_H', 0x42: 'TEMP_OUT_L', 0x43: 'GYRO_XOUT_H', 0x44: 'GYRO_XOUT_L', 0x45: 'GYRO_YOUT_H', 0x46: 'GYRO_YOUT_L', 0x47: 'GYRO_ZOUT_H', 0x48: 'GYRO_ZOUT_L', 0x6A: 'USER_CTRL', 0x6B: 'PWR_MGMT_1', 0x6C: 'PWR_MGMT_2', 0x75: 'WHO_AM_I' },
+            decode: { 0x1B: v => bits(v, [4, 3, 'FS_SEL', ['±250°/s', '±500°/s', '±1000°/s', '±2000°/s']]), 0x1C: v => bits(v, [4, 3, 'AFS_SEL', ['±2g', '±4g', '±8g', '±16g']]), 0x6B: v => bits(v, [7, 7, 'DEVICE_RESET'], [6, 6, 'SLEEP'], [3, 3, 'TEMP_DIS'], [2, 0, 'CLKSEL']) }
+        },
+        {
+            name: 'DS3231 RTC', addresses: [0x68], range: [0x00, 0x12],
+            id: { probe: async read => { const [s, m, h, , d, mo] = await read(0, 6); return (s & 0x80) === 0 && bcd(s) < 60 && bcd(m & 0x7F) < 60 && (h & 0x80) === 0 && bcd(d) >= 1 && bcd(d) <= 31 && (mo & 0x1F) >= 1 ? 'DS3231 / DS1307 (Zeitregister plausibel)' : ''; } },
+            regs: { 0x00: 'Seconds', 0x01: 'Minutes', 0x02: 'Hours', 0x03: 'Day', 0x04: 'Date', 0x05: 'Month/Century', 0x06: 'Year', 0x07: 'Alarm1 Sec', 0x08: 'Alarm1 Min', 0x09: 'Alarm1 Hour', 0x0A: 'Alarm1 Day/Date', 0x0B: 'Alarm2 Min', 0x0C: 'Alarm2 Hour', 0x0D: 'Alarm2 Day/Date', 0x0E: 'Control', 0x0F: 'Control/Status', 0x10: 'Aging offset', 0x11: 'Temp MSB', 0x12: 'Temp LSB' },
+            decode: { 0x00: v => `${bcd(v & 0x7F)} s`, 0x01: v => `${bcd(v & 0x7F)} min`, 0x02: v => `${bcd(v & 0x3F)} h`, 0x06: v => `20${String(bcd(v)).padStart(2, '0')}`, 0x0E: v => bits(v, [7, 7, '/EOSC'], [2, 2, 'INTCN']), 0x0F: v => bits(v, [7, 7, 'OSF'], [2, 2, 'BSY'], [1, 1, 'A2F'], [0, 0, 'A1F']), 0x11: v => `${v > 127 ? v - 256 : v} °C` }
+        },
+        {
+            name: 'INA219', addresses: Array.from({ length: 16 }, (_, i) => 0x40 + i), width: 2, range: [0x00, 0x05],
+            id: { probe: async read => { const [hi, lo] = await read(0, 2); return (hi << 8 | lo) === 0x399F ? 'INA219 (Config-Reset 0x399F)' : ''; } },
+            regs: { 0x00: 'Configuration', 0x01: 'Shunt voltage', 0x02: 'Bus voltage', 0x03: 'Power', 0x04: 'Current', 0x05: 'Calibration' },
+            decode: { 0x01: v => `${((v << 16) >> 16) * 10} µV`, 0x02: v => `${(v >> 3) * 4} mV` }
+        },
+        {
+            name: 'INA226', addresses: Array.from({ length: 16 }, (_, i) => 0x40 + i), width: 2, range: [0x00, 0x08], extra: [0xFE, 0xFF],
+            id: { probe: async read => { const [hi, lo] = await read(0xFE, 2); return (hi << 8 | lo) === 0x5449 ? 'INA226 / INA23x (TI)' : ''; } },
+            regs: { 0x00: 'Configuration', 0x01: 'Shunt voltage', 0x02: 'Bus voltage', 0x03: 'Power', 0x04: 'Current', 0x05: 'Calibration', 0x06: 'Mask/Enable', 0x07: 'Alert limit', 0xFE: 'Manufacturer ID', 0xFF: 'Die ID' },
+            decode: { 0x01: v => `${((v << 16) >> 16) * 2.5} µV`, 0x02: v => `${v * 1.25} mV` }
+        },
+        {
+            name: 'TMP117', addresses: [0x48, 0x49, 0x4A, 0x4B], width: 2, range: [0x00, 0x08], extra: [0x0F],
+            id: { probe: async read => { const [hi, lo] = await read(0x0F, 2); return (hi << 8 | lo) === 0x0117 ? 'TMP117' : ''; } },
+            regs: { 0x00: 'Temp_Result', 0x01: 'Configuration', 0x02: 'THigh_Limit', 0x03: 'TLow_Limit', 0x04: 'EEPROM_UL', 0x05: 'EEPROM1', 0x06: 'EEPROM2', 0x07: 'Temp_Offset', 0x08: 'EEPROM3', 0x0F: 'Device_ID' },
+            decode: { 0x00: v => `${(((v << 16) >> 16) * 0.0078125).toFixed(3)} °C` }
+        },
+        {
+            name: 'ADS1115 / ADS1015', addresses: [0x48, 0x49, 0x4A, 0x4B], width: 2, range: [0x00, 0x03],
+            id: { probe: async read => { const [hi, lo] = await read(1, 2); return (hi << 8 | lo) === 0x8583 ? 'ADS1115 / ADS1015 (Config-Reset 0x8583)' : ''; } },
+            regs: { 0x00: 'Conversion', 0x01: 'Config', 0x02: 'Lo_thresh', 0x03: 'Hi_thresh' }
+        },
+        {
+            name: 'VL53L0X', addresses: [0x29], id: { reg: 0xC0, values: { 0xEE: 'VL53L0X' } }, range: [0xC0, 0xC2],
+            regs: { 0xC0: 'IDENTIFICATION_MODEL_ID', 0xC1: 'IDENTIFICATION_REVISION_ID', 0xC2: 'MODULE_TYPE' }
+        },
+        {
+            name: 'TCS34725', addresses: [0x29], id: { reg: 0x92, values: { 0x44: 'TCS34725', 0x4D: 'TCS34727' } }, range: [0x80, 0x9F],
+            regs: { 0x80: 'ENABLE', 0x81: 'ATIME', 0x83: 'WTIME', 0x8D: 'CONFIG', 0x8F: 'CONTROL', 0x92: 'ID', 0x93: 'STATUS', 0x94: 'CDATAL', 0x95: 'CDATAH', 0x96: 'RDATAL', 0x97: 'RDATAH', 0x98: 'GDATAL', 0x99: 'GDATAH', 0x9A: 'BDATAL', 0x9B: 'BDATAH' }
+        },
+        {
+            name: 'Lattice MachXO2 (Config-Port)', addresses: [0x40], range: [0, 0],
+            id: { probe: async (read, address, host) => { try { await host.transfer(address, Uint8Array.of(0x74, 0, 0)); const id = await host.transfer(address, Uint8Array.of(0xE0, 0, 0, 0), 4); return (id[0] << 24 | id[1] << 16 | id[2] << 8 | id[3]) >>> 0 >> 16 === 0x012B ? `MachXO2 ID ${[...id].map(hex2).join('')}` : ''; } catch { return ''; } } },
+            regs: {}, commandOnly: true
+        }
+    ];
+    // Devices without readable registers: guessed from the address only.
+    const ADDRESS_HINTS = {
+        0x3C: 'SSD1306/SH1106 OLED', 0x3D: 'SSD1306/SH1106 OLED', 0x23: 'BH1750', 0x5C: 'BH1750 (ADDR=H)', 0x38: 'AHT10/AHT20 · FT6x36 · PCF8574A', 0x44: 'SHT3x / OPT3001', 0x45: 'SHT3x', 0x39: 'APDS-9960 / TSL2561', 0x1E: 'HMC5883L / LIS3MDL', 0x0C: 'AK8963 (MPU-9250)',
+        0x57: 'EEPROM 24Cxx / MAX3010x', 0x50: 'EEPROM 24Cxx', 0x51: 'EEPROM 24Cxx / PCF8563', 0x20: 'PCF8574 / MCP23017', 0x27: 'PCF8574 LCD', 0x5A: 'MLX90614 / CCS811', 0x60: 'MCP4725 / Si5351', 0x62: 'SCD4x', 0x6A: 'LSM6DS3 / BQ25895', 0x6B: 'LSM6DS3 / BQ25895', 0x1D: 'ADXL345 / LIS3DH', 0x53: 'ADXL345', 0x18: 'LIS3DH / MCP9808', 0x36: 'MAX17048 / AS5600', 0x34: 'AXP192 / AXP2101'
+    };
+    const knownCandidates = address => DEVICES.filter(device => device.addresses.includes(address));
+
+    module.exports = {
+        id: 'i2c-analyzer',
+        name: 'I²C Analyzer',
+        version: '1.0',
+        description: 'Bus-Scan, Geräteerkennung per ID-Register und Registermap mit Klartextnamen und Bitfeld-Dekodierung.',
+        interfaces: [{ id: 'bus', kinds: ['i2c'], label: 'I²C-Bus' }],
+        async load(api) {
+            const host = api.interfaces.bus.host, found = new Map();
+            const fifo = Math.max(2, (host.info?.[5] ?? 16) - 2);
+            const read8 = async (address, reg, count) => host.transfer(address, Uint8Array.of(reg), count);
+            const rangeText = value => { const n = parseInt(value, 16); if (!Number.isInteger(n) || n < 0 || n > 0xFFFF) throw new Error(`Ungültiger Hex-Wert: ${value}`); return n; };
+
+            const scan = api.ui.block('Bus-Scan');
+            const scanRow = scan.row(), scanTable = scan.table(['Adresse', 'Dez', 'Erkannt', 'Mögliche Geräte']), scanProgress = scan.text('');
+            const identify = async address => {
+                const result = [];
+                for (const device of knownCandidates(address)) {
+                    try {
+                        if (device.id?.probe) { const text = await device.id.probe((reg, count) => read8(address, reg, count), address, host); if (text) result.push({ device, text }); }
+                        else if (device.id) { const [value] = await read8(address, device.id.reg, 1); const text = device.id.values[value]; if (text) result.push({ device, text: `${text} (ID 0x${hex2(value)})` }); }
+                    } catch { /* NACK or bus error: not this device */ }
+                }
+                return result;
+            };
+            scanRow.button('Adressen scannen · 0x03–0x77', async () => {
+                found.clear(); scanTable.set([]);
+                scan.setStatus('Scan läuft …');
+                const addresses = await host.scan({ signal: api.signal, onProgress: address => { scanProgress.textContent = `Prüfe 0x${hex2(address)} …`; } });
+                const rows = [];
+                for (const address of addresses) {
+                    const identified = await identify(address);
+                    found.set(address, identified);
+                    rows.push([`0x${hex2(address)}`, address, identified.map(item => item.text).join(' | ') || '—', ADDRESS_HINTS[address] || knownCandidates(address).map(d => d.name).join(' / ') || '—']);
+                }
+                scanTable.set(rows);
+                scanProgress.textContent = `${addresses.length} Gerät(e) gefunden.`;
+                scan.setStatus(`${addresses.length} gefunden`);
+                refreshAddresses();
+            }, { primary: true });
+
+            const dump = api.ui.block('Registermap');
+            const controls = dump.row();
+            const addressField = controls.field('Adresse', { options: [['', 'zuerst scannen …']] });
+            const deviceField = controls.field('Registerkarte', { options: [['auto', 'Automatisch']].concat(DEVICES.map((d, i) => [String(i), d.name]), [['raw', 'Roh 0x00–0xFF']]) });
+            const startField = controls.field('Start', { value: '00', width: '60px' }), endField = controls.field('Ende', { value: 'FF', width: '60px' });
+            const manual = dump.row(), manualAddress = manual.field('oder manuell 0x', { value: '', width: '60px' });
+            const table = dump.table(['Reg', 'Hex', 'Dez', 'Bin', 'Name', 'Bedeutung']), summary = dump.text('');
+            let lastDump = null;
+            function refreshAddresses() {
+                const select = addressField.input, previous = select.value;
+                select.replaceChildren(...(found.size ? [...found.keys()].map(a => new Option(`0x${hex2(a)}`, a)) : [new Option('zuerst scannen …', '')]));
+                if ([...select.options].some(o => o.value === previous)) select.value = previous;
+            }
+            const currentAddress = () => manualAddress.value.trim() ? parseInt(manualAddress.value, 16) : Number(addressField.value);
+            const currentDevice = address => {
+                if (deviceField.value === 'raw') return null;
+                if (deviceField.value !== 'auto') return DEVICES[Number(deviceField.value)];
+                return found.get(address)?.[0]?.device || knownCandidates(address)[0] || null;
+            };
+            async function readRegisters(address, device, start, end) {
+                const rows = [], values = new Map(), name = reg => device?.regs[reg] || '';
+                const targets = [];
+                if (device?.width === 2) { for (let reg = start; reg <= end; reg++) targets.push(reg); for (const reg of device.extra || []) if (reg > end) targets.push(reg); }
+                if (device?.width === 2) {
+                    for (const reg of targets) {
+                        dump.setStatus(`Lese 0x${hex2(reg)} …`);
+                        try { const [hi, lo] = await read8(address, reg, 2); values.set(reg, hi << 8 | lo); } catch { values.set(reg, null); }
+                    }
+                } else {
+                    for (let reg = start; reg <= end;) {
+                        if (api.signal.aborted) throw new DOMException('Abgebrochen', 'AbortError');
+                        const count = Math.min(fifo, end - reg + 1);
+                        dump.setStatus(`Lese 0x${hex2(reg)}–0x${hex2(reg + count - 1)} …`);
+                        try { const data = await read8(address, reg, count); data.forEach((v, i) => values.set(reg + i, v)); }
+                        catch {
+                            // Some devices NACK unmapped ranges: retry byte-wise to keep the readable registers.
+                            for (let i = 0; i < count; i++) { try { values.set(reg + i, (await read8(address, reg + i, 1))[0]); } catch { values.set(reg + i, null); } }
+                        }
+                        reg += count;
+                    }
+                }
+                const digits = device?.width === 2 ? 4 : 2;
+                for (const [reg, value] of values) {
+                    const known = name(reg), meaning = value !== null && device?.decode?.[reg] ? device.decode[reg](value) : '';
+                    if (value === null) rows.push([`0x${hex2(reg)}`, '--', '', '', known, 'keine Antwort']);
+                    else rows.push([`0x${hex2(reg)}`, '0x' + value.toString(16).toUpperCase().padStart(digits, '0'), value, value.toString(2).padStart(digits * 4, '0'), known, meaning]);
+                }
+                return { values, rows };
+            }
+            controls.button('Register lesen', async () => {
+                const address = currentAddress();
+                if (!Number.isInteger(address) || address < 3 || address > 0x77) throw new Error('Adresse 0x03–0x77 wählen.');
+                const device = currentDevice(address);
+                const start = deviceField.value === 'raw' || !device ? rangeText(startField.value) : (startField.value.trim() === '' ? device.range[0] : rangeText(startField.value));
+                const end = rangeText(endField.value);
+                if (end < start) throw new Error('Ende liegt vor dem Start.');
+                const { values, rows } = await readRegisters(address, device, start, Math.min(end, 0xFFFF));
+                table.set(rows);
+                lastDump = { address, device: device?.name || 'unbekannt', registers: Object.fromEntries([...values].map(([reg, v]) => [`0x${hex2(reg)}`, v === null ? null : v])) };
+                const ok = [...values.values()].filter(v => v !== null).length;
+                summary.textContent = `${device?.name || 'Rohdaten'} @ 0x${hex2(address)} · ${ok}/${values.size} Register gelesen.`;
+                dump.setStatus('');
+            });
+            controls.button('JSON ↓', () => {
+                if (!lastDump) throw new Error('Noch keine Registerdaten.');
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(new Blob([JSON.stringify(lastDump, null, 2)], { type: 'application/json' }));
+                a.download = `i2c-0x${hex2(lastDump.address)}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+            }, { raw: true });
+
+            const write = api.ui.block('Register schreiben');
+            const writeRow = write.row();
+            const wAddress = writeRow.field('Adresse 0x', { value: '', width: '60px' }), wReg = writeRow.field('Register 0x', { value: '00', width: '60px' }), wValue = writeRow.field('Wert (Hex-Bytes)', { value: '00', width: '120px' });
+            writeRow.button('Schreiben', async () => {
+                const address = parseInt(wAddress.value || addressField.value, 16 * (wAddress.value ? 1 : 0) || 10);
+                if (!Number.isInteger(address) || address < 3 || address > 0x77) throw new Error('Adresse 0x03–0x77 eingeben.');
+                if (!window.confirm(`0x${hex2(address)}: Register 0x${wReg.value} schreiben? Das verändert das Gerät.`)) return;
+                const payload = Uint8Array.of(parseInt(wReg.value, 16), ...api.util.parseHex(wValue.value));
+                await host.transfer(address, payload, 0, api.signal);
+                write.setStatus(`Geschrieben: ${[...payload].map(hex2).join(' ')}`);
+            });
+        }
+    };
+})();
