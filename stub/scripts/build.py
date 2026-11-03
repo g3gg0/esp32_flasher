@@ -18,6 +18,15 @@ def run(args):
     subprocess.run([str(a) for a in args], check=True)
 
 
+def include_dirs(components, target, out):
+    includes = [out, ROOT / "include", components / "esp_common/include", components / "esp_rom/include", components / f"esp_rom/{target}", components / f"esp_rom/{target}/include", components / f"soc/{target}/include", components / f"soc/{target}/register", components / f"soc/{target}/register/hw_ver1", components / "soc/include", components / "esp_hw_support/include", components / "esp_hal/include"]
+    includes += [components / f'hal/{target}/include', components / 'hal/include', components / 'hal/platform_port/include', components / f'esp_rom/{target}/include/{target}']
+    for name in ('clock', 'i2c', 'gpspi', 'ledc', 'gpio', 'rmt'):
+        includes += [components / f'esp_hal_{name}/{target}/include', components / f'esp_hal_{name}/include']
+    includes += [p / 'include' for p in components.iterdir() if p.name != 'linux' and (p / 'include').is_dir()]
+    return includes
+
+
 def build(target):
     idf = Path(os.environ.get("IDF_PATH", ""))
     version_file = idf / "tools/cmake/version.cmake"
@@ -42,11 +51,7 @@ def build(target):
     run([sys.executable, ROOT / "scripts/generate-fuses.py", "--idf", idf])
     (out / "sdkconfig.h").write_text(f'#pragma once\n#define CONFIG_IDF_TARGET_{target.upper()} 1\n#define CONFIG_IDF_TARGET "{target}"\n#define CONFIG_ESP_ROM_HAS_LD_STUB 1\n#define CONFIG_ESP32P4_SELECTS_REV_LESS_V3 1\n#define CONFIG_FREERTOS_UNICORE 1\n#define CONFIG_LOG_DEFAULT_LEVEL 0\n')
     components = idf / "components"
-    includes = [out, ROOT / "include", components / "esp_common/include", components / "esp_rom/include", components / f"esp_rom/{target}/include", components / f"soc/{target}/include", components / f"soc/{target}/register", components / f"soc/{target}/register/hw_ver1", components / "soc/include", components / "esp_hw_support/include", components / "esp_hal/include"]
-    includes += [components / f'hal/{target}/include', components / 'hal/include', components / 'hal/platform_port/include', components / f'esp_rom/{target}/include/{target}']
-    for name in ('clock', 'i2c', 'gpspi', 'ledc', 'gpio', 'rmt'):
-        includes += [components / f'esp_hal_{name}/{target}/include', components / f'esp_hal_{name}/include']
-    includes += [p / 'include' for p in components.iterdir() if p.name != 'linux' and (p / 'include').is_dir()]
+    includes = include_dirs(components, target, out)
     text, data = int(cfg["text"], 0), int(cfg["data"], 0)
     text_budget, data_budget, stack = cfg["textBudget"], cfg["dataBudget"], cfg["stack"]
     linker = f'''ENTRY(_start)
