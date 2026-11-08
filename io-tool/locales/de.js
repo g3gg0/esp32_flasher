@@ -688,7 +688,7 @@
     Object.assign(messages, {
         "Language": "Sprache", "Automatic": "Automatisch", "English": "Englisch", "German": "Deutsch",
         "Input": "Eingang", "Output": "Ausgang", "INPUT": "EINGANG", "OUTPUT": "AUSGANG",
-        "Idle": "Ruhezustand", "Floating": "Hochohmig", "Classic stub": "Klassischer Stub",
+        "Idle": "Ruhezustand", "Floating": "Hochohmig", "Classic stub": "Klassischer Stub", "Auto baud": "Baudrate automatisch",
         "Load accelerated stub": "Beschleunigten Stub laden", "Accelerated stub active": "Beschleunigter Stub aktiv",
         "Accelerated RAM stub active · SYNC verified · GPIO/ADC ready{0}": "Beschleunigter RAM-Stub aktiv · SYNC geprüft · GPIO/ADC bereit{0}",
         "Checking accelerated RAM stub…": "Beschleunigten RAM-Stub prüfen …",

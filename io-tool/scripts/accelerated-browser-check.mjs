@@ -82,17 +82,20 @@ try {
     assert.equal(await evaluate(`${$('load-accelerated')}.hidden`), true);
     await evaluate(`(() => {
         window.peerChip = ${JSON.stringify(chip)};
+        window.peerVid = 0x1A86;
+        Object.defineProperty(navigator.serial, 'requestPort', { configurable: true, value: async () => ({ getInfo: () => ({ usbVendorId: window.peerVid, usbProductId: 0x55D3 }) }) });
         const Native = ESPFlasher;
         const nativeFetch = window.fetch.bind(window);
         window.failStubFetch = false;
         window.fetch = (url, options) => window.failStubFetch && String(url).endsWith('/stub.json') ? Promise.resolve(new Response('', {status:404})) : nativeFetch(url, options);
         ESPFlasher = class extends Native {
-            constructor(options) { super(options); this.model = new ESPIO.DemoTransport(ESPIO.chips[window.peerChip]); this.mockDecoder = new this.slipLayer.constructor(); this.sectorReads = 0; this.acceleratedRunning = !!window.acceleratedRunningAtOpen; this.romCommands = []; window.serialPeer = this; }
-            async openPort() { this.port = { writable: true }; }
-            async hardReset(bootloader = true) { (this.resetCalls ||= []).push(bootloader); this.stubLoaded = false; this.acceleratedRunning = false; }
-            async sync() { this.syncCalls = (this.syncCalls || 0) + 1; this.current_chip = window.peerChip; this.stubLoaded = false; }
+            constructor(options) { super(options); this.model = new ESPIO.DemoTransport(ESPIO.chips[window.peerChip]); this.mockDecoder = new this.slipLayer.constructor(); this.sectorReads = 0; this.acceleratedRunning = !!window.acceleratedRunningAtOpen; this.inRom = (window.peerBootMode || 'rom') === 'rom'; this.romCommands = []; window.serialPeer = this; }
+            async openPortWithPort(port) { this.port = { writable: true, getInfo: () => port.getInfo() }; this.openedBaud = this.initialBaudRate; }
+            async setDtrRts(dtr, rts) { (this.lineCalls ||= []).push([dtr, rts]); return true; }
+            async hardReset(bootloader = true) { (this.resetCalls ||= []).push(bootloader); this.stubLoaded = false; this.classicRunning = false; this.acceleratedRunning = false; this.inRom = bootloader && window.peerBootMode !== 'none'; return true; }
+            async sync() { this.syncCalls = (this.syncCalls || 0) + 1; if (!this.inRom && !this.classicRunning) { await new Promise(r => setTimeout(r, 20)); throw new Error('Failed to synchronize with device after 4 attempts.'); } this.current_chip = window.peerChip; this.stubLoaded = !!this.classicRunning; this.synced = true; }
             async isStubLoader() { return false; }
-            async downloadStub() { this.classicUploads = (this.classicUploads || 0) + 1; this.stubLoaded = true; return true; }
+            async downloadStub() { this.classicUploads = (this.classicUploads || 0) + 1; this.stubLoaded = true; this.classicRunning = true; this.inRom = false; return true; }
             async disconnect() { this.port = null; }
             async _writeFrame(frame) {
                 for (const packet of this.mockDecoder.decode(frame)) {
@@ -199,43 +202,52 @@ try {
             }
         };
     })()`);
-    assert.ok(['115200', '921600'].includes(await evaluate(`${$('baud')}.value`)));
+    assert.equal(await evaluate(`${$('baud')}.value`), 'auto');
     await evaluate(`${$('connection-options')}.click()`);
     assert.equal(await evaluate(`${$('connection-menu')}.hidden`), false);
     await evaluate(`document.querySelector('[name="connection-baud"][value="921600"]').click()`);
     assert.equal(await evaluate(`${$('baud')}.value`), '921600');
     assert.equal(await evaluate(`document.querySelectorAll('[name="connection-baud"]:checked').length`), 1);
-    await evaluate(`document.querySelector('[name="connection-baud"][value="115200"]').click();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));`);
+    await evaluate(`document.querySelector('[name="connection-baud"][value="auto"]').click();document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));`);
     assert.equal(await evaluate(`${$('connection-menu')}.hidden`), true);
     assert.equal(await evaluate(`${$('session-badge')}.textContent`), 'OFFLINE');
     for (const classic of [true, false]) {
-        await evaluate(`window.acceleratedRunningAtOpen=true;window.failStubFetch=true;${$('no-bootloader')}.checked=true;${$('no-bootloader')}.dispatchEvent(new Event('change'));${$('classic-stub')}.checked=${classic};${$('connect')}.click()`);
+        await evaluate(`window.acceleratedRunningAtOpen=true;window.failStubFetch=true;${$('classic-stub')}.checked=${classic};${$('connect')}.click()`);
         await wait(`!${$('disconnect')}.disabled && ${$('load-accelerated')}.disabled && !${$('accelerated-info')}.hidden`);
         assert.deepEqual(await evaluate(`serialPeer.resetCalls || []`), []);
         assert.equal(await evaluate(`serialPeer.syncCalls || 0`), 0, 'running stub must not receive ROM SYNC');
         assert.equal(await evaluate(`serialPeer.classicUploads || 0`), 0);
         assert.deepEqual(await evaluate(`serialPeer.romCommands`), [], 'reuse must not send ROM commands or RAM upload');
+        assert.deepEqual(await evaluate(`serialPeer.lineCalls`), [[false, false], [false, false]], 'UART bridge lines are released twice before the first TX');
         assert.ok((await evaluate(`${$('log')}.textContent`)).includes('Reusing the running accelerated stub'));
         await evaluate(`${$('disconnect')}.click()`);
         await wait(`${$('session-badge')}.textContent === 'OFFLINE' && !${$('connect')}.disabled`);
     }
     await evaluate(`window.acceleratedRunningAtOpen=false;window.failStubFetch=false;`);
     console.log(`PASS: ${chip} running accelerated stub reused without ROM commands, reset, manifest fetch or either stub upload.`);
-    for (const classic of [true, false]) {
-        await evaluate(`${$('no-bootloader')}.checked=true;${$('no-bootloader')}.dispatchEvent(new Event('change'));${$('classic-stub')}.checked=${classic};${$('connect')}.click()`);
+    for (const [vid, mode, classic, baud, resets] of [[0x1A86, 'rom', true, 115200, []], [0x1A86, 'rom', false, 115200, []], [0x303A, 'reset', false, 921600, [true]], [0x1A86, 'reset', true, 115200, [true]]]) {
+        await evaluate(`window.peerVid=${vid};window.peerBootMode='${mode}';${$('classic-stub')}.checked=${classic};${$('connect')}.click()`);
         await wait(`!${$('disconnect')}.disabled && ${$('connect')}.textContent === ESPIO.i18n.t('Disconnect') && !${$('load-accelerated')}.hidden`);
-        assert.equal(await evaluate(`serialPeer.skipBootloaderReset`), true);
-        assert.deepEqual(await evaluate(`serialPeer.resetCalls || []`), [], 'manual bootloader connection must not call hardReset');
+        assert.equal(await evaluate(`serialPeer.openedBaud`), baud, 'auto baud follows the USB vendor id');
+        assert.deepEqual(await evaluate(`serialPeer.resetCalls || []`), resets, mode === 'rom' ? 'an answering bootloader must not be reset' : 'silent chip gets one DTR/RTS bootloader reset');
         assert.ok(await evaluate(`serialPeer.syncCalls > 0`), 'ROM synchronization still runs');
         assert.equal(await evaluate(`serialPeer.classicUploads || 0`), classic ? 1 : 0);
-        assert.equal(await evaluate(`${$('no-bootloader')}.disabled`), true, 'connection mode is fixed for the session');
+        assert.equal(await evaluate(`document.querySelector('[name="connection-baud"]').disabled`), true, 'connection options are fixed for the session');
         assert.equal(await evaluate(`${$('load-accelerated')}.disabled`), !classic, 'accelerated stub loads directly from ROM in automatic mode');
         await evaluate(`${$('disconnect')}.click()`);
         await wait(`${$('session-badge')}.textContent === 'OFFLINE' && !${$('connect')}.disabled`);
-        assert.deepEqual(await evaluate(`serialPeer.resetCalls`), [false], 'normal disconnect reset remains available');
+        assert.deepEqual(await evaluate(`serialPeer.resetCalls`), [...resets, false], 'normal disconnect reset remains available');
     }
-    console.log(`PASS: ${chip} manual bootloader entry preserves SYNC and classic/accelerated uploads, skips bootloader resets and retains normal disconnect reset.`);
-    await evaluate(`${$('no-bootloader')}.checked=false;${$('no-bootloader')}.dispatchEvent(new Event('change'));`);
+    await evaluate(`window.peerVid=0x1A86;window.peerBootMode='none';${$('classic-stub')}.checked=false;${$('connect')}.click()`);
+    await wait(`${$('status')}.className === 'action' && ${$('status')}.textContent.includes('BOOT')`);
+    assert.deepEqual(await evaluate(`serialPeer.resetCalls`), [true], 'BOOT prompt follows one failed DTR/RTS reset');
+    await evaluate(`serialPeer.inRom=true`);
+    await wait(`!${$('disconnect')}.disabled && ${$('connect')}.textContent === ESPIO.i18n.t('Disconnect') && ${$('load-accelerated')}.disabled`);
+    assert.ok((await evaluate(`${$('log')}.textContent`)).includes('Bootloader entered manually'));
+    await evaluate(`${$('disconnect')}.click()`);
+    await wait(`${$('session-badge')}.textContent === 'OFFLINE' && !${$('connect')}.disabled`);
+    await evaluate(`window.peerBootMode='rom'`);
+    console.log(`PASS: ${chip} auto baud by USB id, escalation answer → DTR/RTS reset → BOOT prompt, classic/accelerated uploads and normal disconnect reset.`);
     await evaluate(`${$('classic-stub')}.checked=true;${$('baud')}.value='115200';${$('connect')}.click()`);
     await wait(`!${$('load-accelerated')}.hidden && !${$('load-accelerated')}.disabled`);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);

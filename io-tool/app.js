@@ -74,8 +74,22 @@
     }
     function peripheralRole(id) { return controller?.pinOwners.get(id)?.startsWith('I²C') ? i2cPanel.role(id) : rmtPanel.role(id) || peripheralPanels.role(id) || sdRole(id) || i2cPanel.role(id); }
 
+    const traceStart = performance.now();
+    function trace(step, details) {
+        const time = `+${(performance.now() - traceStart).toFixed(0)}ms`;
+        if (details === undefined) console.info('[ESPIO]', time, step);
+        else console.info('[ESPIO]', time, step, details);
+    }
+    function deviceState(device) {
+        if (!device) return null;
+        return { chip: device.current_chip, synced: device.synced, stubLoaded: device.stubLoaded,         baud: device.initialBaudRate,
+            skipBootloaderReset: device.skipBootloaderReset, isEspressifUsbJtag: device.isEspressifUsbJtag, maxBaudRate: device.maxBaudRate,
+            portInfo: device.port?.getInfo?.(), ramBlockSize: device.ramBlockSize, ramCommandTimeout: device.ramCommandTimeout,
+            security: device.securityInfo && { chipId: device.securityInfo.chip_id_hex, flags: device.securityInfo.flags_hex, eco: device.securityInfo.eco_version_hex } };
+    }
     function log(...parts) {
         const message = parts.map(part => typeof part === 'string' ? part : JSON.stringify(part)).join(' ');
+        console.log('[ESPIO log]', message);
         logs.push(`${new Date().toLocaleTimeString(globalThis.ESPIO?.i18n?.locale)}  ${message}`);
         if (logs.length > 250) logs.shift();
         $('log').textContent = logs.join('\n');
@@ -467,7 +481,7 @@
         $('demo').hidden = session !== 'offline'; $('demo').disabled = busy;
         $('baud').disabled = session !== 'offline' || busy;
         $('connection-options').disabled = busy || operation;
-        for (const input of document.querySelectorAll('[name="connection-baud"], #classic-stub, #no-bootloader')) input.disabled = session !== 'offline' || busy;
+        for (const input of document.querySelectorAll('[name="connection-baud"], #classic-stub')) input.disabled = session !== 'offline' || busy;
         for (const input of document.querySelectorAll('[name="connection-baud"]')) input.checked = input.value === $('baud').value;
         $('session-badge').className = `session-badge ${session === 'hardware' ? 'live' : session === 'demo' ? 'demo' : ''}`;
         $('session-badge').textContent = session === 'hardware' ? '● LIVE / RAM' : session === 'demo' ? '● DEMO / SIMULATION' : 'OFFLINE';
@@ -536,60 +550,143 @@
         if (controller) controller.fault = true;
         status(error.message || String(error), 'error'); log('Fehler:', error.message || error);
     }
+    const ESPRESSIF_USB_VID = 0x303A;
+    const BOOT_PROMPT_TIMEOUT_MS = 60000;
+    const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+    async function quietSync(device) {
+        // Expected failures while probing the boot state should not flood the log.
+        const logError = device.logError;
+        device.logError = (...args) => console.debug('[ESPIO] sync (quiet):', ...args);
+        try { await device.sync(); return true; }
+        catch (error) { trace('enterLoader: sync failed', error.message || String(error)); return false; }
+        finally { device.logError = logError; }
+    }
+    async function releaseLines(device) {
+        // USB-UART bridges such as the CH343 apply a DTR/RTS change only with the next transmitted
+        // byte and effectively one call late. Releasing twice before the first TX keeps EN and IO0
+        // high; otherwise every packet pulses RTS→EN and resets the chip.
+        if (device.isEspressifUsbJtag) return;
+        trace('enterLoader: release DTR/RTS', await device.setDtrRts(false, false) && await device.setDtrRts(false, false));
+        await delay(50);
+    }
+    // Escalation: talk to whatever is running → DTR/RTS reset into the bootloader → ask for BOOT+RESET.
+    // Returns an accelerated transport if one is already running, otherwise null with the ROM (or a
+    // reusable classic stub when ROM is not required) synchronized.
+    async function enterLoader(device, requireRom, { allowAccelerated }) {
+        const usable = () => !(requireRom && device.stubLoaded === true);
+        await releaseLines(device);
+        if (allowAccelerated) {
+            status('Checking for a running accelerated stub…');
+            const running = await ESPIO.probeAccelerated(device);
+            trace('enterLoader: accelerated probe', running ? running.identity : 'no answer');
+            if (running) {
+                device.current_chip = running.identity.chip;
+                device.synced = true;
+                log('Reusing the running accelerated stub; ROM synchronization and RAM upload skipped.');
+                return running;
+            }
+        }
+        status('Talking to the chip without reset…');
+        if (await quietSync(device) && usable()) {
+            log('Chip answered without reset (bootloader already active).');
+            return null;
+        }
+        status('No answer: resetting into the bootloader via DTR/RTS…');
+        log('No answer from the chip → trying the DTR/RTS bootloader reset.');
+        trace('enterLoader: hardReset(true)', await device.hardReset(true));
+        await releaseLines(device);
+        if (await quietSync(device) && usable()) {
+            log('Bootloader entered via DTR/RTS reset.');
+            return null;
+        }
+        log('DTR/RTS reset did not reach the bootloader (no auto-reset circuit?) → waiting for BOOT+RESET.');
+        const deadline = performance.now() + BOOT_PROMPT_TIMEOUT_MS;
+        while (performance.now() < deadline) {
+            const left = Math.ceil((deadline - performance.now()) / 1000);
+            status(`Automatic bootloader entry failed. Hold BOOT, press and release RESET, then release BOOT. Waiting ${left} s…`, 'action');
+            if (await quietSync(device) && usable()) {
+                log('Bootloader entered manually (BOOT+RESET).');
+                return null;
+            }
+            await delay(200);
+        }
+        throw new Error('No bootloader answer. Hold BOOT, press and release RESET, release BOOT and connect again.');
+    }
     async function connect() {
         if (busy || session !== 'offline') return;
         if (!navigator.serial || !isSecureContext) { status('Web Serial benötigt Chrome/Edge und einen sicheren Kontext (localhost oder HTTPS).', 'error'); return; }
         busy = true; updateControls();
-        let device, autoAccelerate = false;
+        let device, autoAccelerate = false, accelFailed = false;
         try {
             status('Seriellen Port auswählen …');
-            const skipBootloaderReset = $('no-bootloader').checked;
-            // Raw TX/RX hex dumps in the DevTools console: ?debug=1 or localStorage['espio.debug']='1'.
+            // Raw TX/RX hex dumps in the DevTools console: ?debug=1 or localStorage['espio.debug']='1'; ?debug=all disables the log rate limit.
             const debugPackets = new URLSearchParams(location.search).has('debug') || localStorage.getItem('espio.debug') === '1';
-            device = new ESPFlasher({ initialBaudRate: Number($('baud').value), skipBootloaderReset, logMessage: log, logWarning: log, logError: log,
+            // Invoke the port chooser within the original click's user activation.
+            const port = await navigator.serial.requestPort();
+            const portInfo = port.getInfo?.() || {};
+            const nativeUsb = portInfo.usbVendorId === ESPRESSIF_USB_VID;
+            const baudChoice = $('baud').value;
+            // Native Espressif USB ignores the baud rate; USB-UART bridges in front of the ROM
+            // loader are only reliable at 115200 (e.g. CH343 + ESP32-P4), so use compatibility mode.
+            const baud = baudChoice === 'auto' ? (nativeUsb ? 921600 : 115200) : Number(baudChoice);
+            device = new ESPFlasher({ initialBaudRate: baud, logMessage: log, logWarning: log, logError: log,
                 ramBlockSize: 0x1800, ramCommandTimeout: 2000,
                 writeChunkSize: 0,
-                logPackets: debugPackets, devMode: debugPackets, maxDebugLogsPerSecond: 20,
+                logPackets: debugPackets, devMode: debugPackets, maxDebugLogsPerSecond: new URLSearchParams(location.search).get('debug') === 'all' ? 0 : 20,
                 logDebug: (...args) => console.debug('[ESPFlasher]', ...args) });
             device.slipLayer.logPackets = debugPackets;
             flasher = device;
-            // Invoke the port chooser within the original click's user activation.
-            await device.openPort();
-            if (skipBootloaderReset) log('Manual bootloader: ', device.initialBaudRate, 'baud, 5000 ms response timeout.');
+            trace('connect: options', { baudChoice, baud, portInfo, nativeUsb, classicStub: $('classic-stub').checked, debugPackets });
+            await device.openPortWithPort(port);
+            trace('connect: port open', deviceState(device));
+            log(`${baudChoice === 'auto' ? (nativeUsb ? 'Auto: native Espressif USB' : 'Auto: USB-UART bridge, compatibility mode') : 'Manual baud rate'} · ${device.initialBaudRate} baud`);
             device.disconnected = () => { if (!disconnecting && flasher === device) unexpectedDisconnect(); };
-            if (skipBootloaderReset) {
-                status('Checking for a running accelerated stub…');
-                transport = await ESPIO.probeAccelerated(device);
-                if (transport) {
-                    device.current_chip = transport.identity.chip;
-                    device.synced = true;
-                    log('Reusing the running accelerated stub; ROM synchronization and RAM upload skipped.');
-                }
-            }
-            if (!transport) {
-                status(!skipBootloaderReset ? 'ESP in den Bootloader starten und Chip erkennen …' : 'Synchronizing with the chip already in bootloader mode (DTR/RTS untouched)…');
-                if (!skipBootloaderReset) await device.hardReset(true);
-                await device.sync();
-            }
+            transport = await enterLoader(device, !$('classic-stub').checked, { allowAccelerated: true });
             if (!chips[device.current_chip]) throw new Error(`${device.current_chip}: Noch kein geprüftes GPIO-Registerprofil vorhanden. Es werden keine GPIO-Register geschrieben.`);
             log(`Erkannt: ${device.current_chip}`);
             const readOnlyChip = !!chips[device.current_chip].readOnlyGPIO;
-            // With manual bootloader entry, load the accelerated stub directly from ROM.
-            // Starting the classic stub first would require returning to ROM.
-            if (!transport && skipBootloaderReset && !readOnlyChip && !$('classic-stub').checked) {
+            // Load the accelerated stub directly from the ROM session that is already synced.
+            // Starting the classic stub first would require a DTR/RTS reset back into ROM,
+            // which boards without a working auto-reset circuit (e.g. some ESP32-P4 boards) cannot do.
+            if (!transport && !readOnlyChip && !$('classic-stub').checked) {
                 status('Loading accelerated RAM stub from the existing bootloader session…');
-                const manifest = await ESPIO.prepareAccelerated(device.current_chip);
-                transport = await ESPIO.startAccelerated(device, manifest);
-            } else if (!transport && !readOnlyChip) {
+                trace('connect: path = accelerated stub directly from ROM');
+                try {
+                    const manifest = await ESPIO.prepareAccelerated(device.current_chip);
+                    // Already synced with ROM: no second reset needed.
+                    const savedSkip = device.skipBootloaderReset;
+                    device.skipBootloaderReset = true;
+                    try { transport = await ESPIO.startAccelerated(device, manifest); }
+                    finally { device.skipBootloaderReset = savedSkip; }
+                } catch (accelError) {
+                    accelFailed = true;
+                    console.error('[ESPIO] accelerated stub from ROM failed', accelError, { cause: accelError?.cause, state: deviceState(device) });
+                    log('Accelerated stub:', accelError.message || accelError, '→ falling back to the classic stub.');
+                    trace('connect: fallback enterLoader() for classic stub');
+                    await enterLoader(device, false, { allowAccelerated: false });
+                }
+            }
+            if (!transport && !readOnlyChip) {
+                trace('connect: path = classic stub', { hasStub: !!device.chip_descriptions[device.current_chip]?.stub });
                 if (!device.chip_descriptions[device.current_chip]?.stub) throw new Error(`Für ${device.current_chip} ist kein RAM-Stub vorhanden.`);
                 status(`${device.current_chip}: RAM-Stub wird geladen …`);
-                if (device.stubLoaded !== true && !await device.isStubLoader()) {
-                    if (!await device.downloadStub()) throw new Error('RAM-Stub konnte nicht gestartet werden.');
+                let alreadyStub = device.stubLoaded === true;
+                if (!alreadyStub) {
+                    trace('connect: isStubLoader()');
+                    alreadyStub = await device.isStubLoader();
+                    trace('connect: isStubLoader result', alreadyStub);
+                }
+                if (!alreadyStub) {
+                    trace('connect: downloadStub()');
+                    const ok = await device.downloadStub();
+                    trace('connect: downloadStub result', { ok, state: deviceState(device) });
+                    if (!ok) throw new Error('RAM-Stub konnte nicht gestartet werden.');
                 }
                 // isStubLoader in the existing flasher stores a Promise on some chips.
                 device.stubLoaded = true;
             }
             transport ||= new RegisterTransport(device); session = 'hardware';
+            trace('connect: transport ready', { accelerated: accelerated(), chip: device.current_chip });
             if (accelerated()) {
                 $('interval').value = '1';
                 const id = transport.identity;
@@ -602,15 +699,19 @@
             const ids = exposedPins(); selectedPin = ids.find(id => !pinReason(id)) ?? ids[0];
             catalog = null; ++catalogRequest; peripheral = 'gpio'; planned = null;
             renderDevices(); renderMap(); renderFunctions(); renderPeripherals(); renderCatalog();
+            trace('connect: initializeBoard()', { board: board?.id, pins: ids.length });
             await initializeBoard();
+            trace('connect: initializeBoard done', { pins: controller?.pins.size });
             status(readOnlyChip ? `${chip.name} erkannt · ROM-Registerzugriff · ${board.name} · ${controller.pins.size} GPIOs beobachten. Polling läuft.` :
+                accelerated() ? `${chip.name} · Accelerated RAM stub active · SYNC verified · ${board.name} · ${controller.pins.size} GPIOs${transport.supports('SDMMC') ? ' · SDMMC sector reads ready.' : '.'}` :
                 `${chip.name} erkannt · RAM-Stub aktiv · ${board.name} · ${controller.pins.size} GPIOs als Input. Polling läuft.`);
             log(readOnlyChip ? 'ESP8266: GPIO_IN und RTC_GPIO_IN_DATA werden nur gelesen.' : 'Stub aktiv. Beim Verbinden wird Flash weder beschrieben noch gelöscht.');
-            autoAccelerate = !readOnlyChip && !$('classic-stub').checked && !accelerated();
+            autoAccelerate = !readOnlyChip && !$('classic-stub').checked && !accelerated() && !accelFailed;
         } catch (error) {
             const cancelled = error?.name === 'NotFoundError';
+            console.error('[ESPIO] connect failed', error, { cause: error?.cause, state: deviceState(device) });
             await shutdown(false);
-            status(cancelled ? 'Portauswahl abgebrochen.' : `${error.message || error} Falls nötig: BOOT halten, RESET drücken und erneut verbinden.`, cancelled ? '' : 'error');
+            status(cancelled ? 'Portauswahl abgebrochen.' : /BOOT/.test(error.message || '') ? error.message : `${error.message || error} Falls nötig: BOOT halten, RESET drücken und erneut verbinden.`, cancelled ? '' : 'error');
             if (!cancelled) log('Verbindungsfehler:', error.message || error);
         } finally { busy = false; updateControls(); }
         if (autoAccelerate) await loadAccelerated();
@@ -635,13 +736,20 @@
             await controller.release(); await controller.close(); controller = null;
             transport.close(); transport = null;
             sdHost = null; i2cPanel.reset(); peripheralPanels.reset(); rmtPanel.reset(); flashPanel.reset(); fusesPanel.reset(); extensionPanel.reset(); clearScan();
-            transport = await ESPIO.startAccelerated(flasher, manifest);
+            // Same escalation as connect(): a running classic stub needs a reset into ROM first.
+            await enterLoader(flasher, true, { allowAccelerated: false });
+            status('Releasing I/O and loading accelerated stub into RAM…');
+            const savedSkip = flasher.skipBootloaderReset;
+            flasher.skipBootloaderReset = true;
+            try { transport = await ESPIO.startAccelerated(flasher, manifest); }
+            finally { flasher.skipBootloaderReset = savedSkip; }
             $('interval').value = '1';
             await initializeBoard();
             const id = transport.identity;
             log(`SYNC → IDEN: ${id.chip}, stub ${id.build}, protocol ${id.protocol_major}.${id.protocol_minor}, capabilities 0x${id.capabilities.toString(16)}`);
             status(`Accelerated RAM stub active · SYNC verified · GPIO/ADC ready${transport.supports('SDMMC') ? ' · SDMMC sector reads ready.' : '.'}`);
         } catch (error) {
+            console.error('[ESPIO] accelerated stub failed', error, { cause: error?.cause, handoff, state: deviceState(flasher) });
             if (handoff) await shutdown(true);
             status(`Accelerated stub: ${error.message || error}${handoff ? ' Reconnect to use the legacy stub.' : ''}`, 'error');
             log('Accelerated stub:', error.message || error);
@@ -1135,7 +1243,6 @@
     for (const input of document.querySelectorAll('[name="connection-baud"]')) input.addEventListener('change', () => { if (input.checked && session === 'offline') { $('baud').value = input.value; updateControls(); } });
     $('connect').addEventListener('click', () => { closeConnectionMenu(); if (session === 'offline') connect(); else $('disconnect').click(); });
     $('load-accelerated').addEventListener('click', loadAccelerated);
-    $('no-bootloader').addEventListener('change', updateControls);
     $('demo').addEventListener('click', demo);
     $('disconnect').addEventListener('click', async () => {
         if (busy) return; busy = true; updateControls();

@@ -89,8 +89,9 @@ Direktes Öffnen der HTML-Datei kann je nach Browser funktionieren, der per
    wieder starten. Ob die automatische Reset-Sequenz funktioniert, hängt vom
    USB-Interface bzw. der Reset-Beschaltung ab.
 
-Falls der automatische Bootloader-Einstieg nicht funktioniert: BOOT halten,
-RESET drücken und erneut verbinden. Schließen/Neuladen des Browser-Tabs bietet
+Falls der automatische Bootloader-Einstieg nicht funktioniert, zeigt das Tool
+beim Verbinden eine Aufforderung und wartet bis zu 60 s: BOOT halten, RESET
+drücken, BOOT loslassen. Schließen/Neuladen des Browser-Tabs bietet
 keine zuverlässige Gelegenheit für asynchrone Registerzugriffe; deshalb zum
 Beenden den Trennen-Button verwenden oder das Board selbst zurücksetzen.
 
@@ -574,9 +575,15 @@ Classic mode only logs/plots GPIO inputs. It does not configure pads or drive
 outputs. GPIO control, ADC, supplies, usage scans and all peripheral operations
 are enabled only after loading the accelerated RAM stub. The load button is
 available in Peripherie & Register. The header has a split Connect/Disconnect
-button: the arrow opens mutually exclusive 115200/921600 baud choices and a
-Classic stub checkbox. Default is 115200 and automatic accelerated loading;
-Classic stub selects GPIO observation only until manually upgraded.
+button: the arrow opens mutually exclusive Auto/115200/921600 baud choices and a
+Classic stub checkbox. Auto (default) uses 921600 for native Espressif USB
+(VID 0x303A) and 115200 compatibility mode for USB-UART bridges. Connecting
+escalates automatically: first talk to the chip without a reset (a running
+accelerated stub is reused, an active ROM bootloader is used directly), then
+try the DTR/RTS bootloader reset, and if the chip still does not answer, ask
+for BOOT+RESET and wait up to 60 s for the bootloader. The accelerated stub
+loads by default; Classic stub selects GPIO observation only until manually
+upgraded.
 All accelerated operations use the maintained RPC protocol; classic
 register backends and their generated recipes have been removed.
 

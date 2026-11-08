@@ -265,28 +265,40 @@
         return device.sendRAMCommand(opcode, words, 4);
     }
     async function startAccelerated(device, manifest) {
-        if (!device.skipBootloaderReset && await device.hardReset(true) === false) throw new Error('Could not reset into ROM download mode. Check BOOT/EN and reconnect.');
+        const trace = (...args) => console.info('[ESPIO accel]', ...args);
+        trace('start', { chip: manifest.chip, entry: Number.isInteger(manifest.entry) ? '0x' + manifest.entry.toString(16) : manifest.entry, skipBootloaderReset: device.skipBootloaderReset, stubLoaded: device.stubLoaded, ramBlockSize: device.ramBlockSize, ramCommandTimeout: device.ramCommandTimeout });
+        if (!device.skipBootloaderReset) {
+            const reset = await device.hardReset(true);
+            trace('hardReset(true) result', reset);
+            if (reset === false) throw new Error('Could not reset into ROM download mode. Check BOOT/EN and reconnect.');
+        }
+        trace('sync()');
         await device.sync();
+        trace('sync done', { chip: device.current_chip, stubLoaded: device.stubLoaded });
         if (device.current_chip !== manifest.chip) throw new Error(`ROM chip mismatch: detected ${device.current_chip}, expected ${manifest.chip}.`);
         if (device.stubLoaded === true) throw new Error(`SYNC still reports a legacy stub on ${device.current_chip}; ROM download mode is required. Check BOOT/EN reset before retrying.`);
         // Explicitly check every ROM ACK: the generic downloadMem helper does not.
         for (const segment of manifest.segments) {
             const bytes = device.base64ToByteArray(segment.data), block = device.ramBlockSize ?? 0x1800;
+            trace('MEM_BEGIN', { address: '0x' + segment.address.toString(16), length: bytes.length, blocks: Math.ceil(bytes.length / block), block });
             await romCommand(device, 0x05, bytes.length, Math.ceil(bytes.length / block), block, segment.address);
             for (let offset = 0, sequence = 0; offset < bytes.length; offset += block, sequence++) {
                 const chunk = bytes.slice(offset, offset + block);
-                try { await romCommand(device, 0x07, chunk.length, sequence, 0, 0, chunk); }
+                try { await romCommand(device, 0x07, chunk.length, sequence, 0, 0, chunk); trace(`MEM_DATA block ${sequence} ok (${chunk.length} bytes)`); }
                 catch (error) {
                     throw new Error(`MEM_DATA ${manifest.chip} at 0x${(segment.address + offset).toString(16)}, block ${sequence}, ${chunk.length} bytes: ${error.message || error}`, { cause: error });
                 }
             }
         }
+        trace('MEM_END → entry');
         await romCommand(device, 0x06, 0, manifest.entry);
         const transport = new AcceleratedTransport(device);
         try {
+            trace('RPC sync');
             await transport.sync(manifest.chip);
+            trace('RPC identity', transport.identity);
             return transport;
-        } catch (error) { transport.close(); throw error; }
+        } catch (error) { trace('RPC sync failed', error); transport.close(); throw error; }
     }
     const api = { AcceleratedTransport, RPCError, acceleratedTargets, prepareAccelerated, probeAccelerated, startAccelerated, rpcEncode: encode, rpcDecode: decode };
     if (typeof module === 'object' && module.exports) module.exports = api;

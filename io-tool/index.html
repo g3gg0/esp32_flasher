@@ -55,15 +55,15 @@
         <span class="session-badge" id="session-badge">OFFLINE</span>
         <div class="connection-actions">
             <select id="language" aria-label="Language"><option value="auto">Automatic</option><option value="en">English</option><option value="de">German</option></select>
-            <select id="baud" hidden aria-hidden="true"><option>115200</option><option selected>921600</option></select>
+            <select id="baud" hidden aria-hidden="true"><option value="auto" selected>auto</option><option>115200</option><option>921600</option></select>
             <div class="connect-control">
                 <button id="connect" class="primary">Verbinden</button><button id="connection-options" aria-label="Verbindungsoptionen" aria-haspopup="true" aria-expanded="false" aria-controls="connection-menu">▾</button>
                 <div id="connection-menu" class="connection-menu" hidden>
-                    <label><input type="radio" name="connection-baud" value="115200" checked>115200 Baud</label>
+                    <label title="Native Espressif USB: 921600 baud; USB-UART bridge: 115200 baud (compatibility mode)"><input type="radio" name="connection-baud" value="auto" checked>Auto baud</label>
+                    <label><input type="radio" name="connection-baud" value="115200">115200 Baud</label>
                     <label><input type="radio" name="connection-baud" value="921600">921600 Baud</label>
                     <div class="menu-separator"></div>
                     <label><input id="classic-stub" type="checkbox">Classic stub</label>
-                    <label translate="no" title="Skip the automatic bootloader reset. The chip must already be in bootloader mode; SYNC and stub loading still run."><input id="no-bootloader" type="checkbox">Don't enter bootloader mode</label>
                 </div>
             </div>
             <button id="disconnect" hidden>Trennen &amp; Reset</button>
