@@ -7,6 +7,15 @@
         return `${name}=${names?.[v] ?? v}`;
     }).join(' ');
     const bcd = v => (v >> 4) * 10 + (v & 15);
+    const LSM6_IDS = { 0x69: 'LSM6DS3', 0x6A: 'LSM6DSL / LSM6DS3TR-C', 0x6B: 'LSM6DSR', 0x6C: 'LSM6DSO / LSM6DSOX', 0x70: 'LSM6DSV' };
+    const LSM6_ODR = ['aus', '12.5Hz', '26Hz', '52Hz', '104Hz', '208Hz', '416Hz', '833Hz', '1.66kHz', '3.33kHz', '6.66kHz'];
+    const LSM6_ACCEL_MG = [0.061, 0.488, 0.122, 0.244];
+    const LSM6_GYRO_MDPS = [8.75, 17.5, 35, 70, 4.375];
+    const lsm6GyroFs = all => { const ctrl2 = all.get(0x11) ?? 0; return ctrl2 & 2 ? 4 : ctrl2 >> 2 & 3; };
+    // Combines the little-endian L/H pair; the H register shows the scaled value.
+    const lsm6Word = (all, low, format) => { const lo = all.get(low), hi = all.get(low + 1); return lo == null || hi == null ? '' : format(((hi << 8 | lo) << 16) >> 16); };
+    // REG14: PN[5:3]=111 (BQ25895), DEV_REV[1:0]=01.
+    const isBq2589x = r14 => (r14 & 0x3B) === 0x39;
 
     // width 1: byte registers, burst reads; width 2: 16-bit big-endian pointer registers.
     const DEVICES = [
@@ -56,6 +65,66 @@
         {
             name: 'TCS34725', addresses: [0x29], id: { reg: 0x92, values: { 0x44: 'TCS34725', 0x4D: 'TCS34727' } }, range: [0x80, 0x9F],
             regs: { 0x80: 'ENABLE', 0x81: 'ATIME', 0x83: 'WTIME', 0x8D: 'CONFIG', 0x8F: 'CONTROL', 0x92: 'ID', 0x93: 'STATUS', 0x94: 'CDATAL', 0x95: 'CDATAH', 0x96: 'RDATAL', 0x97: 'RDATAH', 0x98: 'GDATAL', 0x99: 'GDATAH', 0x9A: 'BDATAL', 0x9B: 'BDATAH' }
+        },
+        {
+            name: 'LSM6DS3 / LSM6DSx IMU', addresses: [0x6A, 0x6B], range: [0x00, 0x6B],
+            // BQ25895 shares 0x6A: its REG0F (SYSV) can read like a WHO_AM_I, so reject a BQ2589x part ID in REG14.
+            id: { probe: async read => { const [who] = await read(0x0F, 1), [r14] = await read(0x14, 1); const name = LSM6_IDS[who]; return name && !isBq2589x(r14) ? `${name} (WHO_AM_I 0x${hex2(who)})` : ''; } },
+            regs: {
+                0x01: 'FUNC_CFG_ACCESS', 0x04: 'SENSOR_SYNC_TIME_FRAME', 0x06: 'FIFO_CTRL1', 0x07: 'FIFO_CTRL2', 0x08: 'FIFO_CTRL3', 0x09: 'FIFO_CTRL4', 0x0A: 'FIFO_CTRL5', 0x0B: 'ORIENT_CFG_G',
+                0x0D: 'INT1_CTRL', 0x0E: 'INT2_CTRL', 0x0F: 'WHO_AM_I', 0x10: 'CTRL1_XL', 0x11: 'CTRL2_G', 0x12: 'CTRL3_C', 0x13: 'CTRL4_C', 0x14: 'CTRL5_C', 0x15: 'CTRL6_C', 0x16: 'CTRL7_G',
+                0x17: 'CTRL8_XL', 0x18: 'CTRL9_XL', 0x19: 'CTRL10_C', 0x1A: 'MASTER_CONFIG', 0x1B: 'WAKE_UP_SRC', 0x1C: 'TAP_SRC', 0x1D: 'D6D_SRC', 0x1E: 'STATUS_REG',
+                0x20: 'OUT_TEMP_L', 0x21: 'OUT_TEMP_H', 0x22: 'OUTX_L_G', 0x23: 'OUTX_H_G', 0x24: 'OUTY_L_G', 0x25: 'OUTY_H_G', 0x26: 'OUTZ_L_G', 0x27: 'OUTZ_H_G',
+                0x28: 'OUTX_L_XL', 0x29: 'OUTX_H_XL', 0x2A: 'OUTY_L_XL', 0x2B: 'OUTY_H_XL', 0x2C: 'OUTZ_L_XL', 0x2D: 'OUTZ_H_XL',
+                ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [0x2E + i, `SENSORHUB${i + 1}_REG`])),
+                0x3A: 'FIFO_STATUS1', 0x3B: 'FIFO_STATUS2', 0x3C: 'FIFO_STATUS3', 0x3D: 'FIFO_STATUS4', 0x3E: 'FIFO_DATA_OUT_L', 0x3F: 'FIFO_DATA_OUT_H',
+                0x40: 'TIMESTAMP0_REG', 0x41: 'TIMESTAMP1_REG', 0x42: 'TIMESTAMP2_REG', 0x49: 'STEP_TIMESTAMP_L', 0x4A: 'STEP_TIMESTAMP_H', 0x4B: 'STEP_COUNTER_L', 0x4C: 'STEP_COUNTER_H',
+                ...Object.fromEntries(Array.from({ length: 6 }, (_, i) => [0x4D + i, `SENSORHUB${i + 13}_REG`])),
+                0x53: 'FUNC_SRC', 0x58: 'TAP_CFG', 0x59: 'TAP_THS_6D', 0x5A: 'INT_DUR2', 0x5B: 'WAKE_UP_THS', 0x5C: 'WAKE_UP_DUR', 0x5D: 'FREE_FALL', 0x5E: 'MD1_CFG', 0x5F: 'MD2_CFG',
+                0x66: 'OUT_MAG_RAW_X_L', 0x67: 'OUT_MAG_RAW_X_H', 0x68: 'OUT_MAG_RAW_Y_L', 0x69: 'OUT_MAG_RAW_Y_H', 0x6A: 'OUT_MAG_RAW_Z_L', 0x6B: 'OUT_MAG_RAW_Z_H'
+            },
+            decode: {
+                0x0F: v => LSM6_IDS[v] || 'unbekannte ID',
+                0x10: v => bits(v, [7, 4, 'ODR_XL', LSM6_ODR], [3, 2, 'FS_XL', ['±2g', '±16g', '±4g', '±8g']], [1, 0, 'BW_XL', ['400Hz', '200Hz', '100Hz', '50Hz']]),
+                0x11: v => bits(v, [7, 4, 'ODR_G', LSM6_ODR], [3, 2, 'FS_G', ['245dps', '500dps', '1000dps', '2000dps']], [1, 1, 'FS_125']),
+                0x12: v => bits(v, [7, 7, 'BOOT'], [6, 6, 'BDU'], [5, 5, 'H_LACTIVE'], [4, 4, 'PP_OD'], [3, 3, 'SIM'], [2, 2, 'IF_INC'], [1, 1, 'BLE'], [0, 0, 'SW_RESET']),
+                0x1E: v => bits(v, [3, 3, 'EV_BOOT'], [2, 2, 'TDA'], [1, 1, 'GDA'], [0, 0, 'XLDA']),
+                0x21: (v, all) => lsm6Word(all, 0x20, raw => `${(25 + raw / (all.get(0x0F) === 0x69 ? 16 : 256)).toFixed(2)} °C`),
+                ...Object.fromEntries([0x23, 0x25, 0x27].map((reg, i) => [reg, (v, all) => lsm6Word(all, reg - 1, raw => `${'XYZ'[i]} ${(raw * LSM6_GYRO_MDPS[lsm6GyroFs(all)] / 1000).toFixed(2)} °/s`)])),
+                ...Object.fromEntries([0x29, 0x2B, 0x2D].map((reg, i) => [reg, (v, all) => lsm6Word(all, reg - 1, raw => `${'XYZ'[i]} ${(raw * LSM6_ACCEL_MG[(all.get(0x10) ?? 0) >> 2 & 3] / 1000).toFixed(3)} g`)])),
+                0x4C: (v, all) => all.get(0x4B) == null ? '' : `${v << 8 | all.get(0x4B)} Schritte`
+            }
+        },
+        {
+            name: 'BQ25895 Lader', addresses: [0x6A, 0x6B], range: [0x00, 0x14],
+            id: { probe: async read => { const [r14] = await read(0x14, 1); return isBq2589x(r14) ? `BQ25895 (REG14 0x${hex2(r14)}, Rev ${r14 & 3})` : ''; } },
+            regs: { 0x00: 'REG00 Input source', 0x01: 'REG01 NTC / VINDPM offset', 0x02: 'REG02 ADC / DPDM', 0x03: 'REG03 Charge config', 0x04: 'REG04 Fast charge current', 0x05: 'REG05 Pre-charge / term current',
+                0x06: 'REG06 Charge voltage', 0x07: 'REG07 Term / timer / watchdog', 0x08: 'REG08 IR comp / thermal', 0x09: 'REG09 Operation control', 0x0A: 'REG0A Boost', 0x0B: 'REG0B Status',
+                0x0C: 'REG0C Faults', 0x0D: 'REG0D VINDPM', 0x0E: 'REG0E BATV (ADC)', 0x0F: 'REG0F SYSV (ADC)', 0x10: 'REG10 TSPCT (ADC)', 0x11: 'REG11 VBUSV (ADC)', 0x12: 'REG12 ICHGR (ADC)',
+                0x13: 'REG13 DPM status', 0x14: 'REG14 Part info' },
+            decode: {
+                0x00: v => `${bits(v, [7, 7, 'EN_HIZ'], [6, 6, 'EN_ILIM'])} IINLIM=${100 + (v & 0x3F) * 50} mA`,
+                0x01: v => `${bits(v, [7, 6, 'BHOT'], [5, 5, 'BCOLD'])} VINDPM_OS=${(v & 0x1F) * 100} mV`,
+                0x02: v => bits(v, [7, 7, 'CONV_START'], [6, 6, 'CONV_RATE'], [5, 5, 'BOOST_FREQ', ['1.5MHz', '500kHz']], [4, 4, 'ICO_EN'], [3, 3, 'HVDCP_EN'], [2, 2, 'MAXC_EN'], [1, 1, 'FORCE_DPDM'], [0, 0, 'AUTO_DPDM_EN']),
+                0x03: v => `${bits(v, [7, 7, 'BAT_LOADEN'], [6, 6, 'WD_RST'], [5, 5, 'OTG_CONFIG'], [4, 4, 'CHG_CONFIG'])} SYS_MIN=${(3 + (v >> 1 & 7) * 0.1).toFixed(1)} V`,
+                0x04: v => `EN_PUMPX=${v >> 7} ICHG=${(v & 0x7F) * 64} mA`,
+                0x05: v => `IPRECHG=${64 + (v >> 4) * 64} mA ITERM=${64 + (v & 15) * 64} mA`,
+                0x06: v => `VREG=${(3.84 + (v >> 2) * 0.016).toFixed(3)} V ${bits(v, [1, 1, 'BATLOWV', ['2.8V', '3.0V']], [0, 0, 'VRECHG', ['100mV', '200mV']])}`,
+                0x07: v => bits(v, [7, 7, 'EN_TERM'], [6, 6, 'STAT_DIS'], [5, 4, 'WATCHDOG', ['aus', '40s', '80s', '160s']], [3, 3, 'EN_TIMER'], [2, 1, 'CHG_TIMER', ['5h', '8h', '12h', '20h']], [0, 0, 'JEITA_ISET']),
+                0x08: v => `BAT_COMP=${(v >> 5) * 20} mΩ VCLAMP=${(v >> 2 & 7) * 32} mV TREG=${[60, 80, 100, 120][v & 3]} °C`,
+                0x09: v => bits(v, [7, 7, 'FORCE_ICO'], [6, 6, 'TMR2X_EN'], [5, 5, 'BATFET_DIS'], [4, 4, 'JEITA_VSET'], [3, 3, 'BATFET_DLY'], [2, 2, 'BATFET_RST_EN'], [1, 1, 'PUMPX_UP'], [0, 0, 'PUMPX_DN']),
+                0x0A: v => `BOOSTV=${(4.55 + (v >> 4) * 0.064).toFixed(3)} V BOOST_LIM=${['0.5A', '0.75A', '1.2A', '1.4A', '1.65A', '1.875A', '2.15A', 'res.'][v & 7]}`,
+                0x0B: v => bits(v, [7, 5, 'VBUS_STAT', ['kein Eingang', 'USB SDP', 'USB CDP', 'USB DCP', 'HVDCP', 'unbekannter Adapter', 'Non-Standard', 'OTG']], [4, 3, 'CHRG_STAT', ['lädt nicht', 'Vorladung', 'Schnellladung', 'fertig']], [2, 2, 'PG_STAT'], [1, 1, 'SDP_STAT', ['100mA', '500mA']], [0, 0, 'VSYS_STAT']),
+                0x0C: v => bits(v, [7, 7, 'WATCHDOG_FAULT'], [6, 6, 'BOOST_FAULT'], [5, 4, 'CHRG_FAULT', ['ok', 'Eingang', 'Übertemperatur', 'Timer']], [3, 3, 'BAT_FAULT'], [2, 0, 'NTC_FAULT', ['ok', '1', 'warm', 'kühl', '4', 'kalt', 'heiß', '7']]),
+                0x0D: v => `FORCE_VINDPM=${v >> 7} VINDPM=${(2.6 + (v & 0x7F) * 0.1).toFixed(1)} V`,
+                0x0E: v => `THERM_STAT=${v >> 7} BATV=${(2.304 + (v & 0x7F) * 0.02).toFixed(3)} V`,
+                0x0F: v => `SYSV=${(2.304 + (v & 0x7F) * 0.02).toFixed(3)} V`,
+                0x10: v => `TSPCT=${(21 + (v & 0x7F) * 0.465).toFixed(1)} % REGN`,
+                0x11: v => `VBUS_GD=${v >> 7} VBUSV=${(v & 0x7F) ? (2.6 + (v & 0x7F) * 0.1).toFixed(1) : '0'} V`,
+                0x12: v => `ICHGR=${(v & 0x7F) * 50} mA`,
+                0x13: v => `${bits(v, [7, 7, 'VDPM_STAT'], [6, 6, 'IDPM_STAT'])} IDPM_LIM=${100 + (v & 0x3F) * 50} mA`,
+                0x14: v => bits(v, [7, 7, 'REG_RST'], [6, 6, 'ICO_OPTIMIZED'], [5, 3, 'PN', { 7: 'BQ25895' }], [2, 2, 'TS_PROFILE'], [1, 0, 'DEV_REV'])
+            }
         },
         {
             name: 'Lattice MachXO2 (Config-Port)', addresses: [0x40], range: [0, 0],
@@ -153,7 +222,7 @@
                 }
                 const digits = device?.width === 2 ? 4 : 2;
                 for (const [reg, value] of values) {
-                    const known = name(reg), meaning = value !== null && device?.decode?.[reg] ? device.decode[reg](value) : '';
+                    const known = name(reg), meaning = value !== null && device?.decode?.[reg] ? device.decode[reg](value, values) : '';
                     if (value === null) rows.push([`0x${hex2(reg)}`, '--', '', '', known, 'keine Antwort']);
                     else rows.push([`0x${hex2(reg)}`, '0x' + value.toString(16).toUpperCase().padStart(digits, '0'), value, value.toString(2).padStart(digits * 4, '0'), known, meaning]);
                 }
