@@ -83,7 +83,8 @@ try {
     await evaluate(`(() => {
         window.peerChip = ${JSON.stringify(chip)};
         window.peerVid = 0x1A86;
-        Object.defineProperty(navigator.serial, 'requestPort', { configurable: true, value: async () => ({ getInfo: () => ({ usbVendorId: window.peerVid, usbProductId: 0x55D3 }) }) });
+        Object.defineProperty(navigator.serial, 'requestPort', { configurable: true, value: async () => (window.lastPort = { getInfo: () => ({ usbVendorId: window.peerVid, usbProductId: 0x55D3 }) }) });
+        window.serialEvent = (type, port) => { const event = new Event(type); Object.defineProperty(event, 'target', { value: port }); navigator.serial.dispatchEvent(event); };
         const Native = ESPFlasher;
         const nativeFetch = window.fetch.bind(window);
         window.failStubFetch = false;
@@ -248,6 +249,23 @@ try {
     await wait(`${$('session-badge')}.textContent === 'OFFLINE' && !${$('connect')}.disabled`);
     await evaluate(`window.peerBootMode='rom'`);
     console.log(`PASS: ${chip} auto baud by USB id, escalation answer → DTR/RTS reset → BOOT prompt, classic/accelerated uploads and normal disconnect reset.`);
+    await evaluate(`${$('classic-stub')}.checked=false;${$('connect')}.click()`);
+    await wait(`${$('session-badge')}.textContent !== 'OFFLINE' && !${$('connect')}.disabled && ${$('load-accelerated')}.disabled`);
+    await evaluate(`window.firstPeer=serialPeer;serialEvent('disconnect', window.lastPort)`);
+    await wait(`${$('session-badge')}.textContent === 'OFFLINE' && ${$('connect')}.classList.contains('reconnecting') && !${$('connect')}.disabled`);
+    assert.equal(await evaluate(`${$('status')}.className`), 'action');
+    assert.equal(await evaluate(`${$('connect')}.textContent`), await evaluate(`ESPIO.i18n.t('Waiting for USB device… (cancel)')`));
+    await evaluate(`serialEvent('connect', { getInfo: () => ({ usbVendorId: 0x1234, usbProductId: 1 }) })`);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(await evaluate(`${$('connect')}.classList.contains('reconnecting') && serialPeer === firstPeer`), true, 'foreign USB device does not trigger reconnect');
+    await evaluate(`window.replugged={ getInfo: () => ({ usbVendorId: window.peerVid, usbProductId: 0x55D3 }) };serialEvent('connect', window.replugged)`);
+    await wait(`serialPeer !== firstPeer && ${$('session-badge')}.textContent !== 'OFFLINE' && !${$('connect')}.disabled && !${$('connect')}.classList.contains('reconnecting')`);
+    assert.ok((await evaluate(`${$('log')}.textContent`)).includes('Reconnected after the USB device reappeared'));
+    await evaluate(`serialEvent('disconnect', window.replugged)`);
+    await wait(`${$('connect')}.classList.contains('reconnecting')`);
+    await evaluate(`${$('connect')}.click()`);
+    await wait(`!${$('connect')}.classList.contains('reconnecting') && ${$('session-badge')}.textContent === 'OFFLINE'`);
+    console.log(`PASS: ${chip} USB unplug disconnects immediately, waits on the button, reconnects on the same VID/PID and can be cancelled.`);
     await evaluate(`${$('classic-stub')}.checked=true;${$('baud')}.value='115200';${$('connect')}.click()`);
     await wait(`!${$('load-accelerated')}.hidden && !${$('load-accelerated')}.disabled`);
     await evaluate(`document.querySelector('.board-card:last-child').click()`);

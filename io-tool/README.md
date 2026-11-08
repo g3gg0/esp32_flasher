@@ -581,7 +581,10 @@ Classic stub checkbox. Auto (default) uses 921600 for native Espressif USB
 escalates automatically: first talk to the chip without a reset (a running
 accelerated stub is reused, an active ROM bootloader is used directly), then
 try the DTR/RTS bootloader reset, and if the chip still does not answer, ask
-for BOOT+RESET and wait up to 60 s for the bootloader. The accelerated stub
+for BOOT+RESET and wait up to 60 s for the bootloader. If the USB device is
+unplugged, the session closes immediately; the Connect button then shows
+"Waiting for USB device… (cancel)" and reconnects automatically when a device
+with the same USB VID/PID reappears. The accelerated stub
 loads by default; Classic stub selects GPIO observation only until manually
 upgraded.
 All accelerated operations use the maintained RPC protocol; classic

@@ -5,3 +5,5 @@
 .board-diagram{margin:12px 20px 18px}.board-diagram summary{font-size:11px;color:var(--muted);cursor:pointer}.board-diagram figure{margin:14px 0 0}
 
 .pin-electrical{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0 20px}.pin-electrical .field{min-width:0;margin-left:0;margin-right:0}.pin-electrical select{min-width:0;box-sizing:border-box}
+
+#connect.reconnecting{background:#3a2c10;border-color:#c99a2e;color:#ffd98a;animation:reconnect-pulse 1.2s ease-in-out infinite}@keyframes reconnect-pulse{50%{border-color:#5a4a28;color:#c9a95a}}

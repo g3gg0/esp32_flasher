@@ -25,6 +25,8 @@
         flasher.setPacketLogging(enabled);
     };
     let session = 'offline', busy = false, operation = false, disconnecting = false;
+    // Port of the live session, and the lost device we wait for to reappear: { vid, pid, port, state }.
+    let activePort = null, reconnect = null;
     let gpioFeedbackPending = false;
     let planned = null, peripheral = 'gpio', layout = [], mapHeight = 560;
     let catalog = null, catalogRequest = 0, boardRequest = 0, renderedFrame = 0;
@@ -475,7 +477,10 @@
         $('accelerated-info').hidden = !identity;
         if (identity) $('accelerated-info').textContent = `${identity.chip} · ${identity.cpu} / ${identity.cpu_cores} cores · MAC ${identity.flags & ESPIO.rpcProtocol.identityFlags.MAC_VALID ? Array.from(identity.mac, byte => byte.toString(16).padStart(2, '0')).join(':') : 'unknown'} · stub ${identity.build} / IDF ${identity.idf} · protocol ${identity.protocol_major}.${identity.protocol_minor} · flash unprobed · GPIO/ADC${transport.supports('SDMMC') ? ' · accelerated SDMMC sector reads' : ''}.`;
         $('connect').hidden = false; $('connect').disabled = busy || operation;
-        $('connect').textContent = session === 'offline' ? 'Verbinden' : 'Trennen';
+        $('connect').textContent = reconnect?.state === 'waiting' ? 'Waiting for USB device… (cancel)' : reconnect?.state === 'connecting' ? 'Reconnecting…' : session === 'offline' ? 'Verbinden' : 'Trennen';
+        if (reconnect?.state === 'waiting') $('connect').disabled = false;
+        if (reconnect?.state === 'connecting') $('connect').disabled = true;
+        $('connect').classList.toggle('reconnecting', !!reconnect);
         $('disconnect').hidden = true; $('disconnect').disabled = busy || operation;
         $('disconnect').textContent = session === 'demo' ? 'Demo beenden' : 'Trennen & Reset';
         $('demo').hidden = session !== 'offline'; $('demo').disabled = busy;
@@ -546,6 +551,7 @@
         finally { busy = false; updateControls(); }
     }
     async function failure(error) {
+        if (reconnect) { log('Fehler nach Verbindungsverlust:', error.message || error); return; }
         await controller?.pause();
         if (controller) controller.fault = true;
         status(error.message || String(error), 'error'); log('Fehler:', error.message || error);
@@ -591,6 +597,7 @@
             log('Chip answered without reset (bootloader already active).');
             return null;
         }
+        if (flasher !== device) throw new Error('Serial device lost.');
         status('No answer: resetting into the bootloader via DTR/RTS…');
         log('No answer from the chip → trying the DTR/RTS bootloader reset.');
         trace('enterLoader: hardReset(true)', await device.hardReset(true));
@@ -602,6 +609,7 @@
         log('DTR/RTS reset did not reach the bootloader (no auto-reset circuit?) → waiting for BOOT+RESET.');
         const deadline = performance.now() + BOOT_PROMPT_TIMEOUT_MS;
         while (performance.now() < deadline) {
+            if (flasher !== device) throw new Error('Serial device lost.');
             const left = Math.ceil((deadline - performance.now()) / 1000);
             status(`Automatic bootloader entry failed. Hold BOOT, press and release RESET, then release BOOT. Waiting ${left} s…`, 'action');
             if (await quietSync(device) && usable()) {
@@ -612,17 +620,17 @@
         }
         throw new Error('No bootloader answer. Hold BOOT, press and release RESET, release BOOT and connect again.');
     }
-    async function connect() {
+    async function connect(reusePort = null) {
         if (busy || session !== 'offline') return;
         if (!navigator.serial || !isSecureContext) { status('Web Serial benötigt Chrome/Edge und einen sicheren Kontext (localhost oder HTTPS).', 'error'); return; }
         busy = true; updateControls();
         let device, autoAccelerate = false, accelFailed = false;
         try {
-            status('Seriellen Port auswählen …');
+            status(reusePort ? 'USB device is back: reconnecting…' : 'Seriellen Port auswählen …');
             // Raw TX/RX hex dumps in the DevTools console: ?debug=1 or localStorage['espio.debug']='1'; ?debug=all disables the log rate limit.
             const debugPackets = new URLSearchParams(location.search).has('debug') || localStorage.getItem('espio.debug') === '1';
             // Invoke the port chooser within the original click's user activation.
-            const port = await navigator.serial.requestPort();
+            const port = reusePort || await navigator.serial.requestPort();
             const portInfo = port.getInfo?.() || {};
             const nativeUsb = portInfo.usbVendorId === ESPRESSIF_USB_VID;
             const baudChoice = $('baud').value;
@@ -635,7 +643,7 @@
                 logPackets: debugPackets, devMode: debugPackets, maxDebugLogsPerSecond: new URLSearchParams(location.search).get('debug') === 'all' ? 0 : 20,
                 logDebug: (...args) => console.debug('[ESPFlasher]', ...args) });
             device.slipLayer.logPackets = debugPackets;
-            flasher = device;
+            flasher = device; activePort = port;
             trace('connect: options', { baudChoice, baud, portInfo, nativeUsb, classicStub: $('classic-stub').checked, debugPackets });
             await device.openPortWithPort(port);
             trace('connect: port open', deviceState(device));
@@ -707,17 +715,25 @@
                 `${chip.name} erkannt · RAM-Stub aktiv · ${board.name} · ${controller.pins.size} GPIOs als Input. Polling läuft.`);
             log(readOnlyChip ? 'ESP8266: GPIO_IN und RTC_GPIO_IN_DATA werden nur gelesen.' : 'Stub aktiv. Beim Verbinden wird Flash weder beschrieben noch gelöscht.');
             autoAccelerate = !readOnlyChip && !$('classic-stub').checked && !accelerated() && !accelFailed;
+            if (reconnect) log('Reconnected after the USB device reappeared.');
+            reconnect = null;
         } catch (error) {
             const cancelled = error?.name === 'NotFoundError';
             console.error('[ESPIO] connect failed', error, { cause: error?.cause, state: deviceState(device) });
+            const lost = reconnect?.state === 'waiting';
             await shutdown(false);
-            status(cancelled ? 'Portauswahl abgebrochen.' : /BOOT/.test(error.message || '') ? error.message : `${error.message || error} Falls nötig: BOOT halten, RESET drücken und erneut verbinden.`, cancelled ? '' : 'error');
+            if (lost) status('USB device disconnected. Waiting for it to reappear to reconnect automatically…', 'action');
+            else {
+                reconnect = null;
+                status(cancelled ? 'Portauswahl abgebrochen.' : /BOOT/.test(error.message || '') ? error.message : `${error.message || error} Falls nötig: BOOT halten, RESET drücken und erneut verbinden.`, cancelled ? '' : 'error');
+            }
             if (!cancelled) log('Verbindungsfehler:', error.message || error);
         } finally { busy = false; updateControls(); }
         if (autoAccelerate) await loadAccelerated();
     }
     async function demo() {
         if (busy || session !== 'offline') return;
+        reconnect = null;
         busy = true; session = 'demo'; transport = new DemoTransport(chip); clearScan(); updateControls();
         try { await initializeBoard(); status(`DEMO / SIMULATION · ${board.name} · Signale werden lokal simuliert. Keine Hardware verbunden.`, 'demo'); }
         catch (error) { await failure(error); }
@@ -759,7 +775,7 @@
         disconnecting = true; ++boardRequest;
         const oldController = controller, oldTransport = transport, device = flasher;
         // Mark offline immediately so another UI operation cannot queue a write.
-        controller = null; transport = null; flasher = null; session = 'offline';
+        controller = null; transport = null; flasher = null; activePort = null; session = 'offline';
         if (oldController) {
             try { await oldController.release(); } catch (error) { log('GPIO-Freigabe:', error.message || error); }
             await oldController.close();
@@ -773,12 +789,56 @@
         disconnecting = false; sampleTimes = []; lastPoll = null;
     }
     async function unexpectedDisconnect() {
+        const device = flasher, port = activePort, info = port?.getInfo?.() || {};
         log('USB-/Serial-Verbindung verloren.');
+        trace('unexpectedDisconnect', { session, busy, portInfo: info });
         const current = controller; controller = null;
-        transport?.close(); transport = null; flasher = null; session = 'offline'; ++boardRequest;
+        transport?.close(); transport = null; flasher = null; activePort = null; session = 'offline'; ++boardRequest;
         sdHost = null;
-        await current?.close();
-        status('Verbindung verloren. Messung gestoppt; erneut verbinden.', 'error'); updateControls();
+        // Close in the background: cancelling the reader of a vanished device can stall.
+        const cleanup = device ? Promise.race([device.disconnect().catch(() => {}), delay(1000)]) : Promise.resolve();
+        reconnect = port ? { vid: info.usbVendorId, pid: info.usbProductId, port, state: 'waiting', cleanup } : null;
+        status(reconnect ? 'USB device disconnected. Waiting for it to reappear to reconnect automatically…' : 'Verbindung verloren. Messung gestoppt; erneut verbinden.', reconnect ? 'action' : 'error');
+        updateControls();
+        try { await current?.close(); } catch { /* port already gone */ }
+        updateControls();
+        if (reconnect) {
+            // The device may already be back (short glitch) before the connect event was observed.
+            const ports = await navigator.serial.getPorts().catch(() => []);
+            const back = ports.find(item => item !== port && matchesLost(item));
+            if (back) reconnectTo(back);
+        }
+    }
+    function matchesLost(port) {
+        const info = port?.getInfo?.() || {};
+        return !!reconnect && reconnect.vid !== undefined && info.usbVendorId === reconnect.vid && info.usbProductId === reconnect.pid;
+    }
+    async function reconnectTo(port) {
+        if (!reconnect || reconnect.state !== 'waiting') return;
+        reconnect.state = 'connecting'; updateControls();
+        log('USB device reappeared → reconnecting.');
+        await reconnect.cleanup;
+        // Let the OS finish enumerating the device and the driver settle before opening.
+        await delay(500);
+        while (busy) await delay(100);
+        if (!reconnect || reconnect.state !== 'connecting') return;
+        await connect(port);
+    }
+    function cancelReconnect() {
+        if (!reconnect) return;
+        reconnect = null;
+        status('Automatic reconnect cancelled.');
+        updateControls();
+    }
+    if (navigator.serial) {
+        // React to unplug directly instead of waiting for ESPFlasher's own cleanup.
+        navigator.serial.addEventListener('disconnect', event => {
+            if (activePort && event.target === activePort && !disconnecting) unexpectedDisconnect();
+        });
+        navigator.serial.addEventListener('connect', event => {
+            trace('serial connect event', event.target?.getInfo?.());
+            if (reconnect?.state === 'waiting' && (event.target === reconnect.port || matchesLost(event.target))) reconnectTo(event.target);
+        });
     }
     function controlsLocked() { return busy || (operation && !gpioFeedbackPending); }
     async function runGPIOOperation(action) {
@@ -1241,7 +1301,7 @@
     document.addEventListener('click', event => { if (!event.target.closest('.connect-control')) closeConnectionMenu(); });
     document.addEventListener('keydown', event => { if (event.key === 'Escape' && !$('connection-menu').hidden) { closeConnectionMenu(); $('connection-options').focus(); } });
     for (const input of document.querySelectorAll('[name="connection-baud"]')) input.addEventListener('change', () => { if (input.checked && session === 'offline') { $('baud').value = input.value; updateControls(); } });
-    $('connect').addEventListener('click', () => { closeConnectionMenu(); if (session === 'offline') connect(); else $('disconnect').click(); });
+    $('connect').addEventListener('click', () => { closeConnectionMenu(); if (reconnect?.state === 'waiting') cancelReconnect(); else if (session === 'offline') connect(); else $('disconnect').click(); });
     $('load-accelerated').addEventListener('click', loadAccelerated);
     $('demo').addEventListener('click', demo);
     $('disconnect').addEventListener('click', async () => {
