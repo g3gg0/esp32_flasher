@@ -14,6 +14,12 @@
 #include "hal/ledc_ll.h"
 #include "hal/ledc_periph.h"
 #include "hal/clk_tree_ll.h"
+#ifndef SOC_I2C_CMD_REG_NUM
+#define SOC_I2C_CMD_REG_NUM I2C_LL_CMD_REG_NUM
+#endif
+#ifndef SOC_I2C_FIFO_LEN
+#define SOC_I2C_FIFO_LEN I2C_LL_FIFO_LEN
+#endif
 #ifndef GPIO_FUNC0_IN_SEL_CFG_REG
 #define GPIO_FUNC0_IN_SEL_CFG_REG (GPIO_FUNC1_IN_SEL_CFG_REG - 4)
 #endif
@@ -195,7 +201,7 @@ uint32_t hw_pwm_clock(void) {
 #endif
 }
 void hw_pwm_info(unsigned channel, uint32_t v[8]) {
-    v[0] = ledc_periph_signal[LEDC_LOW_SPEED_MODE].sig_out0_idx + channel;
+    v[0] = ledc_periph_signal[0].speed_mode[LEDC_LOW_SPEED_MODE].sig_out_idx[channel];
     v[1] = hw_pwm_count(); v[2] = hw_pwm_timers(); v[3] = hw_pwm_max_bits(); v[4] = 0x3ffff;
     v[5] = v[6] = v[7] = 0;
 }
@@ -222,8 +228,8 @@ void hw_pwm_update(unsigned channel, unsigned duty) {
 }
 void hw_pwm_config(unsigned channel, unsigned timer, unsigned divider, unsigned bits, unsigned duty, bool reset_timer, bool first) {
     if (first) {
-        ledc_ll_enable_bus_clock(true); ledc_ll_enable_reset_reg(true); ledc_ll_enable_reset_reg(false);
-        ledc_ll_enable_clock(&LEDC, true);
+        ledc_ll_enable_bus_clock(0, true); ledc_ll_reset_register(0);
+        ledc_ll_enable_clock(0, true);
 #if SOC_LEDC_SUPPORT_XTAL_CLOCK
         ledc_ll_set_slow_clk_sel(&LEDC, LEDC_SLOW_CLK_XTAL);
 #else
@@ -252,5 +258,5 @@ void hw_pwm_release(unsigned channel, unsigned timer, bool last_timer, bool last
     ledc_ll_set_sig_out_en(&LEDC, LEDC_LOW_SPEED_MODE, channel, false);
     ledc_ll_ls_channel_update(&LEDC, LEDC_LOW_SPEED_MODE, channel);
     if (last_timer) { ledc_ll_timer_pause(&LEDC, LEDC_LOW_SPEED_MODE, timer); ledc_ll_enable_timer_power(&LEDC, LEDC_LOW_SPEED_MODE, timer, false); }
-    if (last) { ledc_ll_enable_clock(&LEDC, false); ledc_ll_enable_bus_clock(false); }
+    if (last) { ledc_ll_enable_clock(0, false); ledc_ll_enable_bus_clock(0, false); }
 }

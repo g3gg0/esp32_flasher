@@ -9,7 +9,7 @@
 #if defined(STUB_HAS_PERIPHERALS) && defined(CONFIG_IDF_TARGET_ESP32C6)
 #include "modem/modem_lpcon_reg.h"
 #include "soc/pmu_reg.h"
-#include "soc/i2c_ana_mst_reg.h"
+#include "modem/i2c_ana_mst_reg.h"
 #include "soc/pcr_reg.h"
 #include "soc/apb_saradc_reg.h"
 #elif defined(RPC_C6_CAL_TEST)
