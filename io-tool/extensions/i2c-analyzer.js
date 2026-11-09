@@ -16,6 +16,11 @@
     const lsm6Word = (all, low, format) => { const lo = all.get(low), hi = all.get(low + 1); return lo == null || hi == null ? '' : format(((hi << 8 | lo) << 16) >> 16); };
     // REG14: PN[5:3]=111 (BQ25895), DEV_REV[1:0]=01.
     const isBq2589x = r14 => (r14 & 0x3B) === 0x39;
+    const QMI_ACCEL_FS = [2, 4, 8, 16];
+    const QMI_GYRO_FS = [16, 32, 64, 128, 256, 512, 1024, 2048];
+    const QMI_ACCEL_ODR = ['7174Hz (6DOF)', '3587Hz (6DOF)', '1794Hz (6DOF)', '1000Hz / 6DOF 896.8Hz', '500Hz / 6DOF 448.4Hz', '250Hz / 6DOF 224.2Hz', '125Hz / 6DOF 112.1Hz', '62.5Hz / 6DOF 56.05Hz', '31.25Hz / 6DOF 28.03Hz', 'n/a', 'n/a', 'n/a', 'LP 128Hz', 'LP 21Hz', 'LP 11Hz', 'LP 3Hz'];
+    const QMI_GYRO_ODR = ['7174.4Hz', '3587.2Hz', '1793.6Hz', '896.8Hz', '448.4Hz', '224.2Hz', '112.1Hz', '56.05Hz', '28.025Hz', 'n/a', 'n/a', 'n/a', 'n/a', 'n/a', 'n/a', 'n/a'];
+    const QMI_LPF = ['2.66% ODR', '3.63% ODR', '5.39% ODR', '13.37% ODR'];
 
     // width 1: byte registers, burst reads; width 2: 16-bit big-endian pointer registers.
     const DEVICES = [
@@ -69,7 +74,7 @@
         {
             name: 'LSM6DS3 / LSM6DSx IMU', addresses: [0x6A, 0x6B], range: [0x00, 0x6B],
             // BQ25895 shares 0x6A: its REG0F (SYSV) can read like a WHO_AM_I, so reject a BQ2589x part ID in REG14.
-            id: { probe: async read => { const [who] = await read(0x0F, 1), [r14] = await read(0x14, 1); const name = LSM6_IDS[who]; return name && !isBq2589x(r14) ? `${name} (WHO_AM_I 0x${hex2(who)})` : ''; } },
+            id: { probe: async read => { const [who] = await read(0x0F, 1), [r14] = await read(0x14, 1), [r00] = await read(0x00, 1); const name = LSM6_IDS[who]; return name && !isBq2589x(r14) && r00 !== 0x05 ? `${name} (WHO_AM_I 0x${hex2(who)})` : ''; } },
             regs: {
                 0x01: 'FUNC_CFG_ACCESS', 0x04: 'SENSOR_SYNC_TIME_FRAME', 0x06: 'FIFO_CTRL1', 0x07: 'FIFO_CTRL2', 0x08: 'FIFO_CTRL3', 0x09: 'FIFO_CTRL4', 0x0A: 'FIFO_CTRL5', 0x0B: 'ORIENT_CFG_G',
                 0x0D: 'INT1_CTRL', 0x0E: 'INT2_CTRL', 0x0F: 'WHO_AM_I', 0x10: 'CTRL1_XL', 0x11: 'CTRL2_G', 0x12: 'CTRL3_C', 0x13: 'CTRL4_C', 0x14: 'CTRL5_C', 0x15: 'CTRL6_C', 0x16: 'CTRL7_G',
@@ -127,6 +132,43 @@
             }
         },
         {
+            // Datasheet: QST QMI8658A Rev A. CTRL1.ADDR_AI is 0 after reset, so bursts would repeat one register.
+            name: 'QMI8658 IMU', addresses: [0x6A, 0x6B], range: [0x00, 0x60], burst: false,
+            id: { probe: async read => { const [who] = await read(0x00, 1), [rev] = await read(0x01, 1), [r14] = await read(0x14, 1); return who === 0x05 && !isBq2589x(r14) ? `QMI8658 (WHO_AM_I 0x05, Rev 0x${hex2(rev)})` : ''; } },
+            regs: {
+                0x00: 'WHO_AM_I', 0x01: 'REVISION_ID', 0x02: 'CTRL1', 0x03: 'CTRL2', 0x04: 'CTRL3', 0x06: 'CTRL5', 0x08: 'CTRL7', 0x09: 'CTRL8', 0x0A: 'CTRL9',
+                0x0B: 'CAL1_L', 0x0C: 'CAL1_H', 0x0D: 'CAL2_L', 0x0E: 'CAL2_H', 0x0F: 'CAL3_L', 0x10: 'CAL3_H', 0x11: 'CAL4_L', 0x12: 'CAL4_H',
+                0x13: 'FIFO_WTM_TH', 0x14: 'FIFO_CTRL', 0x15: 'FIFO_SMPL_CNT', 0x16: 'FIFO_STATUS', 0x17: 'FIFO_DATA',
+                0x2D: 'STATUSINT', 0x2E: 'STATUS0', 0x2F: 'STATUS1', 0x30: 'TIMESTAMP_LOW', 0x31: 'TIMESTAMP_MID', 0x32: 'TIMESTAMP_HIGH',
+                0x33: 'TEMP_L', 0x34: 'TEMP_H', 0x35: 'AX_L', 0x36: 'AX_H', 0x37: 'AY_L', 0x38: 'AY_H', 0x39: 'AZ_L', 0x3A: 'AZ_H',
+                0x3B: 'GX_L', 0x3C: 'GX_H', 0x3D: 'GY_L', 0x3E: 'GY_H', 0x3F: 'GZ_L', 0x40: 'GZ_H',
+                0x46: 'COD_STATUS', 0x49: 'dQW_L', 0x4A: 'dQW_H', 0x4B: 'dQX_L', 0x4D: 'dQY_L (0x80 = Reset ok)', 0x51: 'dVX_L', 0x52: 'dVX_H', 0x53: 'dVY_L', 0x54: 'dVY_H', 0x55: 'dVZ_L', 0x56: 'dVZ_H',
+                0x59: 'TAP_STATUS', 0x5A: 'STEP_CNT_LOW', 0x5B: 'STEP_CNT_MID', 0x5C: 'STEP_CNT_HIGH', 0x60: 'RESET (0xB0 = Soft-Reset)'
+            },
+            decode: {
+                0x00: v => v === 0x05 ? 'QST-Sensor' : 'unbekannte ID',
+                0x02: v => bits(v, [7, 7, 'SIM', ['SPI 4-wire', 'SPI 3-wire']], [6, 6, 'ADDR_AI'], [5, 5, 'BE'], [4, 4, 'INT2_EN'], [3, 3, 'INT1_EN'], [2, 2, 'FIFO_INT_SEL', ['INT2', 'INT1']], [0, 0, 'SensorDisable']),
+                0x03: v => bits(v, [7, 7, 'aST'], [6, 4, 'aFS', ['±2g', '±4g', '±8g', '±16g', 'n/a', 'n/a', 'n/a', 'n/a']], [3, 0, 'aODR', QMI_ACCEL_ODR]),
+                0x04: v => bits(v, [7, 7, 'gST'], [6, 4, 'gFS', QMI_GYRO_FS.map(fs => `±${fs}dps`)], [3, 0, 'gODR', QMI_GYRO_ODR]),
+                0x06: v => bits(v, [6, 5, 'gLPF_MODE', QMI_LPF], [4, 4, 'gLPF_EN'], [2, 1, 'aLPF_MODE', QMI_LPF], [0, 0, 'aLPF_EN']),
+                0x08: v => bits(v, [7, 7, 'SyncSample'], [5, 5, 'DRDY_DIS'], [4, 4, 'gSN'], [1, 1, 'gEN'], [0, 0, 'aEN']),
+                0x09: v => bits(v, [7, 7, 'CTRL9_HS', ['INT1', 'STATUSINT.7']], [6, 6, 'ACT_INT', ['INT2', 'INT1']], [4, 4, 'Pedo_EN'], [3, 3, 'SigMotion_EN'], [2, 2, 'NoMotion_EN'], [1, 1, 'AnyMotion_EN'], [0, 0, 'Tap_EN']),
+                0x14: v => bits(v, [7, 7, 'FIFO_RD_MODE'], [3, 2, 'FIFO_SIZE', ['16', '32', '64', '128']], [1, 0, 'FIFO_MODE', ['Bypass', 'FIFO', 'Stream', 'res.']]),
+                0x16: (v, all) => `${bits(v, [7, 7, 'FULL'], [6, 6, 'WTM'], [5, 5, 'OVFLOW'], [4, 4, 'NOT_EMPTY'])} Samples=${(v & 3) << 8 | (all.get(0x15) ?? 0)}`,
+                0x2D: v => bits(v, [7, 7, 'CmdDone'], [1, 1, 'Locked'], [0, 0, 'Avail']),
+                0x2E: v => bits(v, [1, 1, 'gDA'], [0, 0, 'aDA']),
+                0x2F: v => bits(v, [7, 7, 'SigMotion'], [6, 6, 'NoMotion'], [5, 5, 'AnyMotion'], [4, 4, 'Pedometer'], [2, 2, 'WoM'], [1, 1, 'TAP']),
+                0x32: (v, all) => all.get(0x30) == null || all.get(0x31) == null ? '' : `${v << 16 | all.get(0x31) << 8 | all.get(0x30)} Samples`,
+                // Registers are named L/H; common drivers read them as little-endian pairs regardless of CTRL1.BE.
+                0x34: (v, all) => lsm6Word(all, 0x33, raw => `${(raw / 256).toFixed(2)} °C`),
+                ...Object.fromEntries([0x36, 0x38, 0x3A].map((reg, i) => [reg, (v, all) => lsm6Word(all, reg - 1, raw => `${'XYZ'[i]} ${(raw * QMI_ACCEL_FS[(all.get(0x03) ?? 0) >> 4 & 3] / 32768).toFixed(3)} g`)])),
+                ...Object.fromEntries([0x3C, 0x3E, 0x40].map((reg, i) => [reg, (v, all) => lsm6Word(all, reg - 1, raw => `${'XYZ'[i]} ${(raw * QMI_GYRO_FS[(all.get(0x04) ?? 0) >> 4 & 7] / 32768).toFixed(2)} °/s`)])),
+                0x46: v => bits(v, [7, 7, 'X_L_Fail'], [6, 6, 'X_H_Fail'], [5, 5, 'Y_L_Fail'], [4, 4, 'Y_H_Fail'], [3, 3, 'Accel_Check'], [2, 2, 'Startup_Failed'], [1, 1, 'Gyro_Enabled'], [0, 0, 'COD_Failed']),
+                0x59: v => bits(v, [7, 7, 'POLARITY', ['+', '−']], [5, 4, 'AXIS', ['—', 'X', 'Y', 'Z']], [1, 0, 'NUM', ['—', 'single', 'double', 'n/a']]),
+                0x5C: (v, all) => all.get(0x5A) == null || all.get(0x5B) == null ? '' : `${v << 16 | all.get(0x5B) << 8 | all.get(0x5A)} Schritte`
+            }
+        },
+        {
             name: 'Lattice MachXO2 (Config-Port)', addresses: [0x40], range: [0, 0],
             id: { probe: async (read, address, host) => { try { await host.transfer(address, Uint8Array.of(0x74, 0, 0)); const id = await host.transfer(address, Uint8Array.of(0xE0, 0, 0, 0), 4); return (id[0] << 24 | id[1] << 16 | id[2] << 8 | id[3]) >>> 0 >> 16 === 0x012B ? `MachXO2 ID ${[...id].map(hex2).join('')}` : ''; } catch { return ''; } } },
             regs: {}, commandOnly: true
@@ -135,7 +177,7 @@
     // Devices without readable registers: guessed from the address only.
     const ADDRESS_HINTS = {
         0x3C: 'SSD1306/SH1106 OLED', 0x3D: 'SSD1306/SH1106 OLED', 0x23: 'BH1750', 0x5C: 'BH1750 (ADDR=H)', 0x38: 'AHT10/AHT20 · FT6x36 · PCF8574A', 0x44: 'SHT3x / OPT3001', 0x45: 'SHT3x', 0x39: 'APDS-9960 / TSL2561', 0x1E: 'HMC5883L / LIS3MDL', 0x0C: 'AK8963 (MPU-9250)',
-        0x57: 'EEPROM 24Cxx / MAX3010x', 0x50: 'EEPROM 24Cxx', 0x51: 'EEPROM 24Cxx / PCF8563', 0x20: 'PCF8574 / MCP23017', 0x27: 'PCF8574 LCD', 0x5A: 'MLX90614 / CCS811', 0x60: 'MCP4725 / Si5351', 0x62: 'SCD4x', 0x6A: 'LSM6DS3 / BQ25895', 0x6B: 'LSM6DS3 / BQ25895', 0x1D: 'ADXL345 / LIS3DH', 0x53: 'ADXL345', 0x18: 'LIS3DH / MCP9808', 0x36: 'MAX17048 / AS5600', 0x34: 'AXP192 / AXP2101'
+        0x57: 'EEPROM 24Cxx / MAX3010x', 0x50: 'EEPROM 24Cxx', 0x51: 'EEPROM 24Cxx / PCF8563', 0x20: 'PCF8574 / MCP23017', 0x27: 'PCF8574 LCD', 0x5A: 'MLX90614 / CCS811', 0x60: 'MCP4725 / Si5351', 0x62: 'SCD4x', 0x6A: 'LSM6DS3 / BQ25895 / QMI8658', 0x6B: 'LSM6DS3 / BQ25895 / QMI8658', 0x1D: 'ADXL345 / LIS3DH', 0x53: 'ADXL345', 0x18: 'LIS3DH / MCP9808', 0x36: 'MAX17048 / AS5600', 0x34: 'AXP192 / AXP2101'
     };
     const knownCandidates = address => DEVICES.filter(device => device.addresses.includes(address));
 
@@ -210,7 +252,7 @@
                 } else {
                     for (let reg = start; reg <= end;) {
                         if (api.signal.aborted) throw new DOMException('Abgebrochen', 'AbortError');
-                        const count = Math.min(fifo, end - reg + 1);
+                        const count = device?.burst === false ? 1 : Math.min(fifo, end - reg + 1);
                         dump.setStatus(`Lese 0x${hex2(reg)}–0x${hex2(reg + count - 1)} …`);
                         try { const data = await read8(address, reg, count); data.forEach((v, i) => values.set(reg + i, v)); }
                         catch {
